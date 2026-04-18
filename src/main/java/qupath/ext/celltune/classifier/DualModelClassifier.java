@@ -69,15 +69,19 @@ public class DualModelClassifier {
      * Call from a background thread. Progress and status properties are
      * updated on the FX Application Thread for safe UI binding.
      *
-     * @param allCells     all detection objects in the image
-     * @param labelStore   ground-truth labels (cellId → class name)
-     * @param extractor    feature extractor with fixed column ordering
-     * @param log          optional progress callback (may be null)
+     * @param allCells             all detection objects in the current image
+     * @param labelStore           ground-truth labels (cellId → class name)
+     * @param extractor            feature extractor with fixed column ordering
+     * @param supplementaryRows    pre-extracted feature rows from other images (may be null)
+     * @param supplementaryLabels  class names for supplementary rows (may be null)
+     * @param log                  optional progress callback (may be null)
      * @throws Exception if training or prediction fails
      */
     public void trainAndPredict(Collection<PathObject> allCells,
                                 LabelStore labelStore,
                                 CellFeatureExtractor extractor,
+                                List<float[]> supplementaryRows,
+                                List<String> supplementaryLabels,
                                 Consumer<String> log) throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {};
@@ -87,7 +91,12 @@ public class DualModelClassifier {
         out.accept("Collecting training data…");
 
         this.featureNames = extractor.getFeatureNames();
-        Set<String> classSet = labelStore.getClassNames();
+
+        // Build class name set — include supplementary classes so they get indices
+        Set<String> classSet = new LinkedHashSet<>(labelStore.getClassNames());
+        if (supplementaryLabels != null) {
+            classSet.addAll(supplementaryLabels);
+        }
         this.classNames = new ArrayList<>(classSet);
         Collections.sort(this.classNames); // deterministic ordering
         int nClasses = classNames.size();
@@ -103,7 +112,7 @@ public class DualModelClassifier {
             cellById.put(cell.getID().toString(), cell);
         }
 
-        // Build training arrays
+        // Build training arrays from current image
         List<float[]> trainRows = new ArrayList<>();
         List<Integer> trainLabels = new ArrayList<>();
 
@@ -118,6 +127,25 @@ public class DualModelClassifier {
 
             trainRows.add(extractor.extractRow(cell));
             trainLabels.add(classIdx);
+        }
+
+        int currentImageSamples = trainRows.size();
+
+        // Append supplementary training data from other images
+        if (supplementaryRows != null && supplementaryLabels != null) {
+            int suppCount = 0;
+            for (int i = 0; i < supplementaryRows.size(); i++) {
+                String className = supplementaryLabels.get(i);
+                int classIdx = classNames.indexOf(className);
+                if (classIdx < 0) continue;
+                trainRows.add(supplementaryRows.get(i));
+                trainLabels.add(classIdx);
+                suppCount++;
+            }
+            if (suppCount > 0) {
+                out.accept("Pooled " + suppCount + " labelled cells from other images "
+                        + "(current image: " + currentImageSamples + ")");
+            }
         }
 
         int nSamples = trainRows.size();

@@ -12,11 +12,12 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates, per-class F1 scores, macro F1, and PNG export
 - **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
 - **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane
+- **Multi-image training data pooling** — optionally pool labelled cells from all project images into a single training set. A "Pool labels from all images" checkbox appears in the Classification Panel and training confirmation dialog. When enabled, the extension opens each project image, collects annotation-based labels (landmarks) plus persisted review and manual labels, extracts features using the same column ordering, and adds them as supplementary training rows. Per-image labels are automatically saved to `<project>/celltune/image-labels/` after training, review, and manual labelling sessions.
 - **Batch image classification** — after training, choose which project images to apply the trained classifier to via a dual-list image selector dialog
 - **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
 - **Feature selection** — filterable, searchable feature selector handles panels with 2000+ measurements
-- **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups
+- **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling.
 
 ## The Active Learning Loop
 
@@ -184,7 +185,7 @@ src/main/java/qupath/ext/celltune/
     ├── MarkerTableImporter.java    # CSV → CellTypeTable
     ├── CellTableExporter.java      # Predictions + labels → CSV
     ├── GroundTruthIO.java          # Portable ground truth CSV export/import
-    └── ProjectStateManager.java    # JSON + Base64 model persistence
+    └── ProjectStateManager.java    # JSON + Base64 model persistence + per-image label files
 ```
 
 ## Recommendations for HPC Deployment
@@ -253,7 +254,6 @@ These can be adjusted in the Classification Panel before training.
 
 ## TODO / Future Exploration
 
-- **Multi-image ground truth aggregation** — explore how adding ground truth from multiple images via Review Mode and Manual Label Mode affects classifier performance. Currently labels are per-image; investigate pooling labels across project images into a shared LabelStore for training, including spatial matching challenges and feature-space alignment across tissue sections.
 - **Resampling strategies** — evaluate the impact of class-imbalance resampling techniques on training quality:
   - **SMOTE** (Synthetic Minority Over-sampling Technique) — generate synthetic minority-class training samples by interpolating between nearest neighbours in feature space
   - **ADASYN** (Adaptive Synthetic Sampling) — like SMOTE but focuses synthetic sample generation on harder-to-learn minority examples
@@ -276,6 +276,6 @@ These can be adjusted in the Classification Panel before training.
 
 ## Acknowledgements
 
-- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.kerenlab.org/) — the active learning cell classification workflow that this extension emulates. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
+- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.weizmann.ac.il/mcb/Keren/home) — the active learning cell classification workflow that this extension emulates. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
 - **[qupath-extension-xgboost](https://github.com/zindy/qupath-extension-xgboost)** by [Zindy](https://github.com/zindy) — a QuPath 0.7 XGBoost extension whose project structure, Gradle configuration, and XGBoost4J integration patterns served as a reference implementation for this extension.
 - Built on the [QuPath extension template](https://github.com/qupath/qupath-extension-template).

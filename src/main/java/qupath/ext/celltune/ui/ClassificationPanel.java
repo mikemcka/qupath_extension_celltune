@@ -14,7 +14,9 @@ import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectTools;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.projects.ProjectImageEntry;
 
+import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -60,6 +62,7 @@ public class ClassificationPanel extends VBox {
     private final Label predCountLabel = new Label("Predictions: 0");
     private final Spinner<Integer> roundsSpinner;
     private final Spinner<Integer> depthSpinner;
+    private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
     private final PopulationPanel populationPanel = new PopulationPanel();
 
     public ClassificationPanel(QuPathGUI qupath) {
@@ -86,6 +89,11 @@ public class ClassificationPanel extends VBox {
                 new Label(STRINGS.getString("param.num_rounds.label")), roundsSpinner,
                 new Label(STRINGS.getString("param.max_depth.label")), depthSpinner);
         paramRow.setAlignment(Pos.CENTER_LEFT);
+
+        // ── Pool images checkbox ──
+        poolImagesCheckBox.setTooltip(new Tooltip(
+                "Include labelled cells from all project images in the training set"));
+        poolImagesCheckBox.setSelected(false);
 
         // ── Status row ──
         HBox statsRow = new HBox(12, labelCountLabel, predCountLabel);
@@ -129,6 +137,7 @@ public class ClassificationPanel extends VBox {
         getChildren().addAll(
                 title,
                 paramRow,
+                poolImagesCheckBox,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -228,6 +237,8 @@ public class ClassificationPanel extends VBox {
 
         // Train in background
         final LabelStore storeCopy = labelStore;
+        final boolean poolAllImages = poolImagesCheckBox.isSelected();
+        final List<String> finalFeatureNames = featureNames;
         Thread trainThread = new Thread(() -> {
             try {
                 // Auto-backup labels
@@ -236,7 +247,67 @@ public class ClassificationPanel extends VBox {
                     ProjectStateManager.backupLabels(project, storeCopy);
                 }
 
+                // Collect supplementary training data from other project images
+                List<float[]> supplementaryRows = null;
+                List<String> supplementaryLabels = null;
+
+                if (poolAllImages && project != null) {
+                    supplementaryRows = new ArrayList<>();
+                    supplementaryLabels = new ArrayList<>();
+
+                    @SuppressWarnings("unchecked")
+                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+                    var currentEntry = project.getEntry(imageData);
+
+                    for (var entry : allEntries) {
+                        if (currentEntry != null && entry.equals(currentEntry)) continue;
+
+                        try {
+                            var otherImageData = entry.readImageData();
+                            var otherHierarchy = otherImageData.getHierarchy();
+                            var otherDetections = otherHierarchy.getDetectionObjects();
+                            if (otherDetections.isEmpty()) continue;
+
+                            // Collect labels from annotations (landmarks)
+                            LabelStore otherLabels = new LabelStore("temp");
+                            collectLabelsFromHierarchy(otherHierarchy, otherLabels);
+
+                            // Also load per-image saved labels which include
+                            // reviewed cells and manually labelled cells
+                            try {
+                                var savedLabels = ProjectStateManager.loadImageLabels(
+                                        project, entry.getImageName());
+                                if (savedLabels != null) {
+                                    otherLabels.mergeFrom(savedLabels);
+                                }
+                            } catch (Exception lsEx) {
+                                // No saved labels for this image — that's fine
+                            }
+
+                            if (otherLabels.size() == 0) continue;
+
+                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            Map<String, PathObject> otherCellById = new LinkedHashMap<>();
+                            for (PathObject cell : otherDetections) {
+                                otherCellById.put(cell.getID().toString(), cell);
+                            }
+
+                            int added = 0;
+                            for (var labelEntry : otherLabels.getAllLabels().entrySet()) {
+                                PathObject cell = otherCellById.get(labelEntry.getKey());
+                                if (cell == null) continue;
+                                supplementaryRows.add(otherExtractor.extractRow(cell));
+                                supplementaryLabels.add(labelEntry.getValue());
+                                added++;
+                            }
+                        } catch (Exception ex) {
+                            // Skip images that can't be read
+                        }
+                    }
+                }
+
                 classifier.trainAndPredict(detections, storeCopy, extractor,
+                        supplementaryRows, supplementaryLabels,
                         msg -> {});
 
                 predAll = classifier.getPredALL();
@@ -247,6 +318,13 @@ public class ClassificationPanel extends VBox {
                     ProjectStateManager.saveState(project, state.getName(),
                             storeCopy, state.getFeatureNames(), state.getClassNames(),
                             state.getXgboostBytes(), state.getLightgbmBytes());
+
+                    // Save per-image labels for cross-image pooling
+                    var imgEntry = project.getEntry(imageData);
+                    if (imgEntry != null) {
+                        ProjectStateManager.saveImageLabels(
+                                project, imgEntry.getImageName(), storeCopy);
+                    }
                 }
 
                 Platform.runLater(() -> {
@@ -384,6 +462,20 @@ public class ClassificationPanel extends VBox {
                 labelStore.mergeFrom(outputLabels);
                 refreshStats();
                 if (onLabelStoreChanged != null) onLabelStoreChanged.accept(labelStore);
+
+                // Persist per-image labels for cross-image pooling
+                var project = qupath.getProject();
+                var imgData = qupath.getImageData();
+                if (project != null && imgData != null) {
+                    var imgEntry = project.getEntry(imgData);
+                    if (imgEntry != null) {
+                        try {
+                            ProjectStateManager.saveImageLabels(
+                                    project, imgEntry.getImageName(), labelStore);
+                        } catch (Exception ignored) {}
+                    }
+                }
+
                 Dialogs.showInfoNotification(STRINGS.getString("name"),
                         String.format("Review complete: %d labels merged.", outputLabels.size()));
             }
@@ -404,8 +496,11 @@ public class ClassificationPanel extends VBox {
     private void collectLabelsFromAnnotations(LabelStore store) {
         var imageData = qupath.getImageData();
         if (imageData == null) return;
-        var hierarchy = imageData.getHierarchy();
+        collectLabelsFromHierarchy(imageData.getHierarchy(), store);
+    }
 
+    private static void collectLabelsFromHierarchy(
+            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
         for (PathObject anno : hierarchy.getAnnotationObjects()) {
             if (anno.getPathClass() == null || anno.getROI() == null) continue;
             String cls = anno.getPathClass().toString();

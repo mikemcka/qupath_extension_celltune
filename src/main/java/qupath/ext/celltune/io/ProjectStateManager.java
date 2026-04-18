@@ -189,4 +189,70 @@ public class ProjectStateManager {
         logger.info("Backed up {} labels to {}", labelStore.size(), outPath);
         return outPath;
     }
+
+    // ── Per-image label persistence ─────────────────────────────────────────────
+
+    private static final String IMAGE_LABELS_DIR = "image-labels";
+
+    /**
+     * Save labels for a specific image. Used to persist review and manual labels
+     * so they can be pooled into training from other images.
+     *
+     * @param project    the QuPath project
+     * @param imageName  the image name (from ProjectImageEntry.getImageName())
+     * @param labelStore the labels to save
+     * @return path to the saved file
+     * @throws IOException if writing fails
+     */
+    public static Path saveImageLabels(Project<?> project,
+                                       String imageName,
+                                       LabelStore labelStore) throws IOException {
+        Path dir = getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
+        Files.createDirectories(dir);
+
+        String safeFileName = sanitiseFileName(imageName) + ".json";
+        Path outPath = dir.resolve(safeFileName);
+
+        String json = GSON.toJson(labelStore.getAllLabels());
+        Files.writeString(outPath, json, StandardCharsets.UTF_8);
+        logger.info("Saved {} labels for image '{}' to {}", labelStore.size(), imageName, outPath);
+        return outPath;
+    }
+
+    /**
+     * Load labels previously saved for a specific image.
+     *
+     * @param project   the QuPath project
+     * @param imageName the image name (from ProjectImageEntry.getImageName())
+     * @return a LabelStore with the saved labels, or null if none exist
+     * @throws IOException if reading fails
+     */
+    public static LabelStore loadImageLabels(Project<?> project,
+                                             String imageName) throws IOException {
+        Path dir = getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
+        String safeFileName = sanitiseFileName(imageName) + ".json";
+        Path filePath = dir.resolve(safeFileName);
+
+        if (!Files.exists(filePath)) {
+            return null;
+        }
+
+        String json = Files.readString(filePath, StandardCharsets.UTF_8);
+        @SuppressWarnings("unchecked")
+        Map<String, String> labels = GSON.fromJson(json, Map.class);
+        if (labels == null || labels.isEmpty()) {
+            return null;
+        }
+
+        LabelStore store = new LabelStore(imageName, labels);
+        logger.info("Loaded {} labels for image '{}' from {}", store.size(), imageName, filePath);
+        return store;
+    }
+
+    /**
+     * Replace characters that are unsafe in file names with underscores.
+     */
+    private static String sanitiseFileName(String name) {
+        return name.replaceAll("[^a-zA-Z0-9._\\-]", "_");
+    }
 }

@@ -353,20 +353,6 @@ public class CellTuneExtension implements QuPathExtension {
                     featureNames.size(), allFeatureNames.size());
         }
 
-        // Confirm before starting training
-        var confirm = Dialogs.showConfirmDialog(EXTENSION_NAME,
-                "Ready to train with " + featureNames.size() + " features and "
-                + labelStore.size() + " labelled cells.\n\nProceed with classification?");
-        if (!confirm) return;
-
-        // Check whether the JVM has enough heap for this dataset
-        if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
-
-        CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
-        if (classifier == null) {
-            classifier = new DualModelClassifier();
-        }
-
         // Collect project image entries for batch application
         var project = qupath.getProject();
         List<String> allImageNames = new java.util.ArrayList<>();
@@ -383,6 +369,46 @@ public class CellTuneExtension implements QuPathExtension {
             }
         }
 
+        // Confirm before starting training — with option to pool labels from all images
+        boolean hasMultipleImages = allImageNames.size() > 1;
+        var poolCheckBox = new javafx.scene.control.CheckBox(
+                "Pool labelled cells from all project images into training set");
+        poolCheckBox.setSelected(false);
+
+        var confirmAlert = new javafx.scene.control.Alert(
+                javafx.scene.control.Alert.AlertType.CONFIRMATION);
+        confirmAlert.setTitle(EXTENSION_NAME);
+        confirmAlert.setHeaderText("Ready to Train");
+        String confirmMsg = featureNames.size() + " features, "
+                + labelStore.size() + " labelled cells in current image.";
+        if (hasMultipleImages) {
+            confirmMsg += "\n\nThis project has " + allImageNames.size()
+                    + " images. Check the box below to include labelled\n"
+                    + "cells from all images in the training set.";
+        }
+        confirmAlert.setContentText(confirmMsg);
+        if (hasMultipleImages) {
+            confirmAlert.getDialogPane().setExpandableContent(null);
+            var contentBox = new javafx.scene.layout.VBox(8,
+                    new javafx.scene.control.Label(confirmMsg), poolCheckBox);
+            contentBox.setPadding(new javafx.geometry.Insets(4));
+            confirmAlert.getDialogPane().setContent(contentBox);
+        }
+        var confirmResult = confirmAlert.showAndWait();
+        if (confirmResult.isEmpty()
+                || confirmResult.get() != javafx.scene.control.ButtonType.OK) {
+            return;
+        }
+        final boolean poolAllImages = hasMultipleImages && poolCheckBox.isSelected();
+
+        // Check whether the JVM has enough heap for this dataset
+        if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
+
+        CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+        if (classifier == null) {
+            classifier = new DualModelClassifier();
+        }
+
         // Show image selection dialog (current image is always included)
         List<String> selectedImages;
         if (allImageNames.size() > 1) {
@@ -396,6 +422,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         final List<String> imagesToClassify = selectedImages;
         final List<String> finalFeatureNames = featureNames;
+        final String currentImageNameFinal = currentImageName;
 
         // ── Progress dialog ─────────────────────────────────────────────────
         var progressStage = new javafx.stage.Stage();
@@ -433,7 +460,82 @@ public class CellTuneExtension implements QuPathExtension {
                     ProjectStateManager.backupLabels(project, labelStore);
                 }
 
+                // Collect supplementary training data from other project images
+                List<float[]> supplementaryRows = null;
+                List<String> supplementaryLabels = null;
+
+                if (poolAllImages && project != null) {
+                    supplementaryRows = new java.util.ArrayList<>();
+                    supplementaryLabels = new java.util.ArrayList<>();
+
+                    @SuppressWarnings("unchecked")
+                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+                    var currentEntry = project.getEntry(imageData);
+
+                    java.util.function.Consumer<String> poolLog = msg -> {
+                        logger.info("[CellTune] {}", msg);
+                        javafx.application.Platform.runLater(() ->
+                                logArea.appendText(msg + "\n"));
+                    };
+
+                    for (var entry : allEntries) {
+                        if (currentEntry != null && entry.equals(currentEntry)) continue;
+
+                        try {
+                            var otherImageData = entry.readImageData();
+                            var otherHierarchy = otherImageData.getHierarchy();
+                            var otherDetections = otherHierarchy.getDetectionObjects();
+                            if (otherDetections.isEmpty()) continue;
+
+                            // Collect labels from annotations (landmarks)
+                            LabelStore otherLabels = new LabelStore("temp");
+                            collectLabelsFromHierarchy(otherHierarchy, otherLabels);
+
+                            // Also load per-image saved labels which include
+                            // reviewed cells and manually labelled cells
+                            try {
+                                var savedLabels = ProjectStateManager.loadImageLabels(
+                                        project, entry.getImageName());
+                                if (savedLabels != null) {
+                                    otherLabels.mergeFrom(savedLabels);
+                                }
+                            } catch (Exception lsEx) {
+                                // No saved labels for this image — that's fine
+                            }
+
+                            if (otherLabels.size() == 0) continue;
+
+                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            java.util.Map<String, PathObject> otherCellById = new java.util.LinkedHashMap<>();
+                            for (PathObject cell : otherDetections) {
+                                otherCellById.put(cell.getID().toString(), cell);
+                            }
+
+                            int added = 0;
+                            for (var labelEntry : otherLabels.getAllLabels().entrySet()) {
+                                PathObject cell = otherCellById.get(labelEntry.getKey());
+                                if (cell == null) continue;
+                                supplementaryRows.add(otherExtractor.extractRow(cell));
+                                supplementaryLabels.add(labelEntry.getValue());
+                                added++;
+                            }
+
+                            if (added > 0) {
+                                poolLog.accept("Collected " + added + " labelled cells from: "
+                                        + entry.getImageName());
+                            }
+                        } catch (Exception ex) {
+                            logger.warn("[CellTune] Failed to read {}: {}",
+                                    entry.getImageName(), ex.getMessage());
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("Warning: could not read "
+                                            + entry.getImageName() + "\n"));
+                        }
+                    }
+                }
+
                 classifier.trainAndPredict(detections, labelStore, extractor,
+                        supplementaryRows, supplementaryLabels,
                         msg -> {
                             logger.info("[CellTune] {}", msg);
                             javafx.application.Platform.runLater(() ->
@@ -448,6 +550,12 @@ public class CellTuneExtension implements QuPathExtension {
                     ProjectStateManager.saveState(project, state.getName(),
                             labelStore, state.getFeatureNames(), state.getClassNames(),
                             state.getXgboostBytes(), state.getLightgbmBytes());
+
+                    // Save per-image labels for cross-image pooling
+                    if (currentImageNameFinal != null) {
+                        ProjectStateManager.saveImageLabels(
+                                project, currentImageNameFinal, labelStore);
+                    }
                 }
 
                 // Apply predictions to other selected images
@@ -540,8 +648,38 @@ public class CellTuneExtension implements QuPathExtension {
     private void collectLabelsFromAnnotations(QuPathGUI qupath, LabelStore store) {
         var imageData = qupath.getImageData();
         if (imageData == null) return;
-        var hierarchy = imageData.getHierarchy();
+        collectLabelsFromHierarchy(imageData.getHierarchy(), store);
+    }
 
+    /**
+     * Save the current image's label store as a per-image JSON file so that
+     * labels from review and manual labelling can be pooled during training
+     * on other images.
+     */
+    private void saveCurrentImageLabels(QuPathGUI qupath) {
+        if (labelStore == null || labelStore.size() == 0) return;
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project == null || imageData == null) return;
+
+        var entry = project.getEntry(imageData);
+        if (entry == null) return;
+
+        try {
+            ProjectStateManager.saveImageLabels(project, entry.getImageName(), labelStore);
+        } catch (IOException ex) {
+            logger.warn("Failed to save per-image labels for {}: {}",
+                    entry.getImageName(), ex.getMessage());
+        }
+    }
+
+    /**
+     * Collect ground-truth labels from classified annotations in a hierarchy.
+     * Works with any image's hierarchy — used for both the current image and
+     * other project images when pooling training data.
+     */
+    private static void collectLabelsFromHierarchy(
+            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
         for (PathObject anno : hierarchy.getAnnotationObjects()) {
             if (anno.getPathClass() == null || anno.getROI() == null) continue;
             String cls = anno.getPathClass().toString();
@@ -594,6 +732,10 @@ public class CellTuneExtension implements QuPathExtension {
         toolbar.getStage().setOnHidden(e -> {
             syncPanelState();
             logger.info("Manual label mode ended — {} total labels", labelStore.size());
+
+            // Persist per-image labels so they can be pooled from other images
+            saveCurrentImageLabels(qupath);
+
             Dialogs.showInfoNotification(EXTENSION_NAME,
                     "Manual labelling complete: " + labelStore.size() + " total labels.");
         });
@@ -648,6 +790,10 @@ public class CellTuneExtension implements QuPathExtension {
                 syncPanelState();
                 logger.info("Review complete — merged {} labels into main label store",
                         outputLabels.size());
+
+                // Persist per-image labels so they can be pooled from other images
+                saveCurrentImageLabels(qupath);
+
                 Dialogs.showInfoNotification(EXTENSION_NAME,
                         String.format("Review complete: %d labels merged.", outputLabels.size()));
             }
