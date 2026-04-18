@@ -6,6 +6,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.*;
@@ -63,6 +64,7 @@ public class ClassificationPanel extends VBox {
     private final Spinner<Integer> roundsSpinner;
     private final Spinner<Integer> depthSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
+    private final ComboBox<ResamplingStrategy> resamplingCombo = new ComboBox<>();
     private final PopulationPanel populationPanel = new PopulationPanel();
 
     public ClassificationPanel(QuPathGUI qupath) {
@@ -94,6 +96,12 @@ public class ClassificationPanel extends VBox {
         poolImagesCheckBox.setTooltip(new Tooltip(
                 "Include labelled cells from all project images in the training set"));
         poolImagesCheckBox.setSelected(false);
+
+        resamplingCombo.getItems().addAll(ResamplingStrategy.values());
+        resamplingCombo.setValue(ResamplingStrategy.NONE);
+        resamplingCombo.setMaxWidth(Double.MAX_VALUE);
+        resamplingCombo.setTooltip(new Tooltip(
+                "Resampling strategy to address class imbalance before training"));
 
         // ── Status row ──
         HBox statsRow = new HBox(12, labelCountLabel, predCountLabel);
@@ -138,6 +146,7 @@ public class ClassificationPanel extends VBox {
                 title,
                 paramRow,
                 poolImagesCheckBox,
+                resamplingCombo,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -238,6 +247,7 @@ public class ClassificationPanel extends VBox {
         // Train in background
         final LabelStore storeCopy = labelStore;
         final boolean poolAllImages = poolImagesCheckBox.isSelected();
+        final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final List<String> finalFeatureNames = featureNames;
         Thread trainThread = new Thread(() -> {
             try {
@@ -308,6 +318,7 @@ public class ClassificationPanel extends VBox {
 
                 classifier.trainAndPredict(detections, storeCopy, extractor,
                         supplementaryRows, supplementaryLabels,
+                        resamplingStrategy,
                         msg -> {});
 
                 predAll = classifier.getPredALL();

@@ -74,6 +74,7 @@ public class DualModelClassifier {
      * @param extractor            feature extractor with fixed column ordering
      * @param supplementaryRows    pre-extracted feature rows from other images (may be null)
      * @param supplementaryLabels  class names for supplementary rows (may be null)
+     * @param resampling           resampling strategy for class imbalance (may be null for NONE)
      * @param log                  optional progress callback (may be null)
      * @throws Exception if training or prediction fails
      */
@@ -82,6 +83,7 @@ public class DualModelClassifier {
                                 CellFeatureExtractor extractor,
                                 List<float[]> supplementaryRows,
                                 List<String> supplementaryLabels,
+                                ResamplingStrategy resampling,
                                 Consumer<String> log) throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {};
@@ -161,6 +163,16 @@ public class DualModelClassifier {
                 + nFeatures + " features, " + nClasses + " classes");
         out.accept("Threads: " + Runtime.getRuntime().availableProcessors()
                 + " available processors");
+
+        // ── 1b. Resample if requested ───────────────────────────────────────
+        ResamplingStrategy strategy = resampling != null ? resampling : ResamplingStrategy.NONE;
+        if (strategy != ResamplingStrategy.NONE) {
+            Resampler.Result resampled = Resampler.apply(
+                    trainRows, trainLabels, nClasses, strategy, out);
+            trainRows = resampled.rows();
+            trainLabels = resampled.labels();
+            nSamples = trainRows.size();
+        }
 
         // Flatten to arrays
         float[] flatData = new float[nSamples * nFeatures];

@@ -7,6 +7,7 @@ import javafx.stage.FileChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
 import qupath.ext.celltune.io.CellTableExporter;
 import qupath.ext.celltune.io.GroundTruthIO;
@@ -375,6 +376,14 @@ public class CellTuneExtension implements QuPathExtension {
                 "Pool labelled cells from all project images into training set");
         poolCheckBox.setSelected(false);
 
+        var resamplingCombo = new javafx.scene.control.ComboBox<ResamplingStrategy>();
+        resamplingCombo.getItems().addAll(ResamplingStrategy.values());
+        resamplingCombo.setValue(ResamplingStrategy.NONE);
+        resamplingCombo.setMaxWidth(Double.MAX_VALUE);
+        var resamplingLabel = new javafx.scene.control.Label("Resampling:");
+        var resamplingRow = new javafx.scene.layout.HBox(6, resamplingLabel, resamplingCombo);
+        resamplingRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
         var confirmAlert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.CONFIRMATION);
         confirmAlert.setTitle(EXTENSION_NAME);
@@ -390,7 +399,13 @@ public class CellTuneExtension implements QuPathExtension {
         if (hasMultipleImages) {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
-                    new javafx.scene.control.Label(confirmMsg), poolCheckBox);
+                    new javafx.scene.control.Label(confirmMsg), poolCheckBox, resamplingRow);
+            contentBox.setPadding(new javafx.geometry.Insets(4));
+            confirmAlert.getDialogPane().setContent(contentBox);
+        } else {
+            confirmAlert.getDialogPane().setExpandableContent(null);
+            var contentBox = new javafx.scene.layout.VBox(8,
+                    new javafx.scene.control.Label(confirmMsg), resamplingRow);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         }
@@ -400,6 +415,7 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
         final boolean poolAllImages = hasMultipleImages && poolCheckBox.isSelected();
+        final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
 
         // Check whether the JVM has enough heap for this dataset
         if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
@@ -536,6 +552,7 @@ public class CellTuneExtension implements QuPathExtension {
 
                 classifier.trainAndPredict(detections, labelStore, extractor,
                         supplementaryRows, supplementaryLabels,
+                        resamplingStrategy,
                         msg -> {
                             logger.info("[CellTune] {}", msg);
                             javafx.application.Platform.runLater(() ->

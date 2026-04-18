@@ -13,6 +13,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
 - **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane
 - **Multi-image training data pooling** — optionally pool labelled cells from all project images into a single training set. A "Pool labels from all images" checkbox appears in the Classification Panel and training confirmation dialog. When enabled, the extension opens each project image, collects annotation-based labels (landmarks) plus persisted review and manual labels, extracts features using the same column ordering, and adds them as supplementary training rows. Per-image labels are automatically saved to `<project>/celltune/image-labels/` after training, review, and manual labelling sessions.
+- **Resampling strategies** — address class imbalance before training with a selectable strategy: **SMOTE** (synthetic minority oversampling via k-NN interpolation), **ADASYN** (adaptive synthetic sampling weighted toward harder boundary examples), **Tomek links** (remove majority-class samples forming mutual nearest-neighbour pairs with minority samples), or combinations (**SMOTE + Tomek**, **ADASYN + Tomek**). A dropdown appears in both the Classification Panel and the training confirmation dialog. Training logs report the original and resampled class distributions.
 - **Batch image classification** — after training, choose which project images to apply the trained classifier to via a dual-list image selector dialog
 - **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
@@ -168,7 +169,9 @@ src/main/java/qupath/ext/celltune/
 │   ├── XGBoostModel.java           # XGBoost4J wrapper (GPU/CUDA with CPU fallback)
 │   ├── LightGBMModel.java          # LightGBM4J wrapper (GPU with CPU fallback)
 │   ├── ClassifierState.java        # Serialisable model snapshot
-│   └── UncertaintySampler.java     # Weighted disagreement sampling
+│   ├── UncertaintySampler.java     # Weighted disagreement sampling
+│   ├── Resampler.java              # SMOTE, ADASYN, Tomek links resampling
+│   └── ResamplingStrategy.java     # Enum of available resampling strategies
 │
 ├── ui/                             # JavaFX panels and controls
 │   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review)
@@ -254,12 +257,6 @@ These can be adjusted in the Classification Panel before training.
 
 ## TODO / Future Exploration
 
-- **Resampling strategies** — evaluate the impact of class-imbalance resampling techniques on training quality:
-  - **SMOTE** (Synthetic Minority Over-sampling Technique) — generate synthetic minority-class training samples by interpolating between nearest neighbours in feature space
-  - **ADASYN** (Adaptive Synthetic Sampling) — like SMOTE but focuses synthetic sample generation on harder-to-learn minority examples
-  - **Tomek links** — identify and remove borderline majority-class samples that form Tomek pairs with minority-class samples, cleaning the decision boundary
-  - Combinations: SMOTE + Tomek links as a pipeline (over-sample then clean), ADASYN + Tomek links
-  - Measure effect on per-class F1, macro F1, and inter-model agreement rates across training rounds
 - **Hyperparameter tuning** — currently the user manually sets boosting rounds (200), max depth (6), learning rate (0.1), and subsample (0.8) via spinners in the Classification Panel. Investigate automated tuning strategies:
   - **k-fold cross-validation** — split the labelled cells into k folds and evaluate each hyperparameter combination on held-out folds to estimate generalisation performance
   - **Grid search** — exhaustive search over a predefined parameter grid (e.g. max_depth ∈ {4, 6, 8, 10}, eta ∈ {0.05, 0.1, 0.2}, rounds ∈ {100, 200, 400})
