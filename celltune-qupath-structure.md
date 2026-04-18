@@ -616,5 +616,15 @@ At 2000 features, XGBoost4J and LightGBM4J use a flat `float[]` array indexed by
 
 #### GPU Notes
 
-- **XGBoost**: Automatically detects CUDA-capable GPUs and trains with `device=cuda`. Falls back to CPU if CUDA is unavailable. Reports device via `getLastDevice()`.
-- **LightGBM**: Always trains on CPU. The `lightgbm4j` binding ships a CPU-only native binary. GPU training would require building LightGBM from source with `-DUSE_GPU=1` (OpenCL) and replacing the native library — not bundled.
+GPU acceleration depends on platform and the native libraries shipped in the Maven artifacts:
+
+| Platform | XGBoost GPU | LightGBM GPU |
+|----------|-------------|---------------|
+| Linux x86_64 | ✔ CUDA | ✘ CPU-only |
+| Windows x86_64 | ✘ CPU-only | ✘ CPU-only |
+| macOS | ✘ CPU-only | ✘ CPU-only |
+
+- **XGBoost** (`xgboost4j_2.13:3.2.0`): The Maven artifact ships CUDA-enabled native libs for **Linux only**. On Linux with a CUDA-capable GPU and the CUDA Toolkit 12.x installed, XGBoost trains on GPU automatically (`device=cuda`). On Windows/macOS, the bundled native lib is CPU-only — XGBoost silently falls back to CPU without throwing a Java exception (only a C++ stderr warning). The `XGBoostModel` detection fix serialises the trained model to JSON and checks the actual device used, so `getLastDevice()` now reports the truth.
+- **LightGBM** (`lightgbm4j:4.6.0-2`): Ships CPU-only native binary on **all platforms**. The log will show `"GPU Tree Learner was not enabled in this build"` when GPU is attempted. GPU training would require building LightGBM from source with `-DUSE_GPU=1` (OpenCL) and replacing the native library — not bundled.
+
+**For HPC deployment on Linux**: Ensure CUDA Toolkit 12.x is installed (`nvcc --version` to verify). XGBoost will pick up the GPU automatically. For Windows workstations, CPU training is the default — performance impact is negligible for datasets under ~100K cells.

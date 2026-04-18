@@ -218,8 +218,16 @@ At 2000 features, the flat `float[]` matrix used by XGBoost4J and LightGBM4J imp
 
 ### GPU Notes
 
-- **XGBoost** automatically detects CUDA-capable GPUs and trains on GPU when available, falling back to CPU otherwise
-- **LightGBM** always trains on CPU — the `lightgbm4j` Java binding ships a CPU-only native binary. GPU training would require building LightGBM from source with `-DUSE_GPU=1` and replacing the native library
+GPU acceleration depends on platform and the native libraries shipped in the Maven artifacts:
+
+| Platform | XGBoost GPU | LightGBM GPU |
+|----------|-------------|---------------|
+| Linux x86_64 | ✔ CUDA | ✘ CPU-only |
+| Windows x86_64 | ✘ CPU-only | ✘ CPU-only |
+| macOS | ✘ CPU-only | ✘ CPU-only |
+
+- **XGBoost** (`xgboost4j_2.13:3.2.0`): The Maven artifact ships CUDA-enabled native libs for **Linux only**. On Linux with a CUDA-capable GPU and the CUDA Toolkit 12.x installed, XGBoost trains on GPU automatically (`device=cuda`). On Windows and macOS, the bundled `xgboost4j.dll`/`libxgboost4j.dylib` is CPU-only — XGBoost silently falls back to CPU even if CUDA is installed. The extension detects this silent fallback and reports the actual device used. GPU training on Windows would require building XGBoost4J from source with CUDA support.
+- **LightGBM** (`lightgbm4j:4.6.0-2`): The `lightgbm4j` Java binding ships a CPU-only native binary on **all platforms**. GPU training would require building LightGBM from source with `-DUSE_GPU=1` (OpenCL) and replacing the native library.
 
 ## Technology Stack
 
