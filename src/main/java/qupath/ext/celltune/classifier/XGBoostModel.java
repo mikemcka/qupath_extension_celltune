@@ -59,29 +59,35 @@ public class XGBoostModel {
         this.featureNames = List.copyOf(featureNames);
 
         DMatrix trainMat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
-        trainMat.setLabel(labels);
-
-        Map<String, Object> params = buildParams(nClasses, maxDepth, eta, subsample);
-        Map<String, DMatrix> watches = new LinkedHashMap<>();
-        watches.put("train", trainMat);
-
-        // Attempt GPU training, fall back to CPU
-        boolean usingGpu = false;
         try {
-            params.put("device", "cuda");
-            params.put("tree_method", "hist");
-            logger.info("XGBoost: attempting GPU (CUDA) training…");
-            booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-            usingGpu = true;
-            logger.info("XGBoost training: GPU (CUDA) — {} samples, {} features, {} classes, {} rounds",
-                    nSamples, nFeatures, nClasses, numRounds);
-        } catch (Exception gpuEx) {
-            logger.info("XGBoost GPU not available ({}), falling back to CPU", gpuEx.getMessage());
-            params.put("device", "cpu");
-            params.put("tree_method", "hist");
-            booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-            logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
-                    nSamples, nFeatures, nClasses, numRounds);
+            trainMat.setLabel(labels);
+
+            Map<String, Object> params = buildParams(nClasses, maxDepth, eta, subsample);
+            Map<String, DMatrix> watches = new LinkedHashMap<>();
+            watches.put("train", trainMat);
+
+            // Attempt GPU training, fall back to CPU
+            boolean usingGpu = false;
+            try {
+                params.put("device", "cuda");
+                params.put("tree_method", "hist");
+                logger.info("XGBoost: attempting GPU (CUDA) training…");
+                booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+                usingGpu = true;
+                logger.info("XGBoost training: GPU (CUDA) — {} samples, {} features, {} classes, {} rounds",
+                        nSamples, nFeatures, nClasses, numRounds);
+            } catch (Exception gpuEx) {
+                logger.info("XGBoost GPU not available ({}), falling back to CPU", gpuEx.getMessage());
+                params.put("device", "cpu");
+                params.put("tree_method", "hist");
+                booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+                logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
+                        nSamples, nFeatures, nClasses, numRounds);
+            }
+
+            this.lastDevice = usingGpu ? "GPU (CUDA)" : "CPU";
+        } finally {
+            trainMat.dispose();
         }
 
         // Embed metadata for later serialisation
@@ -92,8 +98,7 @@ public class XGBoostModel {
         booster.setFeatureNames(safeNames);
         booster.setAttr("class_names", String.join(",", classNames));
 
-        logger.info("XGBoost training complete ({})", usingGpu ? "GPU" : "CPU");
-        lastDevice = usingGpu ? "GPU (CUDA)" : "CPU";
+        logger.info("XGBoost training complete ({})", lastDevice);
     }
 
     /** @return the device used for the last training run */
@@ -113,7 +118,12 @@ public class XGBoostModel {
             throws XGBoostError {
 
         DMatrix predMat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
-        float[][] rawPreds = booster.predict(predMat);
+        float[][] rawPreds;
+        try {
+            rawPreds = booster.predict(predMat);
+        } finally {
+            predMat.dispose();
+        }
 
         // binary:logistic returns [n][1]; multi:softprob returns [n][nClasses]
         if (nClasses == 2 && rawPreds[0].length == 1) {

@@ -62,22 +62,31 @@ public class CellFeatureExtractor {
     /**
      * Extract features from multiple cells into a flat float array (row-major),
      * suitable for constructing a DMatrix or LightGBM Dataset.
+     * <p>
+     * Extraction is parallelised across available processors for large cell counts.
      *
      * @param cells collection of detection objects
      * @return flat float array of size {@code cells.size() * getNumFeatures()}
      */
     public float[] extractMatrix(Collection<PathObject> cells) {
         int nFeatures = featureNames.size();
-        float[] matrix = new float[cells.size() * nFeatures];
-        int i = 0;
-        for (PathObject cell : cells) {
-            var mlist = cell.getMeasurementList();
+        int nCells = cells.size();
+        float[] matrix = new float[nCells * nFeatures];
+
+        // Convert to indexed list for parallel random access
+        List<PathObject> cellList = (cells instanceof List)
+                ? (List<PathObject>) cells
+                : new ArrayList<>(cells);
+
+        java.util.stream.IntStream.range(0, nCells).parallel().forEach(i -> {
+            var mlist = cellList.get(i).getMeasurementList();
+            int offset = i * nFeatures;
             for (int j = 0; j < nFeatures; j++) {
                 double v = mlist.get(featureNames.get(j));
-                matrix[i * nFeatures + j] = Double.isNaN(v) ? 0f : (float) v;
+                matrix[offset + j] = Double.isNaN(v) ? 0f : (float) v;
             }
-            i++;
-        }
+        });
+
         return matrix;
     }
 
