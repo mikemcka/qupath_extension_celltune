@@ -268,6 +268,6 @@ These can be adjusted in the Classification Panel before training.
 
 ## Acknowledgements
 
-- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.kerenlab.org/) — the active learning cell classification workflow that this extension emulates. See [Zindy et al. (2024)](https://doi.org/10.1101/2024.09.20.613828).
+- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.kerenlab.org/) — the active learning cell classification workflow that this extension emulates. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
 - **[qupath-extension-xgboost](https://github.com/zindy/qupath-extension-xgboost)** by [Zindy](https://github.com/zindy) — a QuPath 0.7 XGBoost extension whose project structure, Gradle configuration, and XGBoost4J integration patterns served as a reference implementation for this extension.
 - Built on the [QuPath extension template](https://github.com/qupath/qupath-extension-template).
