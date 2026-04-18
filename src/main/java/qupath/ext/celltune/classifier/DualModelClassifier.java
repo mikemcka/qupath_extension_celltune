@@ -75,6 +75,7 @@ public class DualModelClassifier {
      * @param supplementaryRows    pre-extracted feature rows from other images (may be null)
      * @param supplementaryLabels  class names for supplementary rows (may be null)
      * @param resampling           resampling strategy for class imbalance (may be null for NONE)
+     * @param autoTune             if true, run random search CV to find optimal hyperparameters
      * @param log                  optional progress callback (may be null)
      * @throws Exception if training or prediction fails
      */
@@ -84,6 +85,7 @@ public class DualModelClassifier {
                                 List<float[]> supplementaryRows,
                                 List<String> supplementaryLabels,
                                 ResamplingStrategy resampling,
+                                boolean autoTune,
                                 Consumer<String> log) throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {};
@@ -180,6 +182,20 @@ public class DualModelClassifier {
         for (int i = 0; i < nSamples; i++) {
             System.arraycopy(trainRows.get(i), 0, flatData, i * nFeatures, nFeatures);
             labelArray[i] = trainLabels.get(i);
+        }
+
+        // ── 1c. Auto-tune hyperparameters if requested ──────────────────────
+        if (autoTune) {
+            updateStatus("Auto-tuning hyperparameters…", 0.05);
+            out.accept("Auto-tuning hyperparameters (this may take several minutes)…");
+            var tuneResult = HyperparameterTuner.tune(
+                    flatData, labelArray, nSamples, nFeatures, nClasses,
+                    HyperparameterTuner.DEFAULT_TRIALS,
+                    HyperparameterTuner.DEFAULT_FOLDS, out);
+            this.numRounds = tuneResult.bestParams().numRounds();
+            this.maxDepth  = tuneResult.bestParams().maxDepth();
+            this.eta       = tuneResult.bestParams().eta();
+            this.subsample = tuneResult.bestParams().subsample();
         }
 
         // ── 2. Train XGBoost ────────────────────────────────────────────────

@@ -14,6 +14,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane
 - **Multi-image training data pooling** — optionally pool labelled cells from all project images into a single training set. A "Pool labels from all images" checkbox appears in the Classification Panel and training confirmation dialog. When enabled, the extension opens each project image, collects annotation-based labels (landmarks) plus persisted review and manual labels, extracts features using the same column ordering, and adds them as supplementary training rows. Per-image labels are automatically saved to `<project>/celltune/image-labels/` after training, review, and manual labelling sessions.
 - **Resampling strategies** — address class imbalance before training with a selectable strategy: **SMOTE** (synthetic minority oversampling via k-NN interpolation), **ADASYN** (adaptive synthetic sampling weighted toward harder boundary examples), **Tomek links** (remove majority-class samples forming mutual nearest-neighbour pairs with minority samples), or combinations (**SMOTE + Tomek**, **ADASYN + Tomek**). A dropdown appears in both the Classification Panel and the training confirmation dialog. Training logs report the original and resampled class distributions.
+- **Hyperparameter auto-tuning** — optional random search with stratified 5-fold cross-validation over boosting rounds, max depth, learning rate, and subsample ratio. Each trial evaluates both XGBoost and LightGBM on held-out folds, scoring by mean macro F1. An "Auto-tune hyperparameters" checkbox appears in the Classification Panel and training dialog. When enabled, 20 random hyperparameter combinations are tested before training, and the best-performing set is applied automatically. Per-trial results are logged in the training output.
 - **Batch image classification** — after training, choose which project images to apply the trained classifier to via a dual-list image selector dialog
 - **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
@@ -171,7 +172,8 @@ src/main/java/qupath/ext/celltune/
 │   ├── ClassifierState.java        # Serialisable model snapshot
 │   ├── UncertaintySampler.java     # Weighted disagreement sampling
 │   ├── Resampler.java              # SMOTE, ADASYN, Tomek links resampling
-│   └── ResamplingStrategy.java     # Enum of available resampling strategies
+│   ├── ResamplingStrategy.java     # Enum of available resampling strategies
+│   └── HyperparameterTuner.java    # Random search CV for auto-tuning
 │
 ├── ui/                             # JavaFX panels and controls
 │   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review)
@@ -257,15 +259,9 @@ These can be adjusted in the Classification Panel before training.
 
 ## TODO / Future Exploration
 
-- **Hyperparameter tuning** — currently the user manually sets boosting rounds (200), max depth (6), learning rate (0.1), and subsample (0.8) via spinners in the Classification Panel. Investigate automated tuning strategies:
-  - **k-fold cross-validation** — split the labelled cells into k folds and evaluate each hyperparameter combination on held-out folds to estimate generalisation performance
-  - **Grid search** — exhaustive search over a predefined parameter grid (e.g. max_depth ∈ {4, 6, 8, 10}, eta ∈ {0.05, 0.1, 0.2}, rounds ∈ {100, 200, 400})
-  - **Random search** — sample hyperparameter combinations randomly from ranges, often more efficient than grid search for high-dimensional parameter spaces
-  - **Bayesian optimisation** — use a surrogate model (e.g. Gaussian process or TPE) to guide the search toward promising regions of the parameter space
-  - **Early stopping** — monitor validation loss during training and stop boosting rounds when performance plateaus, effectively auto-tuning the number of rounds
-  - Consider running tuning for both XGBoost and LightGBM independently since they may have different optimal settings
-  - Display a progress dialog with per-fold / per-trial results and the best configuration found
-  - Measure effect on per-class F1, macro F1, training time, and inter-model agreement
+- **Bayesian optimisation** — replace or augment random search with a surrogate model (e.g. Gaussian process or TPE) to guide the hyperparameter search toward promising regions more efficiently
+- **Early stopping** — monitor validation loss during training and stop boosting rounds when performance plateaus, effectively auto-tuning the number of rounds
+- **Independent model tuning** — tune XGBoost and LightGBM hyperparameters independently since they may have different optimal settings
 
 ## License
 

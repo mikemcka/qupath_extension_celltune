@@ -65,6 +65,7 @@ public class ClassificationPanel extends VBox {
     private final Spinner<Integer> depthSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
     private final ComboBox<ResamplingStrategy> resamplingCombo = new ComboBox<>();
+    private final CheckBox autoTuneCheckBox = new CheckBox("Auto-tune hyperparameters");
     private final PopulationPanel populationPanel = new PopulationPanel();
 
     public ClassificationPanel(QuPathGUI qupath) {
@@ -102,6 +103,10 @@ public class ClassificationPanel extends VBox {
         resamplingCombo.setMaxWidth(Double.MAX_VALUE);
         resamplingCombo.setTooltip(new Tooltip(
                 "Resampling strategy to address class imbalance before training"));
+
+        autoTuneCheckBox.setSelected(false);
+        autoTuneCheckBox.setTooltip(new Tooltip(
+                "Random search with cross-validation to find optimal hyperparameters before training"));
 
         // ── Status row ──
         HBox statsRow = new HBox(12, labelCountLabel, predCountLabel);
@@ -147,6 +152,7 @@ public class ClassificationPanel extends VBox {
                 paramRow,
                 poolImagesCheckBox,
                 resamplingCombo,
+                autoTuneCheckBox,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -248,6 +254,7 @@ public class ClassificationPanel extends VBox {
         final LabelStore storeCopy = labelStore;
         final boolean poolAllImages = poolImagesCheckBox.isSelected();
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
+        final boolean autoTuneSelected = autoTuneCheckBox.isSelected();
         final List<String> finalFeatureNames = featureNames;
         Thread trainThread = new Thread(() -> {
             try {
@@ -319,6 +326,7 @@ public class ClassificationPanel extends VBox {
                 classifier.trainAndPredict(detections, storeCopy, extractor,
                         supplementaryRows, supplementaryLabels,
                         resamplingStrategy,
+                        autoTuneSelected,
                         msg -> {});
 
                 predAll = classifier.getPredALL();
@@ -344,6 +352,12 @@ public class ClassificationPanel extends VBox {
                     trainButton.setDisable(false);
                     confusionsButton.setDisable(false);
                     sampleButton.setDisable(false);
+
+                    // Update spinners if auto-tuned
+                    if (autoTuneSelected) {
+                        roundsSpinner.getValueFactory().setValue(classifier.getNumRounds());
+                        depthSpinner.getValueFactory().setValue(classifier.getMaxDepth());
+                    }
 
                     imageData.getHierarchy().fireHierarchyChangedEvent(this);
 

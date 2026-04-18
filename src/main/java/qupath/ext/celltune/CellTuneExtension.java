@@ -384,6 +384,10 @@ public class CellTuneExtension implements QuPathExtension {
         var resamplingRow = new javafx.scene.layout.HBox(6, resamplingLabel, resamplingCombo);
         resamplingRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
+        var autoTuneCheckBox = new javafx.scene.control.CheckBox(
+                "Auto-tune hyperparameters (random search with cross-validation)");
+        autoTuneCheckBox.setSelected(false);
+
         var confirmAlert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.CONFIRMATION);
         confirmAlert.setTitle(EXTENSION_NAME);
@@ -399,13 +403,15 @@ public class CellTuneExtension implements QuPathExtension {
         if (hasMultipleImages) {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
-                    new javafx.scene.control.Label(confirmMsg), poolCheckBox, resamplingRow);
+                    new javafx.scene.control.Label(confirmMsg), poolCheckBox,
+                    resamplingRow, autoTuneCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         } else {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
-                    new javafx.scene.control.Label(confirmMsg), resamplingRow);
+                    new javafx.scene.control.Label(confirmMsg),
+                    resamplingRow, autoTuneCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         }
@@ -416,6 +422,7 @@ public class CellTuneExtension implements QuPathExtension {
         }
         final boolean poolAllImages = hasMultipleImages && poolCheckBox.isSelected();
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
+        final boolean autoTuneHyperparams = autoTuneCheckBox.isSelected();
 
         // Check whether the JVM has enough heap for this dataset
         if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
@@ -553,6 +560,7 @@ public class CellTuneExtension implements QuPathExtension {
                 classifier.trainAndPredict(detections, labelStore, extractor,
                         supplementaryRows, supplementaryLabels,
                         resamplingStrategy,
+                        autoTuneHyperparams,
                         msg -> {
                             logger.info("[CellTune] {}", msg);
                             javafx.application.Platform.runLater(() ->
