@@ -168,6 +168,23 @@ public class ReviewController {
         return Math.max(0, Math.min(currentIndex + 1, reviewCells.size()));
     }
 
+    /**
+     * Return all PathClass names available in the QuPath project, for the
+     * "All Classes" popup in the review toolbar.
+     */
+    public List<String> getQuPathClassNames() {
+        List<String> names = new ArrayList<>();
+        var project = qupath.getProject();
+        if (project != null) {
+            for (var pc : project.getPathClasses()) {
+                if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
+                    names.add(pc.getName());
+                }
+            }
+        }
+        return names;
+    }
+
     // ── Viewer navigation ───────────────────────────────────────────────────────
 
     private void navigateToCurrentCell() {

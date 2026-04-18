@@ -50,13 +50,14 @@ public class ConfusionMatrixView {
     private final List<String> classNames;
     private final int[][] matrix;
     private final double[] agreementRates;
+    private final double[] f1Scores;
     private final int totalCells;
     private final int totalAgreements;
 
     // Layout constants
     private static final int CELL_SIZE = 64;
     private static final int LABEL_MARGIN = 120;
-    private static final int RATE_MARGIN = 60;
+    private static final int RATE_MARGIN = 110;
     private static final int HEADER_HEIGHT = 40;
     private static final Font CELL_FONT = Font.font("SansSerif", 13);
     private static final Font LABEL_FONT = Font.font("SansSerif", 12);
@@ -94,6 +95,7 @@ public class ConfusionMatrixView {
         // Agreement rate for class i = diagonal[i] / (rowSum[i] + colSum[i] - diagonal[i])
         // This measures how often both models agree when either predicts class i.
         this.agreementRates = new double[n];
+        this.f1Scores = new double[n];
         for (int i = 0; i < n; i++) {
             int rowSum = 0, colSum = 0;
             for (int j = 0; j < n; j++) {
@@ -102,6 +104,15 @@ public class ConfusionMatrixView {
             }
             int denom = rowSum + colSum - matrix[i][i];
             agreementRates[i] = denom > 0 ? (double) matrix[i][i] / denom : 1.0;
+
+            // F1: treat diagonal as TP, row off-diag as FN, col off-diag as FP
+            int tp = matrix[i][i];
+            int fp = colSum - tp;
+            int fn = rowSum - tp;
+            double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0;
+            double recall    = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0;
+            f1Scores[i] = (precision + recall) > 0
+                    ? 2.0 * precision * recall / (precision + recall) : 0;
         }
 
         // ── Canvas ──────────────────────────────────────────────────────────
@@ -112,10 +123,13 @@ public class ConfusionMatrixView {
 
         // ── Summary label ───────────────────────────────────────────────────
         double overallRate = totalCells > 0 ? (double) totalAgreements / totalCells * 100 : 0;
+        double macroF1 = 0;
+        for (double f : f1Scores) macroF1 += f;
+        macroF1 = f1Scores.length > 0 ? macroF1 / f1Scores.length : 0;
         summaryLabel = new Label(String.format(
-                "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%)",
+                "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%) | Macro F1: %.3f",
                 totalCells, totalAgreements, overallRate,
-                totalCells - totalAgreements, 100 - overallRate));
+                totalCells - totalAgreements, 100 - overallRate, macroF1));
         summaryLabel.setPadding(new Insets(4));
 
         // ── Export button ───────────────────────────────────────────────────
@@ -157,6 +171,14 @@ public class ConfusionMatrixView {
      */
     public double[] getAgreementRates() {
         return agreementRates.clone();
+    }
+
+    /**
+     * Get the per-class F1 score array.
+     * F1 treats diagonal as TP, row off-diagonal as FN, col off-diagonal as FP.
+     */
+    public double[] getF1Scores() {
+        return f1Scores.clone();
     }
 
     /** @return the raw confusion matrix (rows = model 1, cols = model 2). */
@@ -291,6 +313,20 @@ public class ConfusionMatrixView {
         gc.setFill(Color.DARKBLUE);
         gc.setFont(LABEL_FONT);
         gc.fillText("Agr%", gridLeft + n * CELL_SIZE + 4, gridTop - 6);
+
+        // ── Right margin: per-class F1 scores ───────────────────────────────
+        double f1X = gridLeft + n * CELL_SIZE + 52;
+        gc.setFont(LABEL_FONT);
+        gc.setTextAlign(TextAlignment.LEFT);
+        for (int i = 0; i < n; i++) {
+            double y = gridTop + i * CELL_SIZE + CELL_SIZE / 2.0 + 4;
+            gc.setFill(Color.DARKRED);
+            gc.fillText(String.format("%.2f", f1Scores[i]), f1X, y);
+        }
+
+        // F1 column header
+        gc.setFill(Color.DARKRED);
+        gc.fillText("F1", f1X, gridTop - 6);
     }
 
     // ── PNG export ──────────────────────────────────────────────────────────────

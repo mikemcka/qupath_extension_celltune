@@ -9,21 +9,22 @@ import javafx.scene.shape.Circle;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.CellTypeTable;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.ResourceBundle;
+import java.util.*;
 
 /**
- * A toolbar for the Review Mode: navigation buttons, cell type assignment
- * buttons, and a status/index indicator.
+ * A toolbar for the Review Mode: navigation buttons, dynamic per-cell
+ * prediction buttons, an "All Classes" dropdown, and a status/index indicator.
+ *
+ * <p>For <b>disagreement</b> cells the toolbar shows the top prediction from
+ * each model (XGBoost &amp; LightGBM) as colour-coded buttons so the user can
+ * quickly accept one.  For <b>agreement</b> cells a single "Both" button is
+ * shown.  An "All Classes ▼" menu provides every class defined in the QuPath
+ * project as a fallback.
  *
  * <p>Layout:
  * <pre>
- *  [Previous] [Next] [Skip]   | CellType1 | CellType2 | ... |   (3/50) ●
+ *  [Previous] [Next] [Skip]  | [XGB: CD4 (87%)] [LGB: Bcell (65%)] | [All Classes ▼] |  (3/50) ●
  * </pre>
- *
- * <p>The indicator dot is green when the current cell's existing label matches
- * prediction, red on mismatch, white when unlabelled.
  */
 public class ReviewToolbar extends HBox {
 
@@ -32,7 +33,12 @@ public class ReviewToolbar extends HBox {
 
     private final ReviewController controller;
     private final ChannelSelector channelSelector;
-    private final Map<String, Button> typeButtons = new LinkedHashMap<>();
+    private final CellTypeTable cellTypeTable;
+
+    /** Dynamically-populated prediction buttons for the current cell. */
+    private final HBox predictionBox = new HBox(4);
+    /** Dropdown listing every PathClass in the QuPath project. */
+    private final MenuButton allClassesMenu = new MenuButton("All Classes \u25BC");
 
     // Status widgets
     private final Label indexLabel = new Label();
@@ -43,6 +49,7 @@ public class ReviewToolbar extends HBox {
                          ChannelSelector channelSelector) {
         super(8);
         this.controller = controller;
+        this.cellTypeTable = cellTypeTable;
         this.channelSelector = channelSelector;
         setPadding(new Insets(6, 10, 6, 10));
         setAlignment(Pos.CENTER_LEFT);
@@ -74,23 +81,12 @@ public class ReviewToolbar extends HBox {
         // ── Separator ──
         Separator sep1 = new Separator(javafx.geometry.Orientation.VERTICAL);
 
-        // ── Cell type buttons ───────────────────────────────────────────
-        HBox typeBox = new HBox(4);
-        typeBox.setAlignment(Pos.CENTER_LEFT);
-        if (cellTypeTable != null) {
-            for (String typeName : cellTypeTable.getCellTypes()) {
-                Button btn = new Button(typeName);
-                btn.setStyle("-fx-font-weight: bold;");
-                btn.setOnAction(e -> {
-                    boolean more = controller.labelAndNext(typeName);
-                    refreshStatus();
-                    channelSelector.applyForCurrentCell(controller);
-                    if (!more) showCompleteAlert();
-                });
-                typeButtons.put(typeName, btn);
-                typeBox.getChildren().add(btn);
-            }
-        }
+        // ── Prediction buttons — populated per-cell in refreshStatus() ──
+        predictionBox.setAlignment(Pos.CENTER_LEFT);
+
+        // ── All Classes menu — fallback for any QuPath class ──
+        allClassesMenu.setStyle("-fx-font-size: 11px;");
+        populateAllClassesMenu();
 
         // ── Separator ──
         Separator sep2 = new Separator(javafx.geometry.Orientation.VERTICAL);
@@ -114,16 +110,18 @@ public class ReviewToolbar extends HBox {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        getChildren().addAll(prevBtn, nextBtn, skipBtn, sep1, typeBox, sep2, spacer, statusBox);
+        getChildren().addAll(prevBtn, nextBtn, skipBtn, sep1,
+                predictionBox, allClassesMenu, sep2, spacer, statusBox);
 
         // ── Auto-advance on first show ──────────────────────────────────
-        // Start at the first cell
         controller.next();
         channelSelector.applyForCurrentCell(controller);
         refreshStatus();
     }
 
-    /** Update the index label and status dot colour. */
+    // ── Status refresh ──────────────────────────────────────────────────
+
+    /** Update prediction buttons, index label, and status dot colour. */
     public void refreshStatus() {
         int idx = controller.getCurrentIndex();
         int total = controller.size();
@@ -131,10 +129,14 @@ public class ReviewToolbar extends HBox {
         if (controller.isFinished()) {
             indexLabel.setText(String.format("(%d/%d)", total, total));
             statusDot.setFill(Color.WHITE);
+            predictionBox.getChildren().clear();
             return;
         }
 
         indexLabel.setText(String.format("(%d/%d)", idx + 1, total));
+
+        // Rebuild the prediction buttons for the current cell
+        updatePredictionButtons();
 
         // Determine dot colour
         CellPrediction pred = controller.getCurrentPrediction();
@@ -149,6 +151,84 @@ public class ReviewToolbar extends HBox {
             statusDot.setFill(Color.TOMATO);    // mismatch
         }
     }
+
+    // ── Dynamic prediction buttons ──────────────────────────────────────
+
+    private void updatePredictionButtons() {
+        predictionBox.getChildren().clear();
+        CellPrediction pred = controller.getCurrentPrediction();
+        if (pred == null) return;
+
+        if (pred.isDisagreement()) {
+            // XGBoost top prediction
+            Button xgbBtn = new Button(String.format("XGB: %s (%.0f%%)",
+                    pred.getModel1Label(), pred.model1Confidence() * 100));
+            xgbBtn.setStyle("-fx-background-color: #bbdefb; -fx-font-weight: bold; -fx-font-size: 11px;");
+            xgbBtn.setOnAction(e -> assignAndAdvance(pred.getModel1Label()));
+
+            // LightGBM top prediction
+            Button lgbBtn = new Button(String.format("LGB: %s (%.0f%%)",
+                    pred.getModel2Label(), pred.model2Confidence() * 100));
+            lgbBtn.setStyle("-fx-background-color: #f8bbd0; -fx-font-weight: bold; -fx-font-size: 11px;");
+            lgbBtn.setOnAction(e -> assignAndAdvance(pred.getModel2Label()));
+
+            predictionBox.getChildren().addAll(xgbBtn, lgbBtn);
+
+            // If the averaged prediction differs from both, show it too
+            String avgLabel = pred.avgLabel();
+            if (!avgLabel.equals(pred.getModel1Label()) && !avgLabel.equals(pred.getModel2Label())) {
+                Button avgBtn = new Button(String.format("Avg: %s", avgLabel));
+                avgBtn.setStyle("-fx-background-color: #c8e6c9; -fx-font-weight: bold; -fx-font-size: 11px;");
+                avgBtn.setOnAction(e -> assignAndAdvance(avgLabel));
+                predictionBox.getChildren().add(avgBtn);
+            }
+        } else {
+            // Both models agree — single button
+            float avgConf = (pred.model1Confidence() + pred.model2Confidence()) / 2f;
+            Button agreedBtn = new Button(String.format("Both: %s (%.0f%%)",
+                    pred.getModel1Label(), avgConf * 100));
+            agreedBtn.setStyle("-fx-background-color: #c8e6c9; -fx-font-weight: bold; -fx-font-size: 11px;");
+            agreedBtn.setOnAction(e -> assignAndAdvance(pred.getModel1Label()));
+            predictionBox.getChildren().add(agreedBtn);
+        }
+    }
+
+    /** Assign a class label to the current cell and move to the next one. */
+    private void assignAndAdvance(String className) {
+        boolean more = controller.labelAndNext(className);
+        refreshStatus();
+        channelSelector.applyForCurrentCell(controller);
+        if (!more) showCompleteAlert();
+    }
+
+    // ── All Classes menu ────────────────────────────────────────────────
+
+    private void populateAllClassesMenu() {
+        allClassesMenu.getItems().clear();
+
+        // Gather class names: QuPath project classes first, then CellTypeTable
+        Set<String> seen = new LinkedHashSet<>();
+        for (String name : controller.getQuPathClassNames()) {
+            seen.add(name);
+        }
+        if (cellTypeTable != null) {
+            for (String ct : cellTypeTable.getCellTypes()) {
+                seen.add(ct);
+            }
+        }
+
+        for (String name : seen) {
+            MenuItem item = new MenuItem(name);
+            item.setOnAction(e -> assignAndAdvance(name));
+            allClassesMenu.getItems().add(item);
+        }
+
+        if (allClassesMenu.getItems().isEmpty()) {
+            allClassesMenu.setDisable(true);
+        }
+    }
+
+    // ── Dialogs ─────────────────────────────────────────────────────────
 
     private void showJumpDialog() {
         TextInputDialog dlg = new TextInputDialog();

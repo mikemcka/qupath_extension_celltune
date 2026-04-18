@@ -65,10 +65,12 @@ qupath-extension-celltune/
 │  ├─ ui/                                            // JavaFX panels and controls
 │  │  ├─ ClassificationPanel.java                    // Main classifier sidebar panel
 │  │  ├─ ConfusionMatrixView.java                    // JavaFX Canvas inter-model confusion plot
-│  │  ├─ ReviewToolbar.java                          // Next/Prev + cell type label buttons
+│  │  ├─ ReviewToolbar.java                          // Nav + dynamic prediction buttons + All Classes menu
 │  │  ├─ ReviewController.java                       // Review queue logic, viewer navigation
 │  │  ├─ PopulationPanel.java                        // Lists population sets, triggers review
 │  │  ├─ ChannelSelector.java                        // Auto channel switching during review
+│  │  ├─ ImageSelectionPane.java                     // Dual-list image selector for batch classification
+│  │  ├─ ManualLabelToolbar.java                     // Floating toolbar for direct cell labelling
 │  │  └─ FeatureSelectionPane.java                   // Feature selection dialog (2000+ features)
 │  │
 │  └─ io/                                            // Import / export
@@ -179,11 +181,12 @@ This is the intellectual core of the extension — the two-model training loop t
 | 4.7 | Auto-backup `LabelStore` to project folder on every train (filename includes timestamp) | `io/ProjectStateManager.java` | 4.3, 3.3 | ✅ Done |
 
 > **Phase 4 Build Notes:**
-> - `XGBoostModel`: uses `multi:softprob` / `binary:logistic`, embeds feature names + class names in booster attrs, serialises via `toByteArray()`
-> - `LightGBMModel`: uses `com.microsoft.ml.lightgbm.PredictionType.C_API_PREDICT_NORMAL` (SWIG package, not lightgbm4j package). `saveModelToString()` requires 3 args including `LGBMBooster.FeatureImportanceType.SPLIT`
-> - `DualModelClassifier`: orchestrates train → predict → build 4 PopulationSets, sets `Pred_AVG` as PathClass on cells, exposes `progressProperty()` / `statusProperty()` for UI binding
-> - `CellTuneExtension.showClassifierPanel()`: collects labels from point annotations overlapping detections, trains on daemon thread, auto-backs up labels, saves classifier state to project
-> - Classifier menu item is now fully functional (no longer a placeholder)
+> - `XGBoostModel`: uses `multi:softprob` / `binary:logistic`, embeds feature names + class names in booster attrs, serialises via `toByteArray()`. Attempts GPU (CUDA) training first with `device=cuda`, falls back to CPU. Reports device via `getLastDevice()`.
+> - `LightGBMModel`: uses `com.microsoft.ml.lightgbm.PredictionType.C_API_PREDICT_NORMAL` (SWIG package, not lightgbm4j package). `saveModelToString()` requires 3 args including `LGBMBooster.FeatureImportanceType.SPLIT`. Attempts GPU training first with `device_type=gpu`, falls back to CPU. Reports device via `getLastDevice()`.
+> - `DualModelClassifier`: orchestrates train → predict → build 4 PopulationSets, sets `Pred_AVG` as PathClass on cells, exposes `progressProperty()` / `statusProperty()` for UI binding. `predictOnly()` method applies trained models to other images without retraining. Logs device info (GPU/CPU) and thread count through the progress callback.
+> - `CellTuneExtension.showClassifierPanel()`: collects labels from point annotations overlapping detections, prompts for feature selection if needed, shows confirmation dialog, presents `ImageSelectionPane` for batch image selection, displays a progress dialog with real-time progress bar and scrollable log, trains on daemon thread, applies predictions to selected images, auto-backs up labels, saves classifier state to project
+> - `ImageSelectionPane`: dual-list dialog with Included/Excluded image lists, search filters, `>>` / `>` / `<` / `<<` transfer buttons. Current image is always included (protected). Returns selected image names or null on cancel.
+> - Classifier menu item renamed from "CellTune Classifier..." to "Run CellTune Classification..."
 
 > **Note:** XGBoost4J multiclass needs `num_class` set to the number of cell types. Use `softprob` objective to get per-class probabilities. LightGBM equivalent is `multiclass` / `softmax`. Both models must use exactly the same feature column ordering — enforce this through `CellFeatureExtractor`.
 
@@ -216,10 +219,12 @@ Once the classifier can train and produce predictions, this phase adds the analy
 > **Note:** Mirror CellTune's sampling strategy — cells where both models predict different types AND at least one of those types has low overall agreement are sampled most heavily. This ensures the human's labelling time fixes the model's worst failure modes first.
 
 > **Phase 5 Build Notes:**
-> - `ConfusionMatrixView` is a Canvas-based confusion matrix with green diagonal / red off-diagonal colour scaling, right-margin Agr% column, and PNG export via `WritableImage → ImageIO.write`
+> - `ConfusionMatrixView` is a Canvas-based confusion matrix with green diagonal / red off-diagonal colour scaling, right-margin Agr% and F1 columns, macro F1 in the summary label, and PNG export via `WritableImage → ImageIO.write`
 > - `UncertaintySampler.sample()` implements weighted sampling without replacement — weight = `2 - agrRate[i] - agrRate[j]` with a minimum floor of 0.01
 > - Wired into `CellTuneExtension.showConfusions()`: opens confusion matrix, computes agreement rates, prompts for sample count, calls `UncertaintySampler`, stores sampled IDs in `lastSampledCellIds`
 > - `ConfusionMatrixView.getAgreementRates()` returns per-class `double[]` for use by `UncertaintySampler`
+> - `ConfusionMatrixView.getF1Scores()` returns per-class F1 scores; macro F1 displayed in summary label
+> - Menu item renamed from "CellTune Classifier..." to "Run CellTune Classification..." with feature selection prompt and training confirmation dialog before proceeding
 
 ---
 
@@ -232,7 +237,7 @@ This is the most user-facing phase — the part the researcher interacts with mo
 |---|---|---|---|---|
 | 6.1 | `ReviewController` — holds an ordered `List<PathObject>` (the sampled cells), current index, viewing `PopulationSet`, output `LabelStore` | `ui/ReviewController.java` | Phase 5 | ✅ Done |
 | 6.2 | `next()` / `previous()` methods that pan+zoom the QuPath viewer to the cell centroid at 40× magnification | `ui/ReviewController.java` | 6.1 | ✅ Done |
-| 6.3 | `ReviewToolbar` — JavaFX HBox with Next, Previous, Skip buttons + one `ToggleButton` per cell type (loaded from `CellTypeTable`) | `ui/ReviewToolbar.java` | 6.1 | ✅ Done |
+| 6.3 | `ReviewToolbar` — JavaFX HBox with Next, Previous, Skip buttons + dynamic per-cell prediction buttons (XGB/LGB labels with confidence %) for disagreement cells, single "Both" button for agreement cells, and an "All Classes ▼" dropdown populated from QuPath project classes as fallback | `ui/ReviewToolbar.java` | 6.1 | ✅ Done |
 | 6.4 | Index indicator label that turns **green** (output label = viewed prediction), **red** (mismatch), or **white** (unlabelled) | `ui/ReviewToolbar.java` | 6.2 | ✅ Done |
 | 6.5 | On cell type button click: write label to output `LabelStore`, call `next()` | `ui/ReviewToolbar.java` | 6.1, 6.3 | ✅ Done |
 | 6.6 | `ChannelSelector` — **optional** auto channel switching on `next()`. When enabled and a `CellTypeTable` is loaded, looks up the two predicted cell types and sets up to 3 channels visible per type (6 total + 1 nuclear). When disabled, channels are left untouched and the user switches manually via QuPath's Brightness & Contrast panel. Controlled by a `CheckBox` ("Auto switch channels") in `ReviewToolbar`. | `ui/ChannelSelector.java` | 6.2, CellTypeTable | ✅ Done |
@@ -242,7 +247,7 @@ This is the most user-facing phase — the part the researcher interacts with mo
 
 > **Phase 6 Build Notes:**
 > - `ReviewController`: Resolves sampled cell IDs to `PathObject` references from the image hierarchy. Provides `next()`, `previous()`, `jumpTo()`, `labelAndNext()`, `skip()`. Navigates viewer to cell centroid via `viewer.setCenterPixelLocation(x, y)` and selects the cell in the hierarchy.
-> - `ReviewToolbar`: JavaFX HBox with Previous/Next/Skip nav buttons, one Button per cell type from `CellTypeTable`, and a monospace index indicator `(3/50)` with a coloured `Circle` dot (green = matches Pred_ALL, red = mismatch, white = unlabelled). Right-click index label opens jump-to-index dialog.
+> - `ReviewToolbar`: JavaFX HBox with Previous/Next/Skip nav buttons, dynamic prediction buttons per cell (for disagreement cells: `XGB: CD4 (87%)` in blue + `LGB: Bcell (65%)` in pink; for agreement cells: single green `Both: CD4 (87%)` button), an "All Classes ▼" `MenuButton` populated from `ReviewController.getQuPathClassNames()` + `CellTypeTable.getCellTypes()`, and a monospace index indicator `(3/50)` with a coloured `Circle` dot (green = matches Pred_ALL, red = mismatch, white = unlabelled). Right-click index label opens jump-to-index dialog.
 > - `ChannelSelector`: Checkbox-gated auto-switch. When enabled, looks up the Pred_ALL cell type in `CellTypeTable`, gets up to 3 marker names, and sets only those channels visible via `viewer.getImageDisplay().setChannelSelected()`. When disabled, channels untouched.
 > - `CellTuneExtension.showReviewMode()`: Validates sampled cells exist, builds ReviewController + ChannelSelector + ReviewToolbar, opens an always-on-top Stage. On window close, merges output labels back into the main `labelStore` with notification.
 
@@ -472,6 +477,25 @@ For large multiplex panels (COMET, MIBI, etc.) that generate 2000+ features per 
 - If no selection has been made, all features are used (default behaviour)
 - Selecting all features or clearing the selection resets to "use all"
 
+### 8.3 Manual Label Mode — `ui/ManualLabelToolbar.java` ✅ COMPLETE
+
+A floating toolbar that lets users click on cells directly in the QuPath viewer and assign class labels, independent of Review Mode. Useful for seeding initial labels, correcting individual cells, or labelling cells that weren't sampled for review.
+
+**UI Layout:**
+- **Status row:** Shows the selected cell's short ID, current class, a colour-coded status dot (green = labelled, white = unlabelled), and a running label count
+- **Class buttons:** Up to 12 inline buttons populated from QuPath project classes + CellTypeTable entries
+- **"All Classes ▼" dropdown:** Full class list as a MenuButton fallback
+- **Auto-advance checkbox:** When enabled, selecting a label automatically jumps the viewer to the next detection in the hierarchy
+
+**Technical details:**
+- Listens for cell selection changes via `PathObjectSelectionModel.addPathObjectSelectionListener()` (QuPath 0.7's selection listener API — not a JavaFX property)
+- UI updates wrapped in `Platform.runLater()` since the selection callback may fire off the FX thread
+- On label assignment: sets `PathClass` on the cell, records in `LabelStore`, fires `fireObjectClassificationsChangedEvent` to refresh the overlay colours
+- Always-on-top `Stage` with `Modality.NONE` so QuPath remains interactive
+- Listener is removed on window close to prevent memory leaks
+
+**Menu item:** Extensions > CellTune Classifier > Manual Label Mode…
+
 ### Reference Pattern (from qupath-extension-xgboost)
 
 The xgboost extension in `c:\Users\Mikem\qupath-extension-xgboost\` is a working QuPath 0.7 extension. Key patterns to copy:
@@ -480,3 +504,47 @@ The xgboost extension in `c:\Users\Mikem\qupath-extension-xgboost\` is a working
 - DMatrix construction + XGBoost4J usage: [XGBoostTrainer.java](../qupath-extension-xgboost/src/main/java/qupath/ext/xgboost/XGBoostTrainer.java)
 - Inference + PathClass assignment: [XGBoostInferencer.java](../qupath-extension-xgboost/src/main/java/qupath/ext/xgboost/XGBoostInferencer.java)
 - ListSelectionView + filter pattern: [InferController.java](../qupath-extension-xgboost/src/main/java/qupath/ext/xgboost/ui/InferController.java)
+
+---
+
+## 9. TODO / Future Exploration
+
+Areas to investigate in future development iterations:
+
+### 9.1 Multi-Image Ground Truth Aggregation
+
+Explore how adding ground truth labels from multiple project images — via both Review Mode and Manual Label Mode — affects classifier performance.
+
+**Questions to answer:**
+- How should labels from different images be pooled into a shared training set? Currently `LabelStore` is per-image.
+- When training on pooled labels, should features be normalised per-image to account for staining variation?
+- Can spatial import (`GroundTruthIO.importCSVSpatial`) reliably transfer labels between serial sections or re-stained slides?
+- What is the optimal workflow: train on one heavily-labelled image then predict + review on others, or label a small seed set across all images and train jointly?
+- How do Review Mode corrections on Image B interact with the existing ground truth from Image A after merge?
+
+### 9.2 Resampling Strategies for Class Imbalance
+
+Evaluate the impact of synthetic resampling techniques on training quality, especially for rare cell populations (e.g. Tregs, DCs) that are underrepresented in typical labelling sessions.
+
+**Techniques to explore:**
+
+| Technique | Type | Description |
+|-----------|------|-------------|
+| **SMOTE** | Over-sampling | Generates synthetic minority-class samples by interpolating between k-nearest neighbours in feature space |
+| **ADASYN** | Adaptive over-sampling | Like SMOTE but generates more synthetic samples for harder-to-learn minority examples (based on local density) |
+| **Tomek links** | Under-sampling / cleaning | Identifies and removes majority-class samples that form nearest-neighbour pairs with minority-class samples, cleaning the decision boundary |
+| **SMOTE + Tomek** | Combined pipeline | Over-sample with SMOTE, then remove Tomek links to clean noisy synthetic samples near the boundary |
+| **ADASYN + Tomek** | Combined pipeline | Adaptive over-sampling followed by Tomek link cleaning |
+
+**Metrics to track:**
+- Per-class F1 scores (especially for minority classes)
+- Macro F1 across all classes
+- Inter-model agreement rates (XGBoost vs LightGBM)
+- Training time impact
+- Number of review rounds needed to reach target F1
+
+**Implementation notes:**
+- Resampling should be applied to the training feature matrix + labels *after* extraction and *before* passing to XGBoost/LightGBM
+- Java implementations of SMOTE/ADASYN/Tomek would need to be written or ported (no standard Java ML library provides these out of the box)
+- Consider making resampling strategy a dropdown option in `ClassificationPanel` with default = None
+- k-neighbour search for SMOTE/ADASYN can use brute-force Euclidean distance (feature vectors are typically <200 dimensions)

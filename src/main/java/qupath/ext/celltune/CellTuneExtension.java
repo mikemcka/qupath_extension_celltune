@@ -20,6 +20,8 @@ import qupath.ext.celltune.ui.ChannelSelector;
 import qupath.ext.celltune.ui.ClassificationPanel;
 import qupath.ext.celltune.ui.ConfusionMatrixView;
 import qupath.ext.celltune.ui.FeatureSelectionPane;
+import qupath.ext.celltune.ui.ImageSelectionPane;
+import qupath.ext.celltune.ui.ManualLabelToolbar;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
 import qupath.fx.dialogs.Dialogs;
@@ -32,7 +34,9 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.objects.PathObjectTools;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.projects.ProjectImageEntry;
 
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -158,6 +162,10 @@ public class CellTuneExtension implements QuPathExtension {
         reviewItem.setOnAction(e -> showReviewMode(qupath));
         reviewItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem manualLabelItem = new MenuItem(resources.getString("menu.manual.label"));
+        manualLabelItem.setOnAction(e -> showManualLabelMode(qupath));
+        manualLabelItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem confusionsItem = new MenuItem(resources.getString("menu.confusions"));
         confusionsItem.setOnAction(e -> showConfusions(qupath));
         confusionsItem.disableProperty().bind(enableExtensionProperty.not());
@@ -187,6 +195,7 @@ public class CellTuneExtension implements QuPathExtension {
                 featuresItem,
                 new SeparatorMenuItem(),
                 reviewItem,
+                manualLabelItem,
                 confusionsItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,
@@ -233,14 +242,45 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
 
-        // Discover feature names and train
-        List<String> featureNames = CellFeatureExtractor.discoverFeatureNames(detections);
-        if (featureNames.isEmpty()) {
+        // Discover feature names
+        List<String> allFeatureNames = CellFeatureExtractor.discoverFeatureNames(detections);
+        if (allFeatureNames.isEmpty()) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No cell measurements found.");
             return;
         }
 
+        // Prompt user to select features if not yet selected
+        if (selectedFeatures == null || selectedFeatures.isEmpty()) {
+            var featurePrompt = new javafx.scene.control.Alert(
+                    javafx.scene.control.Alert.AlertType.CONFIRMATION);
+            featurePrompt.setTitle(EXTENSION_NAME);
+            featurePrompt.setHeaderText("Feature Selection");
+            featurePrompt.setContentText(
+                    allFeatureNames.size() + " features detected.\n\n"
+                    + "Would you like to select specific features before training?\n"
+                    + "(Recommended for panels with 100+ measurements.\n"
+                    + "Choose 'No' to use all features.)");
+            var selectBtn = new javafx.scene.control.ButtonType("Select Features");
+            var useAllBtn = new javafx.scene.control.ButtonType("Use All");
+            var cancelBtn = javafx.scene.control.ButtonType.CANCEL;
+            featurePrompt.getButtonTypes().setAll(selectBtn, useAllBtn, cancelBtn);
+            var featureResult = featurePrompt.showAndWait();
+            if (featureResult.isEmpty() || featureResult.get() == cancelBtn) {
+                return;
+            }
+            if (featureResult.get() == selectBtn) {
+                var pane = new FeatureSelectionPane(qupath.getStage(), allFeatureNames, null);
+                List<String> chosen = pane.showAndWait();
+                if (chosen == null) return; // user cancelled
+                if (!chosen.isEmpty() && chosen.size() < allFeatureNames.size()) {
+                    selectedFeatures = chosen;
+                }
+                syncPanelState();
+            }
+        }
+
         // Apply user feature selection if set
+        List<String> featureNames = new java.util.ArrayList<>(allFeatureNames);
         if (selectedFeatures != null && !selectedFeatures.isEmpty()) {
             featureNames = featureNames.stream()
                     .filter(selectedFeatures::contains)
@@ -252,25 +292,92 @@ public class CellTuneExtension implements QuPathExtension {
                 return;
             }
             logger.info("Using {} of {} available features (user selection)",
-                    featureNames.size(), CellFeatureExtractor.discoverFeatureNames(detections).size());
+                    featureNames.size(), allFeatureNames.size());
         }
+
+        // Confirm before starting training
+        var confirm = Dialogs.showConfirmDialog(EXTENSION_NAME,
+                "Ready to train with " + featureNames.size() + " features and "
+                + labelStore.size() + " labelled cells.\n\nProceed with classification?");
+        if (!confirm) return;
 
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
         if (classifier == null) {
             classifier = new DualModelClassifier();
         }
 
+        // Collect project image entries for batch application
+        var project = qupath.getProject();
+        List<String> allImageNames = new java.util.ArrayList<>();
+        String currentImageName = null;
+        if (project != null) {
+            @SuppressWarnings("unchecked")
+            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            for (var entry : entries) {
+                allImageNames.add(entry.getImageName());
+            }
+            var currentEntry = project.getEntry(imageData);
+            if (currentEntry != null) {
+                currentImageName = currentEntry.getImageName();
+            }
+        }
+
+        // Show image selection dialog (current image is always included)
+        List<String> selectedImages;
+        if (allImageNames.size() > 1) {
+            var imageSelector = new ImageSelectionPane(
+                    qupath.getStage(), allImageNames, currentImageName);
+            selectedImages = imageSelector.showAndWait();
+            if (selectedImages == null) return; // user cancelled
+        } else {
+            selectedImages = allImageNames;
+        }
+
+        final List<String> imagesToClassify = selectedImages;
+        final List<String> finalFeatureNames = featureNames;
+
+        // ── Progress dialog ─────────────────────────────────────────────────
+        var progressStage = new javafx.stage.Stage();
+        progressStage.setTitle("CellTune — Training");
+        progressStage.initOwner(qupath.getStage());
+        progressStage.initModality(javafx.stage.Modality.NONE);
+        progressStage.setResizable(false);
+        progressStage.setAlwaysOnTop(true);
+
+        var progressBar = new javafx.scene.control.ProgressBar(0);
+        progressBar.setPrefWidth(400);
+        var statusLabel = new javafx.scene.control.Label("Initialising…");
+        statusLabel.setWrapText(true);
+        statusLabel.setMaxWidth(400);
+        var logArea = new javafx.scene.control.TextArea();
+        logArea.setEditable(false);
+        logArea.setPrefHeight(150);
+        logArea.setPrefWidth(400);
+        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
+
+        var progressBox = new javafx.scene.layout.VBox(8, statusLabel, progressBar, logArea);
+        progressBox.setPadding(new javafx.geometry.Insets(15));
+        progressStage.setScene(new javafx.scene.Scene(progressBox));
+        progressStage.show();
+
+        // Bind progress bar and status label to classifier properties
+        progressBar.progressProperty().bind(classifier.progressProperty());
+        statusLabel.textProperty().bind(classifier.statusProperty());
+
         // Run training on a background daemon thread
         Thread trainThread = new Thread(() -> {
             try {
                 // Auto-backup labels before training
-                var project = qupath.getProject();
                 if (project != null) {
                     ProjectStateManager.backupLabels(project, labelStore);
                 }
 
                 classifier.trainAndPredict(detections, labelStore, extractor,
-                        msg -> logger.info("[CellTune] {}", msg));
+                        msg -> {
+                            logger.info("[CellTune] {}", msg);
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText(msg + "\n"));
+                        });
 
                 predAll = classifier.getPredALL();
 
@@ -282,23 +389,88 @@ public class CellTuneExtension implements QuPathExtension {
                             state.getXgboostBytes(), state.getLightgbmBytes());
                 }
 
-                javafx.application.Platform.runLater(() -> {
-                    imageData.getHierarchy().fireHierarchyChangedEvent(this);
-                    syncPanelState();
-                    Dialogs.showInfoNotification(EXTENSION_NAME,
-                            "Training complete. " + predAll.size() + " cells classified, "
-                            + predAll.getDisagreementCount() + " disagreements.");
-                });
+                // Apply predictions to other selected images
+                if (project != null && imagesToClassify.size() > 1) {
+                    @SuppressWarnings("unchecked")
+                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+                    var currentEntry = project.getEntry(imageData);
+
+                    int applied = 0;
+                    for (var entry : allEntries) {
+                        if (currentEntry != null && entry.equals(currentEntry)) continue;
+                        if (!imagesToClassify.contains(entry.getImageName())) continue;
+
+                        try {
+                            String imgName = entry.getImageName();
+                            logger.info("[CellTune] Applying predictions to: {}", imgName);
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("Classifying: " + imgName + "\n"));
+
+                            var otherImageData = entry.readImageData();
+                            var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
+                            if (otherDetections.isEmpty()) {
+                                logger.warn("[CellTune] No detections in {}, skipping", imgName);
+                                javafx.application.Platform.runLater(() ->
+                                        logArea.appendText("  Skipped (no detections): " + imgName + "\n"));
+                                continue;
+                            }
+
+                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            classifier.predictOnly(otherDetections, otherExtractor,
+                                    msg -> {
+                                        logger.info("[CellTune] [{}] {}", imgName, msg);
+                                        javafx.application.Platform.runLater(() ->
+                                                logArea.appendText("  " + msg + "\n"));
+                                    });
+
+                            entry.saveImageData(otherImageData);
+                            applied++;
+                        } catch (Exception imgEx) {
+                            logger.error("[CellTune] Failed to classify {}: {}",
+                                    entry.getImageName(), imgEx.getMessage());
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("  ERROR: " + imgEx.getMessage() + "\n"));
+                        }
+                    }
+
+                    final int totalApplied = applied;
+                    javafx.application.Platform.runLater(() -> {
+                        imageData.getHierarchy().fireHierarchyChangedEvent(this);
+                        syncPanelState();
+                        logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
+                                + predAll.getDisagreementCount() + " disagreements.\n"
+                                + "Applied to " + totalApplied + " additional image(s).\n");
+                        statusLabel.textProperty().unbind();
+                        statusLabel.setText("Complete — close this window when ready.");
+                        progressBar.progressProperty().unbind();
+                        progressBar.setProgress(1.0);
+                    });
+                } else {
+                    javafx.application.Platform.runLater(() -> {
+                        imageData.getHierarchy().fireHierarchyChangedEvent(this);
+                        syncPanelState();
+                        logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
+                                + predAll.getDisagreementCount() + " disagreements.\n");
+                        statusLabel.textProperty().unbind();
+                        statusLabel.setText("Complete — close this window when ready.");
+                        progressBar.progressProperty().unbind();
+                        progressBar.setProgress(1.0);
+                    });
+                }
             } catch (Exception ex) {
                 logger.error("Training failed", ex);
-                javafx.application.Platform.runLater(() ->
-                        Dialogs.showErrorMessage(EXTENSION_NAME, "Training failed: " + ex.getMessage()));
+                javafx.application.Platform.runLater(() -> {
+                    logArea.appendText("\nERROR: " + ex.getMessage() + "\n");
+                    statusLabel.textProperty().unbind();
+                    statusLabel.setText("Training failed!");
+                    progressBar.progressProperty().unbind();
+                    progressBar.setProgress(0);
+                    Dialogs.showErrorMessage(EXTENSION_NAME, "Training failed: " + ex.getMessage());
+                });
             }
         }, "CellTune-Training");
         trainThread.setDaemon(true);
         trainThread.start();
-
-        Dialogs.showInfoNotification(EXTENSION_NAME, "Training started in background…");
     }
 
     /**
@@ -331,6 +503,39 @@ public class CellTuneExtension implements QuPathExtension {
                 }
             }
         }
+    }
+
+    private void showManualLabelMode(QuPathGUI qupath) {
+        if (qupath.getImageData() == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+        if (qupath.getImageData().getHierarchy().getDetectionObjects().isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No detections found. Run cell detection first.");
+            return;
+        }
+
+        if (labelStore == null) {
+            labelStore = new LabelStore("CellTune");
+        }
+
+        // Gather extra class names from CellTypeTable if loaded
+        java.util.Set<String> extraClasses = null;
+        if (cellTypeTable != null) {
+            extraClasses = cellTypeTable.getCellTypes();
+        }
+
+        var toolbar = new ManualLabelToolbar(
+                qupath, labelStore, extraClasses, qupath.getStage());
+
+        // When the manual label window closes, sync state
+        toolbar.getStage().setOnHidden(e -> {
+            syncPanelState();
+            logger.info("Manual label mode ended — {} total labels", labelStore.size());
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Manual labelling complete: " + labelStore.size() + " total labels.");
+        });
     }
 
     private void showReviewMode(QuPathGUI qupath) {

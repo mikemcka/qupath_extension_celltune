@@ -131,6 +131,8 @@ public class DualModelClassifier {
 
         out.accept("Training data: " + nSamples + " cells, "
                 + nFeatures + " features, " + nClasses + " classes");
+        out.accept("Threads: " + Runtime.getRuntime().availableProcessors()
+                + " available processors");
 
         // Flatten to arrays
         float[] flatData = new float[nSamples * nFeatures];
@@ -146,6 +148,7 @@ public class DualModelClassifier {
 
         xgbModel.train(flatData, labelArray, nSamples, nFeatures,
                 classNames, featureNames, numRounds, maxDepth, eta, subsample);
+        out.accept("XGBoost trained on: " + xgbModel.getLastDevice());
 
         // ── 3. Train LightGBM ───────────────────────────────────────────────
         updateStatus("Training LightGBM…", 0.40);
@@ -153,6 +156,7 @@ public class DualModelClassifier {
 
         lgbModel.train(flatData, labelArray, nSamples, nFeatures,
                 classNames, featureNames, numRounds, maxDepth, eta, subsample);
+        out.accept("LightGBM trained on: " + lgbModel.getLastDevice());
 
         // ── 4. Predict all cells ────────────────────────────────────────────
         updateStatus("Predicting all cells…", 0.65);
@@ -211,6 +215,57 @@ public class DualModelClassifier {
     }
 
     // ── Classifier state for persistence ────────────────────────────────────────
+
+    /**
+     * Apply predictions from the already-trained models to a collection of cells
+     * without retraining. Used for classifying cells in other project images.
+     *
+     * @param cells     detection objects to classify
+     * @param extractor feature extractor (must use the same feature columns as training)
+     * @param log       optional progress callback
+     * @throws Exception if prediction fails
+     */
+    public void predictOnly(Collection<PathObject> cells,
+                            CellFeatureExtractor extractor,
+                            Consumer<String> log) throws Exception {
+        if (!isTrained()) {
+            throw new IllegalStateException("Models must be trained before predicting.");
+        }
+        Consumer<String> out = log != null ? log : s -> {};
+
+        int totalCells = cells.size();
+        int nFeatures = extractor.getNumFeatures();
+
+        out.accept("Predicting " + totalCells + " cells…");
+
+        float[] allData = extractor.extractMatrix(cells);
+        float[][] xgbProbs = xgbModel.predictProba(allData, totalCells, nFeatures);
+        float[][] lgbProbs = lgbModel.predictProba(allData, totalCells, nFeatures);
+
+        int idx = 0;
+        int disagreements = 0;
+        for (PathObject cell : cells) {
+            int xgbBest = argmax(xgbProbs[idx]);
+            int lgbBest = argmax(lgbProbs[idx]);
+
+            String xgbLabel = classNames.get(xgbBest);
+            String lgbLabel = classNames.get(lgbBest);
+
+            CellPrediction pred = new CellPrediction(
+                    cell.getID().toString(), xgbLabel, lgbLabel,
+                    xgbProbs[idx], lgbProbs[idx], classNames);
+
+            String avgLabel = pred.avgLabel();
+            cell.setPathClass(PathClass.fromString(avgLabel));
+
+            if (pred.isDisagreement()) disagreements++;
+            idx++;
+        }
+
+        out.accept("Predictions applied: " + totalCells + " cells, "
+                + disagreements + " disagreements ("
+                + String.format("%.1f%%", 100.0 * disagreements / totalCells) + ")");
+    }
 
     /**
      * Create a {@link ClassifierState} snapshot from the current trained models.

@@ -25,6 +25,7 @@ public class LightGBMModel {
     private int nClasses;
     private List<String> classNames;
     private List<String> featureNames;
+    private String lastDevice = "unknown";
 
     // ── Training ────────────────────────────────────────────────────────────────
 
@@ -55,26 +56,51 @@ public class LightGBMModel {
 
         // Create dataset from matrix
         LGBMDataset dataset = LGBMDataset.createFromMat(flatData, nSamples, nFeatures, true, "", null);
-        dataset.setFeatureNames(featureNames.toArray(new String[0]));
+        // LightGBM also rejects special/non-ASCII chars in feature names
+        String[] safeNames = featureNames.stream()
+                .map(XGBoostModel::sanitiseFeatureName)
+                .toArray(String[]::new);
+        dataset.setFeatureNames(safeNames);
         dataset.setField("label", labels);
 
         // Build parameter string
         String params = buildParams(nClasses, maxDepth, learningRate, subsample);
 
-        logger.info("LightGBM training: {} samples, {} features, {} classes, {} rounds",
-                nSamples, nFeatures, nClasses, numRounds);
-
-        booster = LGBMBooster.create(dataset, params);
-
-        for (int i = 0; i < numRounds; i++) {
-            booster.updateOneIter();
+        // Attempt GPU training, fall back to CPU
+        boolean usingGpu = false;
+        try {
+            String gpuParams = params + " device_type=gpu";
+            logger.info("LightGBM: attempting GPU training…");
+            booster = LGBMBooster.create(dataset, gpuParams);
+            for (int i = 0; i < numRounds; i++) {
+                booster.updateOneIter();
+            }
+            usingGpu = true;
+            logger.info("LightGBM training: GPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples, nFeatures, nClasses, numRounds);
+        } catch (Exception gpuEx) {
+            logger.info("LightGBM GPU not available ({}), falling back to CPU", gpuEx.getMessage());
+            // Re-create booster with CPU params
+            if (booster != null) {
+                try { booster.close(); } catch (Exception ignore) {}
+            }
+            booster = LGBMBooster.create(dataset, params);
+            for (int i = 0; i < numRounds; i++) {
+                booster.updateOneIter();
+            }
+            logger.info("LightGBM training: CPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples, nFeatures, nClasses, numRounds);
         }
 
         // Close dataset — booster keeps its own copy
         dataset.close();
 
-        logger.info("LightGBM training complete");
+        logger.info("LightGBM training complete ({})", usingGpu ? "GPU" : "CPU");
+        lastDevice = usingGpu ? "GPU" : "CPU";
     }
+
+    /** @return the device used for the last training run */
+    public String getLastDevice() { return lastDevice; }
 
     // ── Prediction ──────────────────────────────────────────────────────────────
 

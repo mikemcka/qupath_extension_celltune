@@ -6,11 +6,14 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 
 ## Features
 
-- **Dual-model disagreement detection** — XGBoost and LightGBM are trained on the same labels; cells where they disagree are flagged for review
+- **Dual-model disagreement detection** — XGBoost and LightGBM are trained on the same labels; cells where they disagree are flagged for review. Both models attempt GPU (CUDA) training automatically and fall back to CPU if unavailable.
 - **Weighted uncertainty sampling** — cells involving confused class pairs are sampled more heavily, so your labelling time targets the model's worst failure modes first
-- **Interactive review mode** — navigate cell-by-cell through sampled disagreements, assign labels with one click, and optionally auto-switch fluorescence channels based on predicted cell type
-- **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates and PNG export
+- **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override
+- **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates, per-class F1 scores, macro F1, and PNG export
+- **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
 - **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane
+- **Batch image classification** — after training, choose which project images to apply the trained classifier to via a dual-list image selector dialog
+- **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
 - **Feature selection** — filterable, searchable feature selector handles panels with 2000+ measurements
 - **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups
@@ -64,9 +67,9 @@ The extension JAR bundles XGBoost4J and LightGBM4J — no separate ML library in
 2. **Label seed cells** — create point annotations on detected cells, then set the annotation's class (e.g. `CD4T`, `Bcell`, `Macrophage`). Aim for ≥10 cells per class.
 3. **Import a marker table** (optional) — *Extensions > CellTune Classifier > Import Marker Table* — a CSV mapping cell types to up to 3 marker channel names, used for auto-channel switching during review
 4. **Select features** (optional) — *Extensions > CellTune Classifier > Select Features* — choose which measurements to include in training
-5. **Train** — click *Train* in the CellTune panel (or *Extensions > CellTune Classifier > CellTune Classifier…*). Both models train in the background.
-6. **Plot confusions** — click *Plot Confusions* to see the inter-model confusion matrix with agreement rates
-7. **Sample & review** — click *Sample & Review*, choose a sample size (default 200), then *Enter Review Mode* to step through disputed cells and assign labels
+5. **Train** — click *Train* in the CellTune panel (or *Extensions > CellTune Classifier > Run CellTune Classification…*). If features haven't been selected yet, you'll be prompted to select them or use all. A confirmation dialog shows the feature and label counts before training begins. If the project has multiple images, a dual-list image selector lets you choose which images to apply the trained classifier to. A progress dialog shows real-time training status including GPU/CPU device info.
+6. **Plot confusions** — click *Plot Confusions* to see the inter-model confusion matrix with per-class agreement rates and F1 scores
+7. **Sample & review** — click *Sample & Review*, choose a sample size (default 200), then *Enter Review Mode* to step through disputed cells. Each cell shows coloured prediction buttons (e.g. `XGB: CD4 (87%)`, `LGB: Bcell (65%)`) — click to accept. Use the *All Classes* dropdown if neither prediction is correct.
 8. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
 9. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export Ground Truth* saves labelled cells for transfer to other images.
 
@@ -161,18 +164,20 @@ src/main/java/qupath/ext/celltune/
 │
 ├── classifier/                     # ML training and inference
 │   ├── DualModelClassifier.java    # Orchestrates XGBoost + LightGBM training
-│   ├── XGBoostModel.java           # XGBoost4J wrapper
-│   ├── LightGBMModel.java          # LightGBM4J wrapper
+│   ├── XGBoostModel.java           # XGBoost4J wrapper (GPU/CUDA with CPU fallback)
+│   ├── LightGBMModel.java          # LightGBM4J wrapper (GPU with CPU fallback)
 │   ├── ClassifierState.java        # Serialisable model snapshot
 │   └── UncertaintySampler.java     # Weighted disagreement sampling
 │
 ├── ui/                             # JavaFX panels and controls
 │   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review)
 │   ├── PopulationPanel.java        # Population set display with colour swatches
-│   ├── ConfusionMatrixView.java    # Canvas confusion matrix with PNG export
+│   ├── ConfusionMatrixView.java    # Canvas confusion matrix with F1 scores + PNG export
 │   ├── ReviewController.java       # Review queue logic + viewer navigation
-│   ├── ReviewToolbar.java          # Next/Prev/Skip + cell type label buttons
+│   ├── ReviewToolbar.java          # Nav buttons + dynamic prediction buttons + All Classes menu
 │   ├── ChannelSelector.java        # Optional auto channel switching
+│   ├── ImageSelectionPane.java     # Dual-list image selector for batch classification
+│   ├── ManualLabelToolbar.java     # Floating toolbar for direct cell labelling
 │   └── FeatureSelectionPane.java   # Filterable feature checkbox list
 │
 └── io/                             # Import / export
@@ -203,6 +208,16 @@ src/main/java/qupath/ext/celltune/
 | Subsample | 0.8 | — |
 
 These can be adjusted in the Classification Panel before training.
+
+## TODO / Future Exploration
+
+- **Multi-image ground truth aggregation** — explore how adding ground truth from multiple images via Review Mode and Manual Label Mode affects classifier performance. Currently labels are per-image; investigate pooling labels across project images into a shared LabelStore for training, including spatial matching challenges and feature-space alignment across tissue sections.
+- **Resampling strategies** — evaluate the impact of class-imbalance resampling techniques on training quality:
+  - **SMOTE** (Synthetic Minority Over-sampling Technique) — generate synthetic minority-class training samples by interpolating between nearest neighbours in feature space
+  - **ADASYN** (Adaptive Synthetic Sampling) — like SMOTE but focuses synthetic sample generation on harder-to-learn minority examples
+  - **Tomek links** — identify and remove borderline majority-class samples that form Tomek pairs with minority-class samples, cleaning the decision boundary
+  - Combinations: SMOTE + Tomek links as a pipeline (over-sample then clean), ADASYN + Tomek links
+  - Measure effect on per-class F1, macro F1, and inter-model agreement rates across training rounds
 
 ## License
 

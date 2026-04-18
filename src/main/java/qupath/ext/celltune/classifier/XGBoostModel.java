@@ -29,6 +29,7 @@ public class XGBoostModel {
     private int nClasses;
     private List<String> classNames;
     private List<String> featureNames;
+    private String lastDevice = "unknown";
 
     // ── Training ────────────────────────────────────────────────────────────────
 
@@ -64,17 +65,39 @@ public class XGBoostModel {
         Map<String, DMatrix> watches = new LinkedHashMap<>();
         watches.put("train", trainMat);
 
-        logger.info("XGBoost training: {} samples, {} features, {} classes, {} rounds",
-                nSamples, nFeatures, nClasses, numRounds);
-
-        booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+        // Attempt GPU training, fall back to CPU
+        boolean usingGpu = false;
+        try {
+            params.put("device", "cuda");
+            params.put("tree_method", "hist");
+            logger.info("XGBoost: attempting GPU (CUDA) training…");
+            booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+            usingGpu = true;
+            logger.info("XGBoost training: GPU (CUDA) — {} samples, {} features, {} classes, {} rounds",
+                    nSamples, nFeatures, nClasses, numRounds);
+        } catch (Exception gpuEx) {
+            logger.info("XGBoost GPU not available ({}), falling back to CPU", gpuEx.getMessage());
+            params.put("device", "cpu");
+            params.put("tree_method", "hist");
+            booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+            logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples, nFeatures, nClasses, numRounds);
+        }
 
         // Embed metadata for later serialisation
-        booster.setFeatureNames(featureNames.toArray(new String[0]));
+        // XGBoost rejects special chars (µ, ^, :, /, etc.) in feature names
+        String[] safeNames = featureNames.stream()
+                .map(XGBoostModel::sanitiseFeatureName)
+                .toArray(String[]::new);
+        booster.setFeatureNames(safeNames);
         booster.setAttr("class_names", String.join(",", classNames));
 
-        logger.info("XGBoost training complete");
+        logger.info("XGBoost training complete ({})", usingGpu ? "GPU" : "CPU");
+        lastDevice = usingGpu ? "GPU (CUDA)" : "CPU";
     }
+
+    /** @return the device used for the last training run */
+    public String getLastDevice() { return lastDevice; }
 
     // ── Prediction ──────────────────────────────────────────────────────────────
 
@@ -166,6 +189,37 @@ public class XGBoostModel {
     public List<String> getFeatureNames() { return featureNames; }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
+
+    /**
+     * Replace characters that XGBoost4J rejects in feature names.
+     * XGBoost forbids: [ ] < > , " and any non-ASCII.
+     */
+    static String sanitiseFeatureName(String name) {
+        // Replace known problematic chars with ASCII equivalents
+        String s = name
+                .replace("\u00b5", "u")  // micro sign µ
+                .replace("\u03bc", "u")  // greek mu μ
+                .replace("^", "_pow_")
+                .replace(":", "_")
+                .replace("/", "_per_")
+                .replace(" ", "_")
+                .replace("[", "_")
+                .replace("]", "_")
+                .replace("<", "_lt_")
+                .replace(">", "_gt_")
+                .replace(",", "_")
+                .replace("\"", "_")
+                .replace(".", "_")
+                .replace("{", "_")
+                .replace("}", "_");
+        // Strip any remaining non-ASCII
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            sb.append(c >= 0x20 && c <= 0x7E ? c : '_');
+        }
+        return sb.toString();
+    }
 
     private static Map<String, Object> buildParams(
             int nClasses, int maxDepth, float eta, float subsample) {
