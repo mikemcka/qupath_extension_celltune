@@ -1,0 +1,185 @@
+package qupath.ext.celltune.classifier;
+
+import ml.dmlc.xgboost4j.java.Booster;
+import ml.dmlc.xgboost4j.java.DMatrix;
+import ml.dmlc.xgboost4j.java.XGBoost;
+import ml.dmlc.xgboost4j.java.XGBoostError;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Wraps XGBoost4J training and prediction behind a simple interface.
+ * <p>
+ * Supports both binary ({@code binary:logistic}) and multiclass
+ * ({@code multi:softprob}) objectives. Probability vectors are always
+ * returned as {@code float[nClasses]}.
+ */
+public class XGBoostModel {
+
+    private static final Logger logger = LoggerFactory.getLogger(XGBoostModel.class);
+
+    private Booster booster;
+    private int nClasses;
+    private List<String> classNames;
+    private List<String> featureNames;
+
+    // ── Training ────────────────────────────────────────────────────────────────
+
+    /**
+     * Train a new XGBoost model.
+     *
+     * @param flatData     row-major feature matrix (nSamples × nFeatures)
+     * @param labels       integer class labels (0-indexed)
+     * @param nSamples     number of training samples
+     * @param nFeatures    number of features per sample
+     * @param classNames   ordered list of class names
+     * @param featureNames ordered list of feature names
+     * @param numRounds    boosting iterations
+     * @param maxDepth     max tree depth
+     * @param eta          learning rate
+     * @param subsample    row subsampling ratio per round
+     * @throws XGBoostError if training fails
+     */
+    public void train(float[] flatData, float[] labels,
+                      int nSamples, int nFeatures,
+                      List<String> classNames, List<String> featureNames,
+                      int numRounds, int maxDepth, float eta, float subsample)
+            throws XGBoostError {
+
+        this.nClasses = classNames.size();
+        this.classNames = List.copyOf(classNames);
+        this.featureNames = List.copyOf(featureNames);
+
+        DMatrix trainMat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
+        trainMat.setLabel(labels);
+
+        Map<String, Object> params = buildParams(nClasses, maxDepth, eta, subsample);
+        Map<String, DMatrix> watches = new LinkedHashMap<>();
+        watches.put("train", trainMat);
+
+        logger.info("XGBoost training: {} samples, {} features, {} classes, {} rounds",
+                nSamples, nFeatures, nClasses, numRounds);
+
+        booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+
+        // Embed metadata for later serialisation
+        booster.setFeatureNames(featureNames.toArray(new String[0]));
+        booster.setAttr("class_names", String.join(",", classNames));
+
+        logger.info("XGBoost training complete");
+    }
+
+    // ── Prediction ──────────────────────────────────────────────────────────────
+
+    /**
+     * Predict class probabilities for multiple cells.
+     *
+     * @param flatData  row-major feature matrix (nSamples × nFeatures)
+     * @param nSamples  number of samples
+     * @param nFeatures number of features
+     * @return probability matrix [nSamples][nClasses]
+     */
+    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures)
+            throws XGBoostError {
+
+        DMatrix predMat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
+        float[][] rawPreds = booster.predict(predMat);
+
+        // binary:logistic returns [n][1]; multi:softprob returns [n][nClasses]
+        if (nClasses == 2 && rawPreds[0].length == 1) {
+            float[][] expanded = new float[nSamples][2];
+            for (int i = 0; i < nSamples; i++) {
+                expanded[i][1] = rawPreds[i][0];
+                expanded[i][0] = 1f - rawPreds[i][0];
+            }
+            return expanded;
+        }
+        return rawPreds;
+    }
+
+    /**
+     * Predict the single best class index for each sample.
+     *
+     * @param flatData  row-major feature matrix
+     * @param nSamples  number of samples
+     * @param nFeatures number of features
+     * @return array of predicted class indices
+     */
+    public int[] predict(float[] flatData, int nSamples, int nFeatures)
+            throws XGBoostError {
+
+        float[][] probs = predictProba(flatData, nSamples, nFeatures);
+        int[] preds = new int[nSamples];
+        for (int i = 0; i < nSamples; i++) {
+            int best = 0;
+            for (int c = 1; c < nClasses; c++) {
+                if (probs[i][c] > probs[i][best]) best = c;
+            }
+            preds[i] = best;
+        }
+        return preds;
+    }
+
+    // ── Serialisation ───────────────────────────────────────────────────────────
+
+    /**
+     * Serialise the trained model to a byte array.
+     *
+     * @return raw model bytes
+     * @throws XGBoostError if serialisation fails
+     */
+    public byte[] toBytes() throws XGBoostError {
+        return booster.toByteArray();
+    }
+
+    /**
+     * Load a model from a byte array.
+     *
+     * @param bytes       raw model bytes
+     * @param classNames  ordered class names
+     * @param featureNames ordered feature names
+     * @throws XGBoostError if loading fails
+     */
+    public void loadFromBytes(byte[] bytes, List<String> classNames, List<String> featureNames)
+            throws XGBoostError, IOException {
+
+        this.classNames = List.copyOf(classNames);
+        this.featureNames = List.copyOf(featureNames);
+        this.nClasses = classNames.size();
+
+        // XGBoost4J loadModel expects an InputStream
+        booster = XGBoost.loadModel(new ByteArrayInputStream(bytes));
+    }
+
+    // ── Accessors ───────────────────────────────────────────────────────────────
+
+    public boolean isTrained()            { return booster != null; }
+    public int getNumClasses()            { return nClasses; }
+    public List<String> getClassNames()   { return classNames; }
+    public List<String> getFeatureNames() { return featureNames; }
+
+    // ── Private helpers ─────────────────────────────────────────────────────────
+
+    private static Map<String, Object> buildParams(
+            int nClasses, int maxDepth, float eta, float subsample) {
+
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("max_depth", maxDepth);
+        p.put("eta", (double) eta);
+        p.put("subsample", (double) subsample);
+        p.put("colsample_bytree", 0.8);
+        p.put("objective", nClasses == 2 ? "binary:logistic" : "multi:softprob");
+        p.put("eval_metric", nClasses == 2 ? "logloss" : "mlogloss");
+        p.put("nthread", Runtime.getRuntime().availableProcessors());
+        p.put("seed", 42);
+        if (nClasses > 2) p.put("num_class", nClasses);
+        return p;
+    }
+}
