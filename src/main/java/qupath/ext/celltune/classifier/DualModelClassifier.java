@@ -168,8 +168,79 @@ public class DualModelClassifier {
         out.accept("Threads: " + Runtime.getRuntime().availableProcessors()
                 + " available processors");
 
-        // ── 1b. Resample if requested ───────────────────────────────────────
+        // ── 1b. Early stopping (split BEFORE resampling — validate on real data only)
+        //        Save original data for the split, then resample separately.
         ResamplingStrategy strategy = resampling != null ? resampling : ResamplingStrategy.NONE;
+
+        // Local per-model hyperparameters
+        int xgbRounds = numRounds, lgbRounds = numRounds;
+        int xgbDepth = maxDepth, lgbDepth = maxDepth;
+        float xgbEta = eta, lgbEta = eta;
+        float xgbSub = subsample, lgbSub = subsample;
+
+        int nRealSamples = trainRows.size();
+
+        if (earlyStop && nRealSamples >= 20) {
+            updateStatus("Finding optimal round counts…", 0.05);
+            out.accept("Early stopping: 80/20 stratified split on real data (patience=20)…");
+
+            int patience = 20;
+            int[] realIntLabels = new int[nRealSamples];
+            for (int i = 0; i < nRealSamples; i++) realIntLabels[i] = trainLabels.get(i);
+
+            // Split original (real) data 80/20
+            int[][] split = stratifiedSplit(realIntLabels, nClasses, 0.8, new Random(42));
+
+            // Extract the 80% training subset as lists for resampling
+            List<float[]> esTrainRows = new ArrayList<>(split[0].length);
+            List<Integer> esTrainLabelsList = new ArrayList<>(split[0].length);
+            for (int idx : split[0]) {
+                esTrainRows.add(trainRows.get(idx));
+                esTrainLabelsList.add(trainLabels.get(idx));
+            }
+
+            // Resample only the 80% training portion
+            if (strategy != ResamplingStrategy.NONE) {
+                Resampler.Result esResampled = Resampler.apply(
+                        esTrainRows, esTrainLabelsList, nClasses, strategy, out);
+                esTrainRows = esResampled.rows();
+                esTrainLabelsList = esResampled.labels();
+                out.accept("Early stopping train set after resampling: " + esTrainRows.size()
+                        + " (validation: " + split[1].length + " real samples)");
+            }
+
+            // Flatten resampled 80% train
+            int esTrainSize = esTrainRows.size();
+            float[] esTrainData = new float[esTrainSize * nFeatures];
+            float[] esTrainLabels = new float[esTrainSize];
+            for (int i = 0; i < esTrainSize; i++) {
+                System.arraycopy(esTrainRows.get(i), 0, esTrainData, i * nFeatures, nFeatures);
+                esTrainLabels[i] = esTrainLabelsList.get(i);
+            }
+
+            // Flatten real 20% validation (no resampling)
+            float[] esValData = new float[split[1].length * nFeatures];
+            float[] esValLabels = new float[split[1].length];
+            for (int i = 0; i < split[1].length; i++) {
+                System.arraycopy(trainRows.get(split[1][i]), 0,
+                        esValData, i * nFeatures, nFeatures);
+                esValLabels[i] = trainLabels.get(split[1][i]);
+            }
+
+            xgbRounds = XGBoostModel.findBestRounds(
+                    esTrainData, esTrainLabels, esTrainSize,
+                    esValData, esValLabels, split[1].length,
+                    nFeatures, nClasses,
+                    xgbRounds, xgbDepth, xgbEta, xgbSub, patience, out);
+
+            lgbRounds = LightGBMModel.findBestRounds(
+                    esTrainData, esTrainLabels, esTrainSize,
+                    esValData, esValLabels, split[1].length,
+                    nFeatures, nClasses,
+                    lgbRounds, lgbDepth, lgbEta, lgbSub, patience, out);
+        }
+
+        // ── 1c. Resample full dataset if requested ──────────────────────────
         if (strategy != ResamplingStrategy.NONE) {
             Resampler.Result resampled = Resampler.apply(
                     trainRows, trainLabels, nClasses, strategy, out);
@@ -186,15 +257,9 @@ public class DualModelClassifier {
             labelArray[i] = trainLabels.get(i);
         }
 
-        // ── 1c. Auto-tune hyperparameters if requested ──────────────────────
-        // Local per-model hyperparameters
-        int xgbRounds = numRounds, lgbRounds = numRounds;
-        int xgbDepth = maxDepth, lgbDepth = maxDepth;
-        float xgbEta = eta, lgbEta = eta;
-        float xgbSub = subsample, lgbSub = subsample;
-
+        // ── 1d. Auto-tune hyperparameters if requested ──────────────────────
         if (autoTune) {
-            updateStatus("Auto-tuning hyperparameters…", 0.05);
+            updateStatus("Auto-tuning hyperparameters…", earlyStop ? 0.10 : 0.05);
             out.accept("Auto-tuning hyperparameters (this may take several minutes)…");
             var tuneResult = HyperparameterTuner.tune(
                     flatData, labelArray, nSamples, nFeatures, nClasses,
@@ -208,34 +273,6 @@ public class DualModelClassifier {
             lgbDepth  = tuneResult.lgbParams().maxDepth();
             lgbEta    = tuneResult.lgbParams().eta();
             lgbSub    = tuneResult.lgbParams().subsample();
-        }
-
-        // ── 1d. Early stopping ───────────────────────────────────────────
-        if (earlyStop && nSamples >= 20) {
-            updateStatus("Finding optimal round counts…", autoTune ? 0.10 : 0.08);
-            out.accept("Early stopping: finding optimal round counts (patience=20)…");
-
-            int patience = 20;
-            int[] intLabelsArr = new int[nSamples];
-            for (int i = 0; i < nSamples; i++) intLabelsArr[i] = (int) labelArray[i];
-
-            int[][] split = stratifiedSplit(intLabelsArr, nClasses, 0.9, new Random(42));
-            float[] esTrain = extractRowSubset(flatData, split[0], nFeatures);
-            float[] esTrainLabels = extractLabelSubset(labelArray, split[0]);
-            float[] esVal = extractRowSubset(flatData, split[1], nFeatures);
-            float[] esValLabels = extractLabelSubset(labelArray, split[1]);
-
-            xgbRounds = XGBoostModel.findBestRounds(
-                    esTrain, esTrainLabels, split[0].length,
-                    esVal, esValLabels, split[1].length,
-                    nFeatures, nClasses,
-                    xgbRounds, xgbDepth, xgbEta, xgbSub, patience, out);
-
-            lgbRounds = LightGBMModel.findBestRounds(
-                    esTrain, esTrainLabels, split[0].length,
-                    esVal, esValLabels, split[1].length,
-                    nFeatures, nClasses,
-                    lgbRounds, lgbDepth, lgbEta, lgbSub, patience, out);
         }
 
         // ── 2. Train XGBoost ────────────────────────────────────────────────
