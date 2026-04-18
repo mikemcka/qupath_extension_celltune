@@ -95,6 +95,7 @@ public class CellTuneExtension implements QuPathExtension {
         addPreferenceToPane(qupath);
         addMenuItems(qupath);
         dockClassificationPanel(qupath);
+        checkHeapMemory();
     }
 
     @Override public String getName()           { return EXTENSION_NAME; }
@@ -140,6 +141,63 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setPredAll(predAll);
         classificationPanel.setLastAgreementRates(lastAgreementRates);
         classificationPanel.setLastSampledCellIds(lastSampledCellIds);
+    }
+
+    /**
+     * Check JVM heap at startup and warn if it looks too low for large datasets.
+     * QuPath defaults to about 1/4 of system RAM which may be insufficient for
+     * 500K+ cells with 2000+ features.
+     */
+    private void checkHeapMemory() {
+        long maxHeapBytes = Runtime.getRuntime().maxMemory();
+        double maxHeapGiB = maxHeapBytes / (1024.0 * 1024.0 * 1024.0);
+        logger.info("CellTune: JVM max heap = {} GiB", String.format("%.1f", maxHeapGiB));
+
+        if (maxHeapGiB < 8.0) {
+            javafx.application.Platform.runLater(() ->
+                    Dialogs.showWarningNotification(EXTENSION_NAME,
+                            String.format("JVM heap is only %.1f GiB. For large datasets "
+                                    + "(100K+ cells, 1000+ features) increase memory via "
+                                    + "Edit \u2192 Preferences \u2192 'Max memory' or "
+                                    + "Help \u2192 Show setup options. "
+                                    + "Recommended: at least 16 GiB for large panels.", maxHeapGiB)));
+        }
+    }
+
+    /**
+     * Estimate peak memory required for training and warn if the current heap
+     * is likely insufficient.
+     *
+     * @param nCells    number of cells to predict
+     * @param nFeatures number of features per cell
+     * @return true if the user confirms to proceed (or memory is sufficient),
+     *         false if they cancel
+     */
+    private boolean checkTrainingMemory(int nCells, int nFeatures) {
+        long maxHeapBytes = Runtime.getRuntime().maxMemory();
+        double maxHeapGiB = maxHeapBytes / (1024.0 * 1024.0 * 1024.0);
+
+        // Feature matrix = nCells × nFeatures × 4 bytes (float)
+        // XGBoost + LightGBM each make a native copy → ~3× the matrix
+        // Plus CellPrediction objects + PopulationSets ~300 MB overhead
+        double matrixGiB = (double) nCells * nFeatures * 4L / (1024.0 * 1024.0 * 1024.0);
+        double estimatedPeakGiB = matrixGiB * 3.0 + 0.3;
+
+        logger.info("CellTune memory estimate: {} cells x {} features = {} GiB matrix, "
+                + "{} GiB estimated peak, {} GiB heap available",
+                nCells, nFeatures, String.format("%.1f", matrixGiB),
+                String.format("%.1f", estimatedPeakGiB), String.format("%.1f", maxHeapGiB));
+
+        if (estimatedPeakGiB > maxHeapGiB * 0.8) {
+            return Dialogs.showConfirmDialog(EXTENSION_NAME,
+                    String.format("Memory warning: %,d cells \u00d7 %,d features requires an "
+                            + "estimated %.1f GiB but the JVM heap is only %.1f GiB.\n\n"
+                            + "This may cause an OutOfMemoryError.\n"
+                            + "Increase memory via Edit \u2192 Preferences \u2192 'Max memory' "
+                            + "or Help \u2192 Show setup options.\n\n"
+                            + "Proceed anyway?", nCells, nFeatures, estimatedPeakGiB, maxHeapGiB));
+        }
+        return true;
     }
 
     private void addPreferenceToPane(QuPathGUI qupath) {
@@ -300,6 +358,9 @@ public class CellTuneExtension implements QuPathExtension {
                 "Ready to train with " + featureNames.size() + " features and "
                 + labelStore.size() + " labelled cells.\n\nProceed with classification?");
         if (!confirm) return;
+
+        // Check whether the JVM has enough heap for this dataset
+        if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
 
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
         if (classifier == null) {
