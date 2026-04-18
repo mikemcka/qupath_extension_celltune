@@ -11,13 +11,18 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.IntStream;
 
 /**
- * Random search hyperparameter tuner with stratified k-fold cross-validation.
+ * Bayesian (TPE) hyperparameter tuner with stratified k-fold cross-validation.
  * <p>
- * Evaluates random hyperparameter combinations on both XGBoost and LightGBM,
- * scoring each trial by the mean macro F1 across folds and models.
- * Returns the best-performing parameter set.
+ * Uses Tree-structured Parzen Estimator (TPE) to guide the search toward
+ * promising hyperparameter regions. After an initial warm-up period of random
+ * trials, each subsequent trial is sampled from a kernel density estimate
+ * fitted to the best-performing observations.
+ * <p>
+ * XGBoost and LightGBM are tuned independently — each model gets its own
+ * set of optimal hyperparameters.
  * <p>
  * All training during tuning uses CPU to avoid GPU probe overhead.
  */
@@ -25,7 +30,7 @@ public final class HyperparameterTuner {
 
     private static final Logger logger = LoggerFactory.getLogger(HyperparameterTuner.class);
 
-    /** Default number of random search trials. */
+    /** Default number of search trials per model. */
     public static final int DEFAULT_TRIALS = 20;
 
     /** Default number of CV folds. */
@@ -35,10 +40,14 @@ public final class HyperparameterTuner {
     private static final int MIN_SAMPLES = 20;
 
     // ── Search space bounds ─────────────────────────────────────────────────
-    private static final int ROUNDS_MIN = 50, ROUNDS_MAX = 500;
-    private static final int DEPTH_MIN = 2, DEPTH_MAX = 12;
-    private static final double ETA_MIN = 0.01, ETA_MAX = 0.3;
-    private static final double SUB_MIN = 0.5, SUB_MAX = 1.0;
+    static final int ROUNDS_MIN = 50, ROUNDS_MAX = 500;
+    static final int DEPTH_MIN = 2, DEPTH_MAX = 12;
+    static final double ETA_MIN = 0.01, ETA_MAX = 0.3;
+    static final double SUB_MIN = 0.5, SUB_MAX = 1.0;
+
+    // Transformed space bounds (log for eta)
+    private static final double[] LOWER = {ROUNDS_MIN, DEPTH_MIN, Math.log(ETA_MIN), SUB_MIN};
+    private static final double[] UPPER = {ROUNDS_MAX, DEPTH_MAX, Math.log(ETA_MAX), SUB_MAX};
 
     private HyperparameterTuner() {} // utility class
 
@@ -53,27 +62,27 @@ public final class HyperparameterTuner {
         }
     }
 
-    /** Result of a tuning run: best parameters and their CV score. */
-    public record TuningResult(HyperParams bestParams, double bestScore) {}
+    /** Result of a tuning run: best parameters for each model and their CV scores. */
+    public record TuningResult(HyperParams xgbParams, double xgbScore,
+                               HyperParams lgbParams, double lgbScore) {}
+
+    private record ModelTuneResult(HyperParams params, double score) {}
 
     // ── Main API ────────────────────────────────────────────────────────────
 
     /**
-     * Tune hyperparameters via random search with stratified k-fold CV.
-     * <p>
-     * For each trial, a random parameter set is sampled and evaluated on
-     * both XGBoost and LightGBM across all folds. The score is the mean
-     * macro F1 averaged across both models and all folds.
+     * Tune hyperparameters independently for XGBoost and LightGBM using TPE
+     * with stratified k-fold CV.
      *
      * @param flatData  row-major training feature matrix
      * @param labels    float class labels (0-indexed)
      * @param nSamples  number of training samples
      * @param nFeatures number of features per sample
      * @param nClasses  number of classes
-     * @param nTrials   number of random search iterations
+     * @param nTrials   number of search iterations per model
      * @param nFolds    number of CV folds (typically 5)
      * @param log       progress callback (may be null)
-     * @return best parameters and their score
+     * @return best parameters for each model and their scores
      */
     public static TuningResult tune(float[] flatData, float[] labels,
                                     int nSamples, int nFeatures, int nClasses,
@@ -83,25 +92,46 @@ public final class HyperparameterTuner {
 
         if (nSamples < MIN_SAMPLES) {
             out.accept("Too few samples (" + nSamples + ") for auto-tuning — using defaults");
-            return new TuningResult(new HyperParams(200, 6, 0.1f, 0.8f), 0);
+            HyperParams defaults = new HyperParams(200, 6, 0.1f, 0.8f);
+            return new TuningResult(defaults, 0, defaults, 0);
         }
 
-        out.accept("Auto-tuning: " + nTrials + " trials × " + nFolds
-                + " folds on " + nSamples + " samples");
+        out.accept("Auto-tuning: " + nTrials + " TPE trials × " + nFolds
+                + " folds per model on " + nSamples + " samples");
 
-        Random rng = new Random(42);
-
-        // Integer labels for stratification
         int[] intLabels = new int[nSamples];
         for (int i = 0; i < nSamples; i++) intLabels[i] = (int) labels[i];
 
-        List<int[][]> folds = stratifiedKFold(intLabels, nClasses, nFolds, rng);
+        List<int[][]> folds = stratifiedKFold(intLabels, nClasses, nFolds, new Random(42));
 
+        // Tune each model independently
+        out.accept("── Tuning XGBoost ──");
+        ModelTuneResult xgb = tuneModel("XGBoost", flatData, labels, intLabels,
+                nSamples, nFeatures, nClasses, folds, nTrials, new Random(42), out);
+
+        out.accept("── Tuning LightGBM ──");
+        ModelTuneResult lgb = tuneModel("LightGBM", flatData, labels, intLabels,
+                nSamples, nFeatures, nClasses, folds, nTrials, new Random(43), out);
+
+        out.accept(String.format("Best XGBoost:  %s → F1 = %.4f", xgb.params(), xgb.score()));
+        out.accept(String.format("Best LightGBM: %s → F1 = %.4f", lgb.params(), lgb.score()));
+
+        return new TuningResult(xgb.params(), xgb.score(), lgb.params(), lgb.score());
+    }
+
+    // ── Per-model TPE tuning loop ───────────────────────────────────────────
+
+    private static ModelTuneResult tuneModel(String modelName,
+                                             float[] flatData, float[] labels, int[] intLabels,
+                                             int nSamples, int nFeatures, int nClasses,
+                                             List<int[][]> folds, int nTrials,
+                                             Random rng, Consumer<String> log) {
+        TPESampler sampler = new TPESampler(rng);
         HyperParams bestParams = null;
         double bestScore = -1;
 
         for (int trial = 0; trial < nTrials; trial++) {
-            HyperParams hp = sampleRandom(rng);
+            HyperParams hp = sampler.suggest();
 
             double totalScore = 0;
             int validFolds = 0;
@@ -115,79 +145,193 @@ public final class HyperparameterTuner {
                 float[] foldTestData = extractRows(flatData, testIdx, nFeatures);
                 int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
 
-                double xgbF1 = evaluateXGBoostFold(
-                        foldTrainData, foldTrainLabels, trainIdx.length,
-                        foldTestData, foldTestTruth, testIdx.length,
-                        nFeatures, nClasses, hp);
+                double f1 = "XGBoost".equals(modelName)
+                        ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp)
+                        : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp);
 
-                double lgbF1 = evaluateLightGBMFold(
-                        foldTrainData, foldTrainLabels, trainIdx.length,
-                        foldTestData, foldTestTruth, testIdx.length,
-                        nFeatures, nClasses, hp);
-
-                if (xgbF1 >= 0 && lgbF1 >= 0) {
-                    totalScore += (xgbF1 + lgbF1) / 2.0;
+                if (f1 >= 0) {
+                    totalScore += f1;
                     validFolds++;
                 }
             }
 
-            if (validFolds > 0) {
-                double meanScore = totalScore / validFolds;
-                out.accept(String.format("  Trial %2d/%d: %s → F1 = %.4f",
-                        trial + 1, nTrials, hp, meanScore));
+            double meanScore = validFolds > 0 ? totalScore / validFolds : 0;
+            sampler.observe(hp, meanScore);
 
-                if (meanScore > bestScore) {
-                    bestScore = meanScore;
-                    bestParams = hp;
-                }
-            } else {
-                out.accept(String.format("  Trial %2d/%d: %s → failed (no valid folds)",
-                        trial + 1, nTrials, hp));
+            String marker = meanScore > bestScore ? " ★" : "";
+            log.accept(String.format("  Trial %2d/%d: %s → F1 = %.4f%s",
+                    trial + 1, nTrials, hp, meanScore, marker));
+
+            if (meanScore > bestScore) {
+                bestScore = meanScore;
+                bestParams = hp;
             }
         }
 
         if (bestParams == null) {
             bestParams = new HyperParams(200, 6, 0.1f, 0.8f);
-            out.accept("Tuning produced no valid results — using defaults");
-        } else {
-            out.accept(String.format("Best: %s → F1 = %.4f", bestParams, bestScore));
         }
 
-        return new TuningResult(bestParams, bestScore);
+        return new ModelTuneResult(bestParams, bestScore);
     }
 
-    // ── Random parameter sampling ───────────────────────────────────────────
+    // ── TPE Sampler ─────────────────────────────────────────────────────────
 
-    private static HyperParams sampleRandom(Random rng) {
-        // Uniform integer, rounded to nearest 10
-        int numRounds = ROUNDS_MIN + rng.nextInt(ROUNDS_MAX - ROUNDS_MIN + 1);
-        numRounds = ((numRounds + 5) / 10) * 10;
+    /**
+     * Tree-structured Parzen Estimator (TPE) sampler.
+     * After a warm-up period of random trials, suggests new points by:
+     * <ol>
+     *   <li>Splitting observed points into "good" (top γ fraction) and "bad"</li>
+     *   <li>Fitting independent 1D Gaussian KDEs to each group</li>
+     *   <li>Sampling candidates from the "good" KDE</li>
+     *   <li>Selecting the candidate that maximises l(x)/g(x)</li>
+     * </ol>
+     */
+    private static final class TPESampler {
 
-        int maxDepth = DEPTH_MIN + rng.nextInt(DEPTH_MAX - DEPTH_MIN + 1);
+        private static final double GAMMA = 0.25; // top 25% = "good"
+        private static final int N_CANDIDATES = 24;
+        private static final int WARM_UP = 5;
+        private static final int N_DIMS = 4;
 
-        // Log-uniform for learning rate
-        float eta = (float) Math.exp(
-                Math.log(ETA_MIN) + rng.nextDouble() * (Math.log(ETA_MAX) - Math.log(ETA_MIN)));
+        private final Random rng;
+        private final List<double[]> history = new ArrayList<>();
+        private final List<Double> scores = new ArrayList<>();
 
-        // Uniform for subsample
-        float subsample = (float) (SUB_MIN + rng.nextDouble() * (SUB_MAX - SUB_MIN));
+        TPESampler(Random rng) { this.rng = rng; }
 
-        return new HyperParams(numRounds, maxDepth, eta, subsample);
+        void observe(HyperParams hp, double score) {
+            history.add(toTransformed(hp));
+            scores.add(score);
+        }
+
+        HyperParams suggest() {
+            if (history.size() < WARM_UP) {
+                return sampleUniform();
+            }
+            return tpeSuggest();
+        }
+
+        private HyperParams tpeSuggest() {
+            int n = history.size();
+            int nGood = Math.max(1, (int) (n * GAMMA));
+
+            // Sort indices by score descending (higher F1 is better)
+            Integer[] sortedIdx = IntStream.range(0, n)
+                    .boxed()
+                    .sorted((a, b) -> Double.compare(scores.get(b), scores.get(a)))
+                    .toArray(Integer[]::new);
+
+            List<double[]> good = new ArrayList<>();
+            List<double[]> bad = new ArrayList<>();
+            for (int i = 0; i < sortedIdx.length; i++) {
+                (i < nGood ? good : bad).add(history.get(sortedIdx[i]));
+            }
+            if (bad.isEmpty()) bad.add(good.getLast());
+
+            // Sample candidates from good KDE, pick best l(x)/g(x)
+            double bestRatio = Double.NEGATIVE_INFINITY;
+            double[] bestCandidate = null;
+
+            for (int c = 0; c < N_CANDIDATES; c++) {
+                double[] candidate = sampleFromKDE(good);
+                double lx = evaluateKDE(candidate, good);
+                double gx = evaluateKDE(candidate, bad);
+                double ratio = lx / (gx + 1e-12);
+                if (ratio > bestRatio) {
+                    bestRatio = ratio;
+                    bestCandidate = candidate;
+                }
+            }
+
+            return fromTransformed(bestCandidate);
+        }
+
+        /** Sample a point from a Gaussian KDE fitted to the given observations. */
+        private double[] sampleFromKDE(List<double[]> points) {
+            double[] sample = new double[N_DIMS];
+            for (int d = 0; d < N_DIMS; d++) {
+                double[] center = points.get(rng.nextInt(points.size()));
+                double bw = silvermanBW(points, d);
+                sample[d] = center[d] + rng.nextGaussian() * bw;
+                sample[d] = Math.max(LOWER[d], Math.min(UPPER[d], sample[d]));
+            }
+            return sample;
+        }
+
+        /** Evaluate the KDE density at a point (product of per-dimension densities). */
+        private double evaluateKDE(double[] x, List<double[]> points) {
+            double logDensity = 0;
+            for (int d = 0; d < N_DIMS; d++) {
+                double bw = silvermanBW(points, d);
+                double density = 0;
+                for (double[] pt : points) {
+                    double z = (x[d] - pt[d]) / bw;
+                    density += Math.exp(-0.5 * z * z);
+                }
+                density /= (points.size() * bw * Math.sqrt(2 * Math.PI));
+                logDensity += Math.log(Math.max(density, 1e-300));
+            }
+            return Math.exp(logDensity);
+        }
+
+        /** Silverman's rule of thumb bandwidth: h = 1.06 σ n^{-1/5}. */
+        private double silvermanBW(List<double[]> points, int dim) {
+            int n = points.size();
+            if (n < 2) return (UPPER[dim] - LOWER[dim]) / 4.0;
+
+            double mean = 0;
+            for (double[] p : points) mean += p[dim];
+            mean /= n;
+
+            double variance = 0;
+            for (double[] p : points) {
+                double diff = p[dim] - mean;
+                variance += diff * diff;
+            }
+            variance /= (n - 1);
+            double std = Math.sqrt(variance);
+            if (std < 1e-10) std = (UPPER[dim] - LOWER[dim]) / 4.0;
+
+            return 1.06 * std * Math.pow(n, -0.2);
+        }
+
+        private HyperParams sampleUniform() {
+            int rounds = ROUNDS_MIN + rng.nextInt(ROUNDS_MAX - ROUNDS_MIN + 1);
+            rounds = ((rounds + 5) / 10) * 10;
+            int depth = DEPTH_MIN + rng.nextInt(DEPTH_MAX - DEPTH_MIN + 1);
+            float eta = (float) Math.exp(
+                    Math.log(ETA_MIN) + rng.nextDouble() * (Math.log(ETA_MAX) - Math.log(ETA_MIN)));
+            float sub = (float) (SUB_MIN + rng.nextDouble() * (SUB_MAX - SUB_MIN));
+            return new HyperParams(rounds, depth, eta, sub);
+        }
+
+        private static double[] toTransformed(HyperParams hp) {
+            return new double[]{hp.numRounds(), hp.maxDepth(), Math.log(hp.eta()), hp.subsample()};
+        }
+
+        private HyperParams fromTransformed(double[] x) {
+            int rounds = (int) Math.round(x[0]);
+            rounds = Math.max(ROUNDS_MIN, Math.min(ROUNDS_MAX, ((rounds + 5) / 10) * 10));
+            int depth = Math.max(DEPTH_MIN, Math.min(DEPTH_MAX, (int) Math.round(x[1])));
+            float eta = (float) Math.max(ETA_MIN, Math.min(ETA_MAX, Math.exp(x[2])));
+            float sub = (float) Math.max(SUB_MIN, Math.min(SUB_MAX, x[3]));
+            return new HyperParams(rounds, depth, eta, sub);
+        }
     }
 
     // ── Stratified k-fold ───────────────────────────────────────────────────
 
     private static List<int[][]> stratifiedKFold(int[] labels, int nClasses,
                                                  int k, Random rng) {
-        // Group sample indices by class
         List<List<Integer>> classGroups = new ArrayList<>();
         for (int c = 0; c < nClasses; c++) classGroups.add(new ArrayList<>());
         for (int i = 0; i < labels.length; i++) classGroups.get(labels[i]).add(i);
 
-        // Shuffle each group
         for (var group : classGroups) Collections.shuffle(group, rng);
 
-        // Round-robin assignment to folds
         List<List<Integer>> foldLists = new ArrayList<>();
         for (int f = 0; f < k; f++) foldLists.add(new ArrayList<>());
 
@@ -197,7 +341,6 @@ public final class HyperparameterTuner {
             }
         }
 
-        // Build train/test index pairs
         List<int[][]> folds = new ArrayList<>();
         for (int f = 0; f < k; f++) {
             List<Integer> testList = foldLists.get(f);
@@ -368,7 +511,7 @@ public final class HyperparameterTuner {
         int counted = 0;
         for (int c = 0; c < nClasses; c++) {
             int support = tp[c] + fn[c];
-            if (support == 0) continue; // class absent from truth in this fold
+            if (support == 0) continue;
             double precision = (tp[c] + fp[c]) > 0
                     ? (double) tp[c] / (tp[c] + fp[c]) : 0;
             double recall = (double) tp[c] / (tp[c] + fn[c]);

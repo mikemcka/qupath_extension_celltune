@@ -14,7 +14,8 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane
 - **Multi-image training data pooling** — optionally pool labelled cells from all project images into a single training set. A "Pool labels from all images" checkbox appears in the Classification Panel and training confirmation dialog. When enabled, the extension opens each project image, collects annotation-based labels (landmarks) plus persisted review and manual labels, extracts features using the same column ordering, and adds them as supplementary training rows. Per-image labels are automatically saved to `<project>/celltune/image-labels/` after training, review, and manual labelling sessions.
 - **Resampling strategies** — address class imbalance before training with a selectable strategy: **SMOTE** (synthetic minority oversampling via k-NN interpolation), **ADASYN** (adaptive synthetic sampling weighted toward harder boundary examples), **Tomek links** (remove majority-class samples forming mutual nearest-neighbour pairs with minority samples), or combinations (**SMOTE + Tomek**, **ADASYN + Tomek**). A dropdown appears in both the Classification Panel and the training confirmation dialog. Training logs report the original and resampled class distributions.
-- **Hyperparameter auto-tuning** — optional random search with stratified 5-fold cross-validation over boosting rounds, max depth, learning rate, and subsample ratio. Each trial evaluates both XGBoost and LightGBM on held-out folds, scoring by mean macro F1. An "Auto-tune hyperparameters" checkbox appears in the Classification Panel and training dialog. When enabled, 20 random hyperparameter combinations are tested before training, and the best-performing set is applied automatically. Per-trial results are logged in the training output.
+- **Hyperparameter auto-tuning (TPE)** — optional Bayesian optimisation using Tree-structured Parzen Estimator (TPE) with stratified 5-fold cross-validation over boosting rounds, max depth, learning rate, and subsample ratio. Each model (XGBoost and LightGBM) is tuned independently — they may have different optimal settings. After an initial warm-up of random trials, subsequent trials are guided by kernel density estimates fitted to the best-performing observations. An "Auto-tune hyperparameters" checkbox appears in the Classification Panel and training dialog. When enabled, 20 TPE trials per model are tested before training, and the best-performing parameters are applied to each model independently.
+- **Early stopping** — optional validation-loss-based early stopping to find the optimal number of boosting rounds. When enabled, 10% of training data is held out as a stratified validation set. Each model trains round-by-round while monitoring validation log-loss; if loss doesn't improve for 20 consecutive rounds (patience), training stops early. The optimal round count is then used when training on the full dataset. An "Early stopping" checkbox appears alongside the auto-tune option.
 - **Batch image classification** — after training, choose which project images to apply the trained classifier to via a dual-list image selector dialog
 - **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
@@ -173,7 +174,7 @@ src/main/java/qupath/ext/celltune/
 │   ├── UncertaintySampler.java     # Weighted disagreement sampling
 │   ├── Resampler.java              # SMOTE, ADASYN, Tomek links resampling
 │   ├── ResamplingStrategy.java     # Enum of available resampling strategies
-│   └── HyperparameterTuner.java    # Random search CV for auto-tuning
+│   ├── HyperparameterTuner.java    # TPE Bayesian optimisation for auto-tuning
 │
 ├── ui/                             # JavaFX panels and controls
 │   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review)
@@ -259,9 +260,7 @@ These can be adjusted in the Classification Panel before training.
 
 ## TODO / Future Exploration
 
-- **Bayesian optimisation** — replace or augment random search with a surrogate model (e.g. Gaussian process or TPE) to guide the hyperparameter search toward promising regions more efficiently
-- **Early stopping** — monitor validation loss during training and stop boosting rounds when performance plateaus, effectively auto-tuning the number of rounds
-- **Independent model tuning** — tune XGBoost and LightGBM hyperparameters independently since they may have different optimal settings
+_(No outstanding items — all planned features have been implemented.)_
 
 ## License
 

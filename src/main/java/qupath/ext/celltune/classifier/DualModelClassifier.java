@@ -75,7 +75,8 @@ public class DualModelClassifier {
      * @param supplementaryRows    pre-extracted feature rows from other images (may be null)
      * @param supplementaryLabels  class names for supplementary rows (may be null)
      * @param resampling           resampling strategy for class imbalance (may be null for NONE)
-     * @param autoTune             if true, run random search CV to find optimal hyperparameters
+     * @param autoTune             if true, run TPE search to find optimal hyperparameters independently per model
+     * @param earlyStop            if true, use early stopping to find optimal round counts
      * @param log                  optional progress callback (may be null)
      * @throws Exception if training or prediction fails
      */
@@ -86,6 +87,7 @@ public class DualModelClassifier {
                                 List<String> supplementaryLabels,
                                 ResamplingStrategy resampling,
                                 boolean autoTune,
+                                boolean earlyStop,
                                 Consumer<String> log) throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {};
@@ -185,6 +187,12 @@ public class DualModelClassifier {
         }
 
         // ── 1c. Auto-tune hyperparameters if requested ──────────────────────
+        // Local per-model hyperparameters
+        int xgbRounds = numRounds, lgbRounds = numRounds;
+        int xgbDepth = maxDepth, lgbDepth = maxDepth;
+        float xgbEta = eta, lgbEta = eta;
+        float xgbSub = subsample, lgbSub = subsample;
+
         if (autoTune) {
             updateStatus("Auto-tuning hyperparameters…", 0.05);
             out.accept("Auto-tuning hyperparameters (this may take several minutes)…");
@@ -192,26 +200,58 @@ public class DualModelClassifier {
                     flatData, labelArray, nSamples, nFeatures, nClasses,
                     HyperparameterTuner.DEFAULT_TRIALS,
                     HyperparameterTuner.DEFAULT_FOLDS, out);
-            this.numRounds = tuneResult.bestParams().numRounds();
-            this.maxDepth  = tuneResult.bestParams().maxDepth();
-            this.eta       = tuneResult.bestParams().eta();
-            this.subsample = tuneResult.bestParams().subsample();
+            xgbRounds = tuneResult.xgbParams().numRounds();
+            xgbDepth  = tuneResult.xgbParams().maxDepth();
+            xgbEta    = tuneResult.xgbParams().eta();
+            xgbSub    = tuneResult.xgbParams().subsample();
+            lgbRounds = tuneResult.lgbParams().numRounds();
+            lgbDepth  = tuneResult.lgbParams().maxDepth();
+            lgbEta    = tuneResult.lgbParams().eta();
+            lgbSub    = tuneResult.lgbParams().subsample();
+        }
+
+        // ── 1d. Early stopping ───────────────────────────────────────────
+        if (earlyStop && nSamples >= 20) {
+            updateStatus("Finding optimal round counts…", autoTune ? 0.10 : 0.08);
+            out.accept("Early stopping: finding optimal round counts (patience=20)…");
+
+            int patience = 20;
+            int[] intLabelsArr = new int[nSamples];
+            for (int i = 0; i < nSamples; i++) intLabelsArr[i] = (int) labelArray[i];
+
+            int[][] split = stratifiedSplit(intLabelsArr, nClasses, 0.9, new Random(42));
+            float[] esTrain = extractRowSubset(flatData, split[0], nFeatures);
+            float[] esTrainLabels = extractLabelSubset(labelArray, split[0]);
+            float[] esVal = extractRowSubset(flatData, split[1], nFeatures);
+            float[] esValLabels = extractLabelSubset(labelArray, split[1]);
+
+            xgbRounds = XGBoostModel.findBestRounds(
+                    esTrain, esTrainLabels, split[0].length,
+                    esVal, esValLabels, split[1].length,
+                    nFeatures, nClasses,
+                    xgbRounds, xgbDepth, xgbEta, xgbSub, patience, out);
+
+            lgbRounds = LightGBMModel.findBestRounds(
+                    esTrain, esTrainLabels, split[0].length,
+                    esVal, esValLabels, split[1].length,
+                    nFeatures, nClasses,
+                    lgbRounds, lgbDepth, lgbEta, lgbSub, patience, out);
         }
 
         // ── 2. Train XGBoost ────────────────────────────────────────────────
         updateStatus("Training XGBoost…", 0.15);
-        out.accept("Training XGBoost (" + numRounds + " rounds)…");
+        out.accept("Training XGBoost (" + xgbRounds + " rounds)…");
 
         xgbModel.train(flatData, labelArray, nSamples, nFeatures,
-                classNames, featureNames, numRounds, maxDepth, eta, subsample);
+                classNames, featureNames, xgbRounds, xgbDepth, xgbEta, xgbSub);
         out.accept("XGBoost trained on: " + xgbModel.getLastDevice());
 
         // ── 3. Train LightGBM ───────────────────────────────────────────────
         updateStatus("Training LightGBM…", 0.40);
-        out.accept("Training LightGBM (" + numRounds + " rounds)…");
+        out.accept("Training LightGBM (" + lgbRounds + " rounds)…");
 
         lgbModel.train(flatData, labelArray, nSamples, nFeatures,
-                classNames, featureNames, numRounds, maxDepth, eta, subsample);
+                classNames, featureNames, lgbRounds, lgbDepth, lgbEta, lgbSub);
         out.accept("LightGBM trained on: " + lgbModel.getLastDevice());
 
         // ── 4. Predict all cells ────────────────────────────────────────────
@@ -410,5 +450,46 @@ public class DualModelClassifier {
             if (arr[i] > arr[best]) best = i;
         }
         return best;
+    }
+
+    // ── Early stopping helpers ─────────────────────────────────────────────
+
+    private static int[][] stratifiedSplit(int[] labels, int nClasses,
+                                           double trainRatio, Random rng) {
+        List<List<Integer>> groups = new ArrayList<>();
+        for (int c = 0; c < nClasses; c++) groups.add(new ArrayList<>());
+        for (int i = 0; i < labels.length; i++) groups.get(labels[i]).add(i);
+
+        List<Integer> trainList = new ArrayList<>();
+        List<Integer> valList = new ArrayList<>();
+
+        for (var group : groups) {
+            Collections.shuffle(group, rng);
+            int trainCount = Math.max(1, (int) (group.size() * trainRatio));
+            trainList.addAll(group.subList(0, trainCount));
+            if (trainCount < group.size()) {
+                valList.addAll(group.subList(trainCount, group.size()));
+            }
+        }
+
+        return new int[][] {
+                trainList.stream().mapToInt(Integer::intValue).toArray(),
+                valList.stream().mapToInt(Integer::intValue).toArray()
+        };
+    }
+
+    private static float[] extractRowSubset(float[] flatData, int[] indices, int nFeatures) {
+        float[] result = new float[indices.length * nFeatures];
+        for (int i = 0; i < indices.length; i++) {
+            System.arraycopy(flatData, indices[i] * nFeatures,
+                    result, i * nFeatures, nFeatures);
+        }
+        return result;
+    }
+
+    private static float[] extractLabelSubset(float[] labels, int[] indices) {
+        float[] result = new float[indices.length];
+        for (int i = 0; i < indices.length; i++) result[i] = labels[indices[i]];
+        return result;
     }
 }

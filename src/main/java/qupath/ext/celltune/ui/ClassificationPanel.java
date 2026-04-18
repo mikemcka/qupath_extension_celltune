@@ -66,6 +66,7 @@ public class ClassificationPanel extends VBox {
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
     private final ComboBox<ResamplingStrategy> resamplingCombo = new ComboBox<>();
     private final CheckBox autoTuneCheckBox = new CheckBox("Auto-tune hyperparameters");
+    private final CheckBox earlyStopCheckBox = new CheckBox("Early stopping");
     private final PopulationPanel populationPanel = new PopulationPanel();
 
     public ClassificationPanel(QuPathGUI qupath) {
@@ -106,7 +107,11 @@ public class ClassificationPanel extends VBox {
 
         autoTuneCheckBox.setSelected(false);
         autoTuneCheckBox.setTooltip(new Tooltip(
-                "Random search with cross-validation to find optimal hyperparameters before training"));
+                "TPE Bayesian optimisation with cross-validation to find optimal hyperparameters independently per model"));
+
+        earlyStopCheckBox.setSelected(false);
+        earlyStopCheckBox.setTooltip(new Tooltip(
+                "Find optimal boosting rounds via validation loss monitoring (patience=20)"));
 
         // ── Status row ──
         HBox statsRow = new HBox(12, labelCountLabel, predCountLabel);
@@ -153,6 +158,7 @@ public class ClassificationPanel extends VBox {
                 poolImagesCheckBox,
                 resamplingCombo,
                 autoTuneCheckBox,
+                earlyStopCheckBox,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -255,6 +261,7 @@ public class ClassificationPanel extends VBox {
         final boolean poolAllImages = poolImagesCheckBox.isSelected();
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final boolean autoTuneSelected = autoTuneCheckBox.isSelected();
+        final boolean earlyStopSelected = earlyStopCheckBox.isSelected();
         final List<String> finalFeatureNames = featureNames;
         Thread trainThread = new Thread(() -> {
             try {
@@ -327,6 +334,7 @@ public class ClassificationPanel extends VBox {
                         supplementaryRows, supplementaryLabels,
                         resamplingStrategy,
                         autoTuneSelected,
+                        earlyStopSelected,
                         msg -> {});
 
                 predAll = classifier.getPredALL();
@@ -354,10 +362,7 @@ public class ClassificationPanel extends VBox {
                     sampleButton.setDisable(false);
 
                     // Update spinners if auto-tuned
-                    if (autoTuneSelected) {
-                        roundsSpinner.getValueFactory().setValue(classifier.getNumRounds());
-                        depthSpinner.getValueFactory().setValue(classifier.getMaxDepth());
-                    }
+                    // (Tuned params are now per-model; spinners retain user defaults)
 
                     imageData.getHierarchy().fireHierarchyChangedEvent(this);
 

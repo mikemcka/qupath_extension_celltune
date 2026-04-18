@@ -385,8 +385,12 @@ public class CellTuneExtension implements QuPathExtension {
         resamplingRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         var autoTuneCheckBox = new javafx.scene.control.CheckBox(
-                "Auto-tune hyperparameters (random search with cross-validation)");
+                "Auto-tune hyperparameters (TPE Bayesian optimisation)");
         autoTuneCheckBox.setSelected(false);
+
+        var earlyStopCheckBox = new javafx.scene.control.CheckBox(
+                "Early stopping (find optimal boosting rounds)");
+        earlyStopCheckBox.setSelected(false);
 
         var confirmAlert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.CONFIRMATION);
@@ -404,14 +408,14 @@ public class CellTuneExtension implements QuPathExtension {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg), poolCheckBox,
-                    resamplingRow, autoTuneCheckBox);
+                    resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         } else {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg),
-                    resamplingRow, autoTuneCheckBox);
+                    resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         }
@@ -423,6 +427,7 @@ public class CellTuneExtension implements QuPathExtension {
         final boolean poolAllImages = hasMultipleImages && poolCheckBox.isSelected();
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final boolean autoTuneHyperparams = autoTuneCheckBox.isSelected();
+        final boolean earlyStopEnabled = earlyStopCheckBox.isSelected();
 
         // Check whether the JVM has enough heap for this dataset
         if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
@@ -561,6 +566,7 @@ public class CellTuneExtension implements QuPathExtension {
                         supplementaryRows, supplementaryLabels,
                         resamplingStrategy,
                         autoTuneHyperparams,
+                        earlyStopEnabled,
                         msg -> {
                             logger.info("[CellTune] {}", msg);
                             javafx.application.Platform.runLater(() ->

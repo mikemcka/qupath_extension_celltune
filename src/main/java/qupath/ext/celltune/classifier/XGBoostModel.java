@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Wraps XGBoost4J training and prediction behind a simple interface.
@@ -124,6 +125,79 @@ public class XGBoostModel {
 
     /** @return the device used for the last training run */
     public String getLastDevice() { return lastDevice; }
+
+    // ── Early Stopping ──────────────────────────────────────────────────────────
+
+    /**
+     * Find the optimal number of boosting rounds by training on a subset and
+     * monitoring validation loss. Uses CPU only for speed.
+     *
+     * @return optimal number of rounds (1-indexed)
+     */
+    static int findBestRounds(float[] trainData, float[] trainLabels, int trainSize,
+                              float[] valData, float[] valLabels, int valSize,
+                              int nFeatures, int nClasses,
+                              int maxRounds, int maxDepth, float eta, float subsample,
+                              int patience, Consumer<String> log) throws Exception {
+
+        DMatrix trainMat = null;
+        DMatrix valMat = null;
+        try {
+            trainMat = new DMatrix(trainData, trainSize, nFeatures, Float.NaN);
+            trainMat.setLabel(trainLabels);
+            valMat = new DMatrix(valData, valSize, nFeatures, Float.NaN);
+            valMat.setLabel(valLabels);
+
+            Map<String, Object> params = buildParams(nClasses, maxDepth, eta, subsample);
+            params.put("device", "cpu");
+            params.put("tree_method", "hist");
+            params.put("verbosity", 0);
+
+            // Train 1 round to create a Booster
+            Booster booster = XGBoost.train(trainMat, params, 1,
+                    new LinkedHashMap<>(), null, null);
+
+            String evalStr = booster.evalSet(
+                    new DMatrix[]{valMat}, new String[]{"val"}, 0);
+            double bestLoss = parseEvalMetric(evalStr);
+            int bestRound = 0;
+
+            for (int round = 1; round < maxRounds; round++) {
+                booster.update(trainMat, round);
+                evalStr = booster.evalSet(
+                        new DMatrix[]{valMat}, new String[]{"val"}, round);
+                double loss = parseEvalMetric(evalStr);
+
+                if (loss < bestLoss) {
+                    bestLoss = loss;
+                    bestRound = round;
+                }
+                if (round - bestRound >= patience) break;
+            }
+
+            int actualRounds = bestRound + 1;
+            log.accept(String.format(
+                    "XGBoost early stopping: best round %d/%d (val loss: %.6f)",
+                    actualRounds, maxRounds, bestLoss));
+            return actualRounds;
+
+        } finally {
+            try { if (trainMat != null) trainMat.dispose(); } catch (Exception ignore) {}
+            try { if (valMat != null) valMat.dispose(); } catch (Exception ignore) {}
+        }
+    }
+
+    /** Parse the last metric value from an XGBoost evalSet string. */
+    private static double parseEvalMetric(String evalStr) {
+        int lastColon = evalStr.lastIndexOf(':');
+        if (lastColon < 0) return Double.MAX_VALUE;
+        String valStr = evalStr.substring(lastColon + 1).trim();
+        try {
+            return Double.parseDouble(valStr);
+        } catch (NumberFormatException e) {
+            return Double.MAX_VALUE;
+        }
+    }
 
     // ── Prediction ──────────────────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Wraps LightGBM4J training and prediction behind the same style interface
@@ -101,6 +102,78 @@ public class LightGBMModel {
 
     /** @return the device used for the last training run */
     public String getLastDevice() { return lastDevice; }
+
+    // ── Early Stopping ──────────────────────────────────────────────────────────
+
+    /**
+     * Find the optimal number of boosting rounds by training on a subset and
+     * monitoring validation loss. Uses CPU only for speed.
+     *
+     * @return optimal number of rounds (1-indexed)
+     */
+    static int findBestRounds(float[] trainData, float[] trainLabels, int trainSize,
+                              float[] valData, float[] valLabels, int valSize,
+                              int nFeatures, int nClasses,
+                              int maxRounds, int maxDepth, float learningRate, float subsample,
+                              int patience, Consumer<String> log) throws Exception {
+
+        LGBMDataset dataset = LGBMDataset.createFromMat(
+                trainData, trainSize, nFeatures, true, "", null);
+        dataset.setField("label", trainLabels);
+
+        String params = buildParams(nClasses, maxDepth, learningRate, subsample);
+        LGBMBooster booster = LGBMBooster.create(dataset, params);
+
+        try {
+            double bestLoss = Double.MAX_VALUE;
+            int bestRound = 0;
+
+            for (int round = 0; round < maxRounds; round++) {
+                booster.updateOneIter();
+
+                double[] preds = booster.predictForMat(
+                        valData, valSize, nFeatures, true,
+                        PredictionType.C_API_PREDICT_NORMAL);
+                double loss = computeLogloss(preds, valLabels, valSize, nClasses);
+
+                if (loss < bestLoss) {
+                    bestLoss = loss;
+                    bestRound = round;
+                }
+                if (round - bestRound >= patience) break;
+            }
+
+            int actualRounds = bestRound + 1;
+            log.accept(String.format(
+                    "LightGBM early stopping: best round %d/%d (val loss: %.6f)",
+                    actualRounds, maxRounds, bestLoss));
+            return actualRounds;
+
+        } finally {
+            booster.close();
+            dataset.close();
+        }
+    }
+
+    /** Compute mean log-loss from raw LightGBM predictions. */
+    private static double computeLogloss(double[] preds, float[] labels,
+                                         int n, int nClasses) {
+        double loss = 0;
+        if (nClasses == 2 && preds.length == n) {
+            for (int i = 0; i < n; i++) {
+                int trueClass = (int) labels[i];
+                double p = trueClass == 1 ? preds[i] : 1 - preds[i];
+                loss += -Math.log(Math.max(p, 1e-15));
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                int trueClass = (int) labels[i];
+                double p = preds[i * nClasses + trueClass];
+                loss += -Math.log(Math.max(p, 1e-15));
+            }
+        }
+        return loss / n;
+    }
 
     // ── Prediction ──────────────────────────────────────────────────────────────
 
