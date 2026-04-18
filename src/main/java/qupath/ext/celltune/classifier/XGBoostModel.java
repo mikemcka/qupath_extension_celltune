@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -73,9 +74,29 @@ public class XGBoostModel {
                 params.put("tree_method", "hist");
                 logger.info("XGBoost: attempting GPU (CUDA) training…");
                 booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-                usingGpu = true;
-                logger.info("XGBoost training: GPU (CUDA) — {} samples, {} features, {} classes, {} rounds",
-                        nSamples, nFeatures, nClasses, numRounds);
+
+                // XGBoost may silently fall back to CPU without throwing.
+                // Check the JSON model dump to see whether CUDA was actually used.
+                try {
+                    ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                    booster.saveModel(buf, "json");
+                    String modelJson = buf.toString(StandardCharsets.UTF_8);
+                    usingGpu = modelJson.contains("\"device\": \"cuda\"")
+                            || modelJson.contains("\"device\":\"cuda\"");
+                } catch (Exception probeEx) {
+                    // If JSON dump fails, assume GPU since training didn't throw
+                    logger.warn("Could not verify GPU via model dump: {}", probeEx.getMessage());
+                    usingGpu = true;
+                }
+
+                if (usingGpu) {
+                    logger.info("XGBoost training: GPU (CUDA) — {} samples, {} features, {} classes, {} rounds",
+                            nSamples, nFeatures, nClasses, numRounds);
+                } else {
+                    logger.info("XGBoost: CUDA requested but device silently fell back to CPU");
+                    logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
+                            nSamples, nFeatures, nClasses, numRounds);
+                }
             } catch (Exception gpuEx) {
                 logger.info("XGBoost GPU not available ({}), falling back to CPU", gpuEx.getMessage());
                 params.put("device", "cpu");
