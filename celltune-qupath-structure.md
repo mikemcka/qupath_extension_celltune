@@ -548,3 +548,40 @@ Evaluate the impact of synthetic resampling techniques on training quality, espe
 - Java implementations of SMOTE/ADASYN/Tomek would need to be written or ported (no standard Java ML library provides these out of the box)
 - Consider making resampling strategy a dropdown option in `ClassificationPanel` with default = None
 - k-neighbour search for SMOTE/ADASYN can use brute-force Euclidean distance (feature vectors are typically <200 dimensions)
+
+### 9.3 Recommendations for HPC Deployment
+
+When deploying on HPC or high-end GPU workstations with large images (500K+ cells, 2000+ features), the following optimisations and settings are important.
+
+#### JVM Heap Memory (`-Xmx`)
+
+The Java heap must be large enough to hold the feature matrix and native model copies. **Set `-Xmx24g` or higher** using one of these methods:
+
+| Method | How |
+|--------|-----|
+| QuPath Preferences | Edit → Preferences → Max memory |
+| Setup options | Help → Show setup options → edit max memory |
+| Config file | Edit `QuPath.cfg` in the QuPath install folder — add `-Xmx24g` to JVM options |
+| Command line | Launch with `QuPath --Xmx=24g` |
+
+**Built-in memory safeguards (implemented in `CellTuneExtension.java`):**
+
+- **`checkHeapMemory()`** — called at extension install time. If the JVM max heap is below 8 GiB, shows a warning notification instructing the user to increase memory via Edit → Preferences or Help → Show setup options. Logs the current heap size.
+- **`checkTrainingMemory(nCells, nFeatures)`** — called before training begins. Estimates peak memory as `(nCells × nFeatures × 4 bytes) / 1 GiB × 3.0 + 0.3 GiB` (accounts for the Java float array, XGBoost DMatrix copy, LightGBM Dataset copy, plus overhead). If the estimate exceeds 80% of max heap, shows a confirmation dialog warning the user with the estimated and available figures — the user can cancel or proceed.
+
+#### Resource Leak Prevention ✅ FIXED
+
+- **DMatrix cleanup** (`classifier/XGBoostModel.java`): All `DMatrix` objects (training and prediction) are wrapped in `try { … } finally { dmatrix.dispose(); }` blocks. Without this, a 500K × 2000 training matrix would leave ~7.4 GiB of native memory allocated until the garbage collector happened to finalise the object. Now disposed immediately after use.
+
+#### Parallel Feature Extraction ✅ FIXED
+
+- **`CellFeatureExtractor.extractMatrix()`** (`model/CellFeatureExtractor.java`): Changed from sequential `for` loop to `IntStream.range(0, nCells).parallel().forEach(…)`. Each cell's measurement reads are independent, so the work distributes across all available CPU cores. On HPC nodes with 32–64 cores, this provides a significant speedup for the extraction phase. The `Collection<PathObject>` is converted to an indexed `List` for thread-safe indexed access.
+
+#### Scalability Limits
+
+At 2000 features, XGBoost4J and LightGBM4J use a flat `float[]` array indexed by Java `int`, limiting the matrix to approximately **1.07 million cells** (2,147,483,647 / 2000 ≈ 1.07M rows). For datasets exceeding 1M cells, the feature matrix would need to be split into chunks and models trained/predicted in segments — a more involved refactor not yet implemented.
+
+#### GPU Notes
+
+- **XGBoost**: Automatically detects CUDA-capable GPUs and trains with `device=cuda`. Falls back to CPU if CUDA is unavailable. Reports device via `getLastDevice()`.
+- **LightGBM**: Always trains on CPU. The `lightgbm4j` binding ships a CPU-only native binary. GPU training would require building LightGBM from source with `-DUSE_GPU=1` (OpenCL) and replacing the native library — not bundled.

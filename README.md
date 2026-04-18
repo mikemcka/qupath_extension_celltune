@@ -187,6 +187,40 @@ src/main/java/qupath/ext/celltune/
     └── ProjectStateManager.java    # JSON + Base64 model persistence
 ```
 
+## Recommendations for HPC Deployment
+
+When working with large images (500K+ cells, 2000+ features) on HPC or high-end GPU workstations, bear in mind the following.
+
+### JVM Heap Memory (`-Xmx`)
+
+The Java heap must be large enough to hold the feature matrix and native model copies in memory. Set **`-Xmx24g` or higher** in QuPath's launcher using one of these methods:
+
+| Method | How |
+|--------|-----|
+| **QuPath Preferences** | Edit → Preferences → Max memory |
+| **Setup options** | Help → Show setup options → edit max memory |
+| **Config file** | Edit `QuPath.cfg` in the QuPath install directory — add `-Xmx24g` to the JVM options |
+| **Command line** | Launch with `QuPath --Xmx=24g` |
+
+The extension includes two built-in memory safeguards:
+
+- **Startup check** — if the JVM heap is below 8 GiB, a notification warns the user to increase it via Edit → Preferences or Help → Show setup options
+- **Pre-training check** — before training begins, the extension estimates the peak memory requirement from the cell count and feature count (matrix size × 3 for native copies + 0.3 GiB overhead). If the estimate exceeds 80% of the available heap, a confirmation dialog warns the user and offers to cancel.
+
+### Resource Management
+
+- **DMatrix cleanup** — `XGBoostModel` wraps all `DMatrix` objects in `try/finally` blocks with `dispose()` calls, preventing native memory leaks that would otherwise leave multi-GiB allocations lingering until garbage collection
+- **Parallel feature extraction** — `CellFeatureExtractor.extractMatrix()` uses `IntStream.parallel()` to distribute measurement reads across all available CPU cores, significantly reducing extraction time on multi-core HPC nodes
+
+### Scalability Limits
+
+At 2000 features, the flat `float[]` matrix used by XGBoost4J and LightGBM4J imposes an array index limit of approximately **1.07 million cells** (Java arrays are indexed by `int`, max ~2.1 billion elements, so 2,147,483,647 / 2000 ≈ 1.07M rows). For datasets exceeding 1M cells, the feature matrix would need to be chunked into segments — a more involved change that is not yet implemented.
+
+### GPU Notes
+
+- **XGBoost** automatically detects CUDA-capable GPUs and trains on GPU when available, falling back to CPU otherwise
+- **LightGBM** always trains on CPU — the `lightgbm4j` Java binding ships a CPU-only native binary. GPU training would require building LightGBM from source with `-DUSE_GPU=1` and replacing the native library
+
 ## Technology Stack
 
 | Layer | Technology |
@@ -225,4 +259,6 @@ These can be adjusted in the Classification Panel before training.
 
 ## Acknowledgements
 
-Inspired by [CellTune](https://doi.org/10.1101/2024.09.20.613828) by Zindy et al. Built on the [QuPath extension template](https://github.com/qupath/qupath-extension-template).
+- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.kerenlab.org/) — the active learning cell classification workflow that this extension emulates. See [Zindy et al. (2024)](https://doi.org/10.1101/2024.09.20.613828).
+- **[qupath-extension-xgboost](https://github.com/zindy/qupath-extension-xgboost)** by [Zindy](https://github.com/zindy) — a QuPath 0.7 XGBoost extension whose project structure, Gradle configuration, and XGBoost4J integration patterns served as a reference implementation for this extension.
+- Built on the [QuPath extension template](https://github.com/qupath/qupath-extension-template).
