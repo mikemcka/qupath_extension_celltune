@@ -549,7 +549,40 @@ Evaluate the impact of synthetic resampling techniques on training quality, espe
 - Consider making resampling strategy a dropdown option in `ClassificationPanel` with default = None
 - k-neighbour search for SMOTE/ADASYN can use brute-force Euclidean distance (feature vectors are typically <200 dimensions)
 
-### 9.3 Recommendations for HPC Deployment
+### 9.3 Hyperparameter Tuning
+
+Currently users manually set hyperparameters via spinners in `ClassificationPanel` (boosting rounds = 200, max depth = 6, learning rate = 0.1, subsample = 0.8). Investigate automated tuning to find optimal settings per dataset.
+
+**Strategies to explore:**
+
+| Strategy | Description | Pros | Cons |
+|----------|-------------|------|------|
+| **k-fold CV** | Split labelled cells into k folds, train on k−1, evaluate on the held-out fold, repeat | Reliable generalisation estimate | k× training time per trial |
+| **Grid search** | Exhaustive evaluation over a predefined parameter grid | Finds global optimum within the grid | Combinatorial explosion with many parameters |
+| **Random search** | Sample hyperparameter combinations randomly from ranges | More efficient than grid for ≥4 parameters ([Bergstra & Bengio 2012](https://jmlr.org/papers/v13/bergstra12a.html)) | May miss narrow optima |
+| **Bayesian optimisation** | Surrogate model (GP or TPE) guides search toward promising regions | Sample-efficient | Adds implementation complexity |
+| **Early stopping** | Monitor validation loss during boosting, stop when it plateaus | Auto-tunes round count, fast | Only tunes one parameter |
+
+**Candidate parameter grid (starting point):**
+
+```
+max_depth     ∈ {4, 6, 8, 10}
+eta           ∈ {0.05, 0.1, 0.2}
+nrounds       ∈ {100, 200, 400}
+subsample     ∈ {0.6, 0.8, 1.0}
+colsample     ∈ {0.6, 0.8, 1.0}
+```
+
+**Implementation notes:**
+- XGBoost and LightGBM may have different optimal settings — tune independently
+- k-fold CV should stratify by class to preserve label distribution in each fold
+- Early stopping can be implemented via XGBoost4J's `setEvalSets()` and LightGBM's `early_stopping_round` parameter
+- Display a progress dialog showing fold/trial number, current best score, and estimated time remaining
+- Store the best hyperparameters in `ClassifierState` so they persist across sessions
+- Consider a "Quick tune" mode (random search, 20 trials, 3-fold CV) vs. "Full tune" mode (grid search, 5-fold CV) as dropdown options in ClassificationPanel
+- Metrics to optimise: macro F1 (default), per-class F1, or log-loss
+
+### 9.4 Recommendations for HPC Deployment
 
 When deploying on HPC or high-end GPU workstations with large images (500K+ cells, 2000+ features), the following optimisations and settings are important.
 

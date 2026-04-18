@@ -252,6 +252,15 @@ These can be adjusted in the Classification Panel before training.
   - **Tomek links** — identify and remove borderline majority-class samples that form Tomek pairs with minority-class samples, cleaning the decision boundary
   - Combinations: SMOTE + Tomek links as a pipeline (over-sample then clean), ADASYN + Tomek links
   - Measure effect on per-class F1, macro F1, and inter-model agreement rates across training rounds
+- **Hyperparameter tuning** — currently the user manually sets boosting rounds (200), max depth (6), learning rate (0.1), and subsample (0.8) via spinners in the Classification Panel. Investigate automated tuning strategies:
+  - **k-fold cross-validation** — split the labelled cells into k folds and evaluate each hyperparameter combination on held-out folds to estimate generalisation performance
+  - **Grid search** — exhaustive search over a predefined parameter grid (e.g. max_depth ∈ {4, 6, 8, 10}, eta ∈ {0.05, 0.1, 0.2}, rounds ∈ {100, 200, 400})
+  - **Random search** — sample hyperparameter combinations randomly from ranges, often more efficient than grid search for high-dimensional parameter spaces
+  - **Bayesian optimisation** — use a surrogate model (e.g. Gaussian process or TPE) to guide the search toward promising regions of the parameter space
+  - **Early stopping** — monitor validation loss during training and stop boosting rounds when performance plateaus, effectively auto-tuning the number of rounds
+  - Consider running tuning for both XGBoost and LightGBM independently since they may have different optimal settings
+  - Display a progress dialog with per-fold / per-trial results and the best configuration found
+  - Measure effect on per-class F1, macro F1, training time, and inter-model agreement
 
 ## License
 
