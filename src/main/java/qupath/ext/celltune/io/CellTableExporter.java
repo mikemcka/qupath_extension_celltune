@@ -84,8 +84,9 @@ public class CellTableExporter {
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
             // Header
-            StringBuilder hdr = new StringBuilder();
-            hdr.append(String.join(DELIMITER,
+                StringBuilder hdr = new StringBuilder();
+                hdr.append(String.join(DELIMITER,
+                    "Image",
                     "CellID",
                     "GroundTruth",
                     "Pred_MDL1",
@@ -150,8 +151,13 @@ public class CellTableExporter {
                     String label = labelStore.getLabel(cellId);
                     if (label != null) gt = label;
                 }
-
+                String imageName = null;
+                if (cell.getMeasurementList().containsKey("Image")) {
+                    imageName = String.valueOf(cell.getMeasurementList().get("Image"));
+                }
+                if (imageName == null) imageName = "image";
                 StringBuilder row = new StringBuilder();
+                row.append(imageName).append(DELIMITER);
                 if (pred != null) {
                     row.append(String.join(DELIMITER,
                             cellId,

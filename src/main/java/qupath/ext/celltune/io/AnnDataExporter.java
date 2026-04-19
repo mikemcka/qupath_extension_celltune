@@ -80,6 +80,7 @@ public class AnnDataExporter {
 
             // Header: unique_id, fov, cellID, features..., [norm features...], centroids, population sets, ground truth
             StringBuilder header = new StringBuilder();
+            header.append("Image").append(DELIMITER);
             header.append("unique_id").append(DELIMITER);
             header.append("fov").append(DELIMITER);
             header.append("cellID");
@@ -143,8 +144,13 @@ public class AnnDataExporter {
                 PathObject cell = cellList.get(idx);
                 String cellId = cell.getID().toString();
                 String uniqueId = fov + "__" + cellId;
-
+                String imageNameCol = null;
+                if (cell.getMeasurementList().containsKey("Image")) {
+                    imageNameCol = String.valueOf(cell.getMeasurementList().get("Image"));
+                }
+                if (imageNameCol == null) imageNameCol = fov;
                 StringBuilder row = new StringBuilder();
+                row.append(escapeCsv(imageNameCol)).append(DELIMITER);
                 row.append(escapeCsv(uniqueId)).append(DELIMITER);
                 row.append(escapeCsv(fov)).append(DELIMITER);
                 row.append(escapeCsv(cellId));

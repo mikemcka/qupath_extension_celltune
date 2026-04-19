@@ -56,6 +56,10 @@ public class ProjectStateManager {
         public String rfModel2Base64;      // null if not yet trained
         public String model1Type;          // ModelType name, null defaults to XGBOOST
         public String model2Type;          // ModelType name, null defaults to LIGHTGBM
+        // New fields for feature selection and normalization
+        public List<String> selectedFeatures;
+        public Map<String, String> featureTransforms; // feature name → transform name
+        public Double arcsinhCofactor;
     }
 
     /**
@@ -118,6 +122,10 @@ public class ProjectStateManager {
         }
         state.model1Type = model1Type != null ? model1Type.name() : ModelType.XGBOOST.name();
         state.model2Type = model2Type != null ? model2Type.name() : ModelType.LIGHTGBM.name();
+        // Save feature selection and normalization
+        state.selectedFeatures = null; // to be set by caller
+        state.featureTransforms = null; // to be set by caller
+        state.arcsinhCofactor = null; // to be set by caller
 
         Path outPath = dir.resolve(STATE_FILENAME);
         String json = GSON.toJson(state);

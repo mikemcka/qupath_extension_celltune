@@ -99,7 +99,7 @@ public class GroundTruthIO {
             writer.newLine();
 
             // Column header — raw features, then normalized if present
-            StringBuilder header = new StringBuilder("Label,CentroidX,CentroidY");
+            StringBuilder header = new StringBuilder("Image,Label,CentroidX,CentroidY");
             if (includeRaw) {
                 for (String feat : featureNames) {
                     header.append(',').append(feat);
@@ -152,8 +152,14 @@ public class GroundTruthIO {
                 double cx = roi != null ? roi.getCentroidX() : 0;
                 double cy = roi != null ? roi.getCentroidY() : 0;
 
+                String imageNameCol = null;
+                if (cell.getMeasurementList().containsKey("Image")) {
+                    imageNameCol = String.valueOf(cell.getMeasurementList().get("Image"));
+                }
+                if (imageNameCol == null) imageNameCol = imageName != null ? imageName : "image";
                 StringBuilder row = new StringBuilder();
-                row.append(label);
+                row.append(imageNameCol);
+                row.append(',').append(label);
                 row.append(',').append(String.format("%.2f", cx));
                 row.append(',').append(String.format("%.2f", cy));
                 if (includeRaw) {

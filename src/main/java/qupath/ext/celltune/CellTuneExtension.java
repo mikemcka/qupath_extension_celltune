@@ -204,6 +204,23 @@ public class CellTuneExtension implements QuPathExtension {
             this.labelStore = new LabelStore("CellTune");
         }
 
+        // ── Try to restore feature selection and normalization from project state ──
+        if (project != null) {
+            try {
+                var state = ProjectStateManager.loadState(project);
+                if (state != null) {
+                    if (state.selectedFeatures != null) this.selectedFeatures = new ArrayList<>(state.selectedFeatures);
+                    if (state.featureTransforms != null || state.arcsinhCofactor != null) {
+                        FeatureNormalizer norm = new FeatureNormalizer();
+                        if (state.featureTransforms != null) norm.fromTransformMap(state.featureTransforms);
+                        if (state.arcsinhCofactor != null) norm.setArcsinhCofactor(state.arcsinhCofactor);
+                        this.featureNormalizer = norm;
+                    }
+                }
+            } catch (Exception ex) {
+                logger.warn("Failed to restore feature selection/normalization: {}", ex.getMessage());
+            }
+        }
         // ── Push reset state into panel ──
         syncPanelState();
     }
@@ -897,7 +914,7 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         var toolbar = new ManualLabelToolbar(
-                qupath, labelStore, extraClasses, qupath.getStage());
+            qupath, labelStore, extraClasses, qupath.getStage(), predAll);
 
         // When the manual label window closes, sync state
         toolbar.getStage().setOnHidden(e -> {

@@ -15,6 +15,27 @@ import java.util.*;
  * {@link CellFeatureExtractor} to apply transforms during row/matrix extraction.
  */
 public class FeatureNormalizer {
+    /** Serialize to a map: feature name → transform name. */
+    public Map<String, String> toTransformMap() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (var e : transforms.entrySet()) {
+            if (e.getValue() != null && e.getValue() != Transform.NONE)
+                out.put(e.getKey(), e.getValue().name());
+        }
+        return out;
+    }
+
+    /** Restore transforms from a map: feature name → transform name. */
+    public void fromTransformMap(Map<String, String> map) {
+        transforms.clear();
+        if (map == null) return;
+        for (var e : map.entrySet()) {
+            try {
+                Transform t = Transform.valueOf(e.getValue());
+                if (t != Transform.NONE) transforms.put(e.getKey(), t);
+            } catch (Exception ignore) {}
+        }
+    }
 
     public enum Transform {
         NONE("None"),

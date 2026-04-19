@@ -38,6 +38,9 @@ import java.util.*;
  *  [ ] Auto-advance to next detection
  * </pre>
  */
+import qupath.ext.celltune.model.PopulationSet;
+import qupath.ext.celltune.model.CellPrediction;
+
 public class ManualLabelToolbar {
 
     private static final Logger logger = LoggerFactory.getLogger(ManualLabelToolbar.class);
@@ -54,8 +57,15 @@ public class ManualLabelToolbar {
     private final MenuButton allClassesMenu = new MenuButton("All Classes \u25BC");
     private final CheckBox autoAdvance = new CheckBox("Auto-advance to next detection");
 
+
     // Currently selected detection
     private PathObject currentCell = null;
+
+    // Optional: predictions for cells (may be null)
+    private final PopulationSet predictions;
+
+    // UI for model predictions
+    private final HBox predictionBox = new HBox(4);
 
     // Listener reference for cleanup
     private PathObjectSelectionListener selectionListener;
@@ -71,9 +81,11 @@ public class ManualLabelToolbar {
     public ManualLabelToolbar(QuPathGUI qupath,
                               LabelStore labelStore,
                               Set<String> extraClasses,
-                              Window owner) {
+                              Window owner,
+                              PopulationSet predictions) {
         this.qupath = qupath;
         this.labelStore = labelStore;
+        this.predictions = predictions;
 
         stage = new Stage();
         stage.setTitle("Manual Label Mode");
@@ -92,6 +104,10 @@ public class ManualLabelToolbar {
         statusRow.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(statusRow.getChildren().get(2), Priority.ALWAYS);
 
+        // ── Prediction buttons (model 1/model 2) ───────────────────────────
+        predictionBox.setAlignment(Pos.CENTER_LEFT);
+        updatePredictionButtons(null); // initially no cell
+
         // ── Class buttons ───────────────────────────────────────────────────
         classButtonBox.setAlignment(Pos.CENTER_LEFT);
         populateClassButtons(extraClasses);
@@ -106,7 +122,7 @@ public class ManualLabelToolbar {
         autoAdvance.setSelected(false);
 
         // ── Layout ──────────────────────────────────────────────────────────
-        VBox root = new VBox(8, statusRow, buttonRow, autoAdvance);
+        VBox root = new VBox(8, statusRow, predictionBox, buttonRow, autoAdvance);
         root.setPadding(new Insets(10));
         stage.setScene(new Scene(root));
         stage.sizeToScene();
@@ -138,16 +154,41 @@ public class ManualLabelToolbar {
                             ? pathObjectSelected.getPathClass().getName() : "unlabelled";
                     selectedCellLabel.setText("Selected: " + id + " (" + cls + ")");
                     statusDot.setFill(pathObjectSelected.getPathClass() != null ? Color.LIMEGREEN : Color.WHITE);
+                    updatePredictionButtons(currentCell);
                 } else {
                     currentCell = null;
                     selectedCellLabel.setText("Select a detection cell in the viewer");
                     statusDot.setFill(Color.WHITE);
+                    updatePredictionButtons(null);
                 }
             });
         };
 
         imageData.getHierarchy().getSelectionModel()
                 .addPathObjectSelectionListener(selectionListener);
+    }
+
+    // ── Model prediction buttons (model 1/model 2) ─────────────────────────
+    private void updatePredictionButtons(PathObject cell) {
+        predictionBox.getChildren().clear();
+        if (cell == null || predictions == null) return;
+        String cellId = cell.getID().toString();
+        CellPrediction pred = predictions.get(cellId);
+        if (pred == null) return;
+
+        // Model 1 button
+        Button mdl1Btn = new Button(String.format("Model 1: %s (%.0f%%)",
+                pred.getModel1Label(), pred.model1Confidence() * 100));
+        mdl1Btn.setStyle("-fx-background-color: #bbdefb; -fx-font-weight: bold; -fx-font-size: 11px;");
+        mdl1Btn.setOnAction(e -> assignLabel(pred.getModel1Label()));
+
+        // Model 2 button
+        Button mdl2Btn = new Button(String.format("Model 2: %s (%.0f%%)",
+                pred.getModel2Label(), pred.model2Confidence() * 100));
+        mdl2Btn.setStyle("-fx-background-color: #f8bbd0; -fx-font-weight: bold; -fx-font-size: 11px;");
+        mdl2Btn.setOnAction(e -> assignLabel(pred.getModel2Label()));
+
+        predictionBox.getChildren().addAll(mdl1Btn, mdl2Btn);
     }
 
     private void removeSelectionListener() {
