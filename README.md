@@ -6,8 +6,8 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 
 ## Features
 
-- **Dual-model disagreement detection** — XGBoost and LightGBM are trained on the same labels; cells where they disagree are flagged for review. Both models attempt GPU (CUDA) training automatically and fall back to CPU if unavailable.
-- **Weighted uncertainty sampling with exploration** — the review sample is split into two parts. **90% disagreement cells:** cells where XGBoost and LightGBM predict different classes, weighted by confusion severity — class pairs with lower inter-model agreement (`w = 2 - agreementRate[i] - agreementRate[j]`) are sampled more heavily, focusing labelling time on the model's worst failure modes. **10% exploration cells:** agreement cells (both models agree) sampled uniformly at random. This exploration component guards against rare cell types that both models confidently misclassify — such cells never appear as disagreements and would otherwise be invisible to the active learning loop. Exploration cells appear at the end of the review queue so high-priority disagreements are reviewed first.
+- **Dual-model disagreement detection** — two models are trained on the same labels; cells where they disagree are flagged for review. Model types are configurable: **XGBoost**, **LightGBM**, or **Random Forest**. The default pairing is XGBoost + LightGBM. Both boosted models attempt GPU (CUDA) training automatically and fall back to CPU if unavailable.
+- **6-tier weighted uncertainty sampling** — the review sample is built in six priority tiers: **Tier 0 (FOV balance):** disagreement cells are grouped by field of view and sampled proportionally so that no single FOV dominates the review queue. **Tier 1 (confusion-weighted):** remaining disagreement cells weighted by confusion severity (`w = 2 - agreementRate[i] - agreementRate[j]`). **Tier 2 (low-confidence agreement):** cells where both models agree but confidence is below 60%. **Tier 3 (boundary):** cells near the decision boundary (confidence between 60–75%). **Tier 4 (random disagreement):** any remaining disagreement cells sampled uniformly. **Tier 5 (exploration):** agreement cells sampled uniformly to guard against rare cell types that both models confidently misclassify.
 - **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override
 - **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates, per-class F1 scores, macro F1, and PNG export
 - **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
@@ -20,6 +20,9 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
 - **Feature selection** — filterable, searchable feature selector handles panels with 2000+ measurements
+- **Feature normalization** — optional per-feature transforms applied during extraction: **arcsinh** (`arcsinh(x / cofactor)`) and **sqrt** (`√x`). The arcsinh transform is standard in cytometry workflows; recommended cofactor is **1** for fluorescence imaging (COMET, CODEX) and **100** for mass spectrometry methods (MIBI, IMC). Transforms are configured per-feature and applied consistently during both training and inference.
+- **AnnData export** — export cell data as AnnData-compatible CSV with a companion Python script for H5AD conversion. The CSV includes unique cell IDs, FOV assignments, feature values, population predictions, and ground truth labels. Run the generated `convert_to_h5ad.py` script to produce a standard `.h5ad` file for downstream analysis in scanpy or other Python tools.
+- **Random Forest classifier** — a pure-Java Random Forest implementation (no external dependencies) is available as an alternative to XGBoost or LightGBM. Uses CART decision trees with cross-entropy split criterion, bootstrap sampling, and random feature subsets (mtry = √features). Both model slots (Model 1 and Model 2) can be independently set to XGBoost, LightGBM, or Random Forest.
 - **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling.
 
 ## The Active Learning Loop
@@ -54,7 +57,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 | QuPath | 0.7.0 or later |
 | Java | 25 (required by QuPath 0.7) |
 
-The extension JAR bundles XGBoost4J and LightGBM4J — no separate ML library installation is needed.
+The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest — no separate ML library installation is needed.
 
 ## Installation
 
@@ -160,21 +163,29 @@ src/main/java/qupath/ext/celltune/
 ├── CellTuneExtension.java          # Entry point — menus, panel docking, state management
 │
 ├── model/                          # Data model layer
-│   ├── CellFeatureExtractor.java   # QuPath measurements → float[]
+│   ├── CellFeatureExtractor.java   # QuPath measurements → float[] (with optional normalization)
 │   ├── CellPrediction.java         # Per-cell dual-model prediction + confidence
+│   ├── FeatureNormalizer.java      # Per-feature arcsinh/sqrt transforms with configurable cofactor
 │   ├── LabelStore.java             # Ground-truth labels (cellId → class)
 │   ├── PopulationSet.java          # Named prediction collection (MDL1/MDL2/AVG/ALL)
-│   └── CellTypeTable.java          # Cell type → marker channel mapping
+│   └── CellTypeTable.java          # Cell type → marker channel mapping + gating rules
 │
 ├── classifier/                     # ML training and inference
-│   ├── DualModelClassifier.java    # Orchestrates XGBoost + LightGBM training
+│   ├── DualModelClassifier.java    # Orchestrates dual-model training (XGBoost/LightGBM/RF)
 │   ├── XGBoostModel.java           # XGBoost4J wrapper (GPU/CUDA with CPU fallback)
 │   ├── LightGBMModel.java          # LightGBM4J wrapper (GPU with CPU fallback)
-│   ├── ClassifierState.java        # Serialisable model snapshot
-│   ├── UncertaintySampler.java     # Weighted disagreement sampling
+│   ├── RandomForestModel.java      # Pure-Java Random Forest (CART, bootstrap, parallel)
+│   ├── ModelType.java              # Enum: XGBOOST, LIGHTGBM, RANDOM_FOREST
+│   ├── ClassifierState.java        # Serialisable model snapshot (all model types)
+│   ├── UncertaintySampler.java     # 6-tier weighted sampling with FOV balance
 │   ├── Resampler.java              # SMOTE, ADASYN, Tomek links resampling
 │   ├── ResamplingStrategy.java     # Enum of available resampling strategies
 │   ├── HyperparameterTuner.java    # TPE Bayesian optimisation for auto-tuning
+│
+├── gating/                         # Marker-based gating system
+│   ├── AutoLandmarker.java         # Multi-threshold cascade landmark engine
+│   ├── GatingExpression.java       # AST-based boolean expression parser
+│   └── GatingRule.java             # Numeric encoding table for marker rules
 │
 ├── ui/                             # JavaFX panels and controls
 │   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review)
@@ -188,6 +199,7 @@ src/main/java/qupath/ext/celltune/
 │   └── FeatureSelectionPane.java   # Filterable feature checkbox list
 │
 └── io/                             # Import / export
+    ├── AnnDataExporter.java        # AnnData-compatible CSV + H5AD conversion script
     ├── MarkerTableImporter.java    # CSV → CellTypeTable
     ├── CellTableExporter.java      # Predictions + labels → CSV
     ├── GroundTruthIO.java          # Portable ground truth CSV export/import
@@ -243,24 +255,64 @@ GPU acceleration depends on platform and the native libraries shipped in the Mav
 | Build system | Gradle 9.2.1 (Kotlin DSL) + QuPath conventions plugin |
 | Extension host | QuPath 0.7 |
 | ML model 1 | XGBoost4J 3.2.0 |
-| ML model 2 | LightGBM4J 4.6.0-2 |
-| UI framework | JavaFX (bundled with QuPath) |
+| ML model 2 | LightGBM4J 4.6.0-2 || ML model 3 | Random Forest (pure Java, no external dependency) || UI framework | JavaFX (bundled with QuPath) |
 | Serialisation | JSON (Gson, bundled with QuPath) |
 
 ## Default Hyperparameters
 
+### XGBoost
+
 | Parameter | Default | Range |
 |-----------|---------|-------|
-| Boosting rounds | 200 | 50–1000 |
+| Boosting rounds | 1000 | 50–2000 |
 | Max tree depth | 6 | 2–15 |
 | Learning rate (eta) | 0.1 | — |
 | Subsample | 0.8 | — |
 
+### LightGBM
+
+| Parameter | Default | Range |
+|-----------|---------|-------|
+| Boosting rounds | 1000 | 50–2000 |
+| Max tree depth | 6 | 2–15 |
+| Learning rate (eta) | 0.05 | — |
+| Subsample | 0.8 | — |
+| min_split_gain | 10 | — |
+
+### Random Forest
+
+| Parameter | Default |
+|-----------|---------|
+| Number of trees | 100 |
+| Max tree depth | 100 |
+| Feature subset (mtry) | √(num_features) |
+| Split criterion | Cross-entropy (log loss) |
+| Bootstrap | Yes |
+
 These can be adjusted in the Classification Panel before training.
+
+## Feature Normalization
+
+Optional per-feature transforms can be applied before training and inference:
+
+| Transform | Formula | Use case |
+|-----------|---------|----------|
+| arcsinh | `arcsinh(x / cofactor)` | Variance-stabilising transform for intensity data |
+| sqrt | `√max(0, x)` | Simple variance-stabilising transform |
+
+### Recommended arcsinh cofactors
+
+| Imaging modality | Cofactor | Rationale |
+|------------------|----------|----------|
+| Fluorescence (COMET, CODEX, IF) | **1** | Fluorescence intensities are typically in the hundreds to low thousands; cofactor=1 preserves dynamic range while compressing the tail |
+| Mass spectrometry (MIBI, IMC) | **100** | Ion counts can span 0–10,000+; cofactor=100 prevents over-compression of the biologically meaningful mid-range signal |
+
+The default cofactor is 1. Configure per-feature transforms and cofactor through the feature normalizer API before training.
 
 ## TODO / Future Exploration
 
-_(No outstanding items — all planned features have been implemented.)_
+- UI controls for selecting normalization type (arcsinh/sqrt) and cofactor per feature in the Feature Selection dialog
+- Native H5AD export (currently generates CSV + Python conversion script)
 
 ## License
 

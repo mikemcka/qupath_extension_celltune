@@ -304,6 +304,7 @@ public class LightGBMModel {
         sb.append(" bagging_fraction=").append(subsample);
         sb.append(" bagging_freq=1");
         sb.append(" feature_fraction=0.8");
+        sb.append(" min_gain_to_split=10");
         sb.append(" num_threads=").append(Runtime.getRuntime().availableProcessors());
         sb.append(" seed=42");
         sb.append(" verbosity=-1"); // suppress LightGBM logs

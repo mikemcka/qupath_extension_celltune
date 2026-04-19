@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 public class CellFeatureExtractor {
 
     private final List<String> featureNames;
+    private FeatureNormalizer normalizer;
 
     /**
      * Create an extractor with a specific ordered list of feature (measurement) names.
@@ -28,6 +29,27 @@ public class CellFeatureExtractor {
      */
     public CellFeatureExtractor(List<String> featureNames) {
         this.featureNames = List.copyOf(featureNames);
+    }
+
+    /**
+     * Create an extractor with feature names and a normalizer for transforms.
+     *
+     * @param featureNames ordered list of measurement names to extract
+     * @param normalizer   feature normalizer (may be null for no transforms)
+     */
+    public CellFeatureExtractor(List<String> featureNames, FeatureNormalizer normalizer) {
+        this.featureNames = List.copyOf(featureNames);
+        this.normalizer = normalizer;
+    }
+
+    /** Set or replace the feature normalizer. */
+    public void setNormalizer(FeatureNormalizer normalizer) {
+        this.normalizer = normalizer;
+    }
+
+    /** @return the current normalizer, or null if none set */
+    public FeatureNormalizer getNormalizer() {
+        return normalizer;
     }
 
     /**
@@ -55,6 +77,9 @@ public class CellFeatureExtractor {
         for (int i = 0; i < featureNames.size(); i++) {
             double v = mlist.get(featureNames.get(i));
             row[i] = Double.isNaN(v) ? 0f : (float) v;
+            if (normalizer != null) {
+                row[i] = normalizer.apply(featureNames.get(i), row[i]);
+            }
         }
         return row;
     }
@@ -84,6 +109,9 @@ public class CellFeatureExtractor {
             for (int j = 0; j < nFeatures; j++) {
                 double v = mlist.get(featureNames.get(j));
                 matrix[offset + j] = Double.isNaN(v) ? 0f : (float) v;
+                if (normalizer != null) {
+                    matrix[offset + j] = normalizer.apply(featureNames.get(j), matrix[offset + j]);
+                }
             }
         });
 

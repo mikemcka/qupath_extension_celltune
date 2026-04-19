@@ -18,14 +18,16 @@ import java.util.*;
 import java.util.function.Consumer;
 
 /**
- * Orchestrates training of both XGBoost and LightGBM models on the same
- * labelled data, then produces four population sets from predictions on
- * all cells.
+ * Orchestrates training of two tree-based models on the same labelled data,
+ * then produces four population sets from predictions on all cells.
+ * <p>
+ * By default uses XGBoost + LightGBM, but the model types can be changed to
+ * any pair from {@link ModelType} (e.g. XGBoost + Random Forest).
  * <p>
  * The four population sets mirror CellTune's design:
  * <ul>
- *   <li><b>Pred_MDL1</b> — XGBoost predictions only</li>
- *   <li><b>Pred_MDL2</b> — LightGBM predictions only</li>
+ *   <li><b>Pred_MDL1</b> — Model 1 predictions only</li>
+ *   <li><b>Pred_MDL2</b> — Model 2 predictions only</li>
  *   <li><b>Pred_AVG</b>  — averaged probabilities from both models</li>
  *   <li><b>Pred_ALL</b>  — agreed label when models agree; both labels when they disagree</li>
  * </ul>
@@ -40,14 +42,20 @@ public class DualModelClassifier {
     private static final Logger logger = LoggerFactory.getLogger(DualModelClassifier.class);
 
     // ── Default hyperparameters ─────────────────────────────────────────────────
-    private int numRounds = 200;
+    private int numRounds = 1000;
     private int maxDepth  = 6;
     private float eta     = 0.1f;
     private float subsample = 0.8f;
 
-    // ── Models ──────────────────────────────────────────────────────────────────
-    private final XGBoostModel xgbModel  = new XGBoostModel();
-    private final LightGBMModel lgbModel = new LightGBMModel();
+    // ── Model type selection ────────────────────────────────────────────────────
+    private ModelType model1Type = ModelType.XGBOOST;
+    private ModelType model2Type = ModelType.LIGHTGBM;
+
+    // ── Models (created lazily based on model type selection) ────────────────────
+    private XGBoostModel xgbModel;
+    private LightGBMModel lgbModel;
+    private RandomForestModel rfModel1;
+    private RandomForestModel rfModel2;
 
     // ── Observable progress for UI binding ──────────────────────────────────────
     private final DoubleProperty progress = new SimpleDoubleProperty(0);
@@ -173,14 +181,26 @@ public class DualModelClassifier {
         ResamplingStrategy strategy = resampling != null ? resampling : ResamplingStrategy.NONE;
 
         // Local per-model hyperparameters
-        int xgbRounds = numRounds, lgbRounds = numRounds;
-        int xgbDepth = maxDepth, lgbDepth = maxDepth;
-        float xgbEta = eta, lgbEta = eta;
-        float xgbSub = subsample, lgbSub = subsample;
+        // LightGBM defaults to 0.05 lr (matching Python CellTune) unless overridden by tuning
+        // Random Forest uses numRounds as nTrees and maxDepth=100 by default
+        int mdl1Rounds = numRounds, mdl2Rounds = numRounds;
+        int mdl1Depth = maxDepth, mdl2Depth = maxDepth;
+        float mdl1Eta = eta, mdl2Eta = eta;
+        float mdl1Sub = subsample, mdl2Sub = subsample;
+
+        // Apply model-type-specific defaults
+        if (model1Type == ModelType.LIGHTGBM) mdl1Eta = 0.05f;
+        if (model2Type == ModelType.LIGHTGBM) mdl2Eta = 0.05f;
+        if (model1Type == ModelType.RANDOM_FOREST) { mdl1Rounds = 100; mdl1Depth = 100; }
+        if (model2Type == ModelType.RANDOM_FOREST) { mdl2Rounds = 100; mdl2Depth = 100; }
 
         int nRealSamples = trainRows.size();
 
-        if (earlyStop && nRealSamples >= 20) {
+        // Early stopping — only for boosted models (XGBoost, LightGBM)
+        boolean mdl1Boosted = model1Type != ModelType.RANDOM_FOREST;
+        boolean mdl2Boosted = model2Type != ModelType.RANDOM_FOREST;
+
+        if (earlyStop && nRealSamples >= 20 && (mdl1Boosted || mdl2Boosted)) {
             updateStatus("Finding optimal round counts…", 0.05);
             out.accept("Early stopping: 80/20 stratified split on real data (patience=20)…");
 
@@ -227,17 +247,33 @@ public class DualModelClassifier {
                 esValLabels[i] = trainLabels.get(split[1][i]);
             }
 
-            xgbRounds = XGBoostModel.findBestRounds(
+            if (mdl1Boosted && model1Type == ModelType.XGBOOST) {
+                mdl1Rounds = XGBoostModel.findBestRounds(
                     esTrainData, esTrainLabels, esTrainSize,
                     esValData, esValLabels, split[1].length,
                     nFeatures, nClasses,
-                    xgbRounds, xgbDepth, xgbEta, xgbSub, patience, out);
+                    mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub, patience, out);
+            } else if (mdl1Boosted && model1Type == ModelType.LIGHTGBM) {
+                mdl1Rounds = LightGBMModel.findBestRounds(
+                    esTrainData, esTrainLabels, esTrainSize,
+                    esValData, esValLabels, split[1].length,
+                    nFeatures, nClasses,
+                    mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub, patience, out);
+            }
 
-            lgbRounds = LightGBMModel.findBestRounds(
+            if (mdl2Boosted && model2Type == ModelType.XGBOOST) {
+                mdl2Rounds = XGBoostModel.findBestRounds(
                     esTrainData, esTrainLabels, esTrainSize,
                     esValData, esValLabels, split[1].length,
                     nFeatures, nClasses,
-                    lgbRounds, lgbDepth, lgbEta, lgbSub, patience, out);
+                    mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub, patience, out);
+            } else if (mdl2Boosted && model2Type == ModelType.LIGHTGBM) {
+                mdl2Rounds = LightGBMModel.findBestRounds(
+                    esTrainData, esTrainLabels, esTrainSize,
+                    esValData, esValLabels, split[1].length,
+                    nFeatures, nClasses,
+                    mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub, patience, out);
+            }
         }
 
         // ── 1c. Resample full dataset if requested ──────────────────────────
@@ -257,39 +293,53 @@ public class DualModelClassifier {
             labelArray[i] = trainLabels.get(i);
         }
 
-        // ── 1d. Auto-tune hyperparameters if requested ──────────────────────
-        if (autoTune) {
+        // ── 1d. Auto-tune hyperparameters if requested (boosted models only) ──
+        if (autoTune && (mdl1Boosted || mdl2Boosted)) {
             updateStatus("Auto-tuning hyperparameters…", earlyStop ? 0.10 : 0.05);
             out.accept("Auto-tuning hyperparameters (this may take several minutes)…");
             var tuneResult = HyperparameterTuner.tune(
                     flatData, labelArray, nSamples, nFeatures, nClasses,
                     HyperparameterTuner.DEFAULT_TRIALS,
                     HyperparameterTuner.DEFAULT_FOLDS, out);
-            xgbRounds = tuneResult.xgbParams().numRounds();
-            xgbDepth  = tuneResult.xgbParams().maxDepth();
-            xgbEta    = tuneResult.xgbParams().eta();
-            xgbSub    = tuneResult.xgbParams().subsample();
-            lgbRounds = tuneResult.lgbParams().numRounds();
-            lgbDepth  = tuneResult.lgbParams().maxDepth();
-            lgbEta    = tuneResult.lgbParams().eta();
-            lgbSub    = tuneResult.lgbParams().subsample();
+            if (mdl1Boosted && model1Type == ModelType.XGBOOST) {
+                mdl1Rounds = tuneResult.xgbParams().numRounds();
+                mdl1Depth  = tuneResult.xgbParams().maxDepth();
+                mdl1Eta    = tuneResult.xgbParams().eta();
+                mdl1Sub    = tuneResult.xgbParams().subsample();
+            } else if (mdl1Boosted && model1Type == ModelType.LIGHTGBM) {
+                mdl1Rounds = tuneResult.lgbParams().numRounds();
+                mdl1Depth  = tuneResult.lgbParams().maxDepth();
+                mdl1Eta    = tuneResult.lgbParams().eta();
+                mdl1Sub    = tuneResult.lgbParams().subsample();
+            }
+            if (mdl2Boosted && model2Type == ModelType.XGBOOST) {
+                mdl2Rounds = tuneResult.xgbParams().numRounds();
+                mdl2Depth  = tuneResult.xgbParams().maxDepth();
+                mdl2Eta    = tuneResult.xgbParams().eta();
+                mdl2Sub    = tuneResult.xgbParams().subsample();
+            } else if (mdl2Boosted && model2Type == ModelType.LIGHTGBM) {
+                mdl2Rounds = tuneResult.lgbParams().numRounds();
+                mdl2Depth  = tuneResult.lgbParams().maxDepth();
+                mdl2Eta    = tuneResult.lgbParams().eta();
+                mdl2Sub    = tuneResult.lgbParams().subsample();
+            }
         }
 
-        // ── 2. Train XGBoost ────────────────────────────────────────────────
-        updateStatus("Training XGBoost…", 0.15);
-        out.accept("Training XGBoost (" + xgbRounds + " rounds)…");
+        // ── 2. Train Model 1 ───────────────────────────────────────────────
+        updateStatus("Training " + model1Type + "…", 0.15);
+        out.accept("Training " + model1Type + " (" + mdl1Rounds
+                + (model1Type == ModelType.RANDOM_FOREST ? " trees" : " rounds") + ")…");
+        trainModel(model1Type, true, flatData, labelArray, nSamples, nFeatures,
+                mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub);
+        out.accept(model1Type + " trained on: " + getModelDevice(model1Type, true));
 
-        xgbModel.train(flatData, labelArray, nSamples, nFeatures,
-                classNames, featureNames, xgbRounds, xgbDepth, xgbEta, xgbSub);
-        out.accept("XGBoost trained on: " + xgbModel.getLastDevice());
-
-        // ── 3. Train LightGBM ───────────────────────────────────────────────
-        updateStatus("Training LightGBM…", 0.40);
-        out.accept("Training LightGBM (" + lgbRounds + " rounds)…");
-
-        lgbModel.train(flatData, labelArray, nSamples, nFeatures,
-                classNames, featureNames, lgbRounds, lgbDepth, lgbEta, lgbSub);
-        out.accept("LightGBM trained on: " + lgbModel.getLastDevice());
+        // ── 3. Train Model 2 ───────────────────────────────────────────────
+        updateStatus("Training " + model2Type + "…", 0.40);
+        out.accept("Training " + model2Type + " (" + mdl2Rounds
+                + (model2Type == ModelType.RANDOM_FOREST ? " trees" : " rounds") + ")…");
+        trainModel(model2Type, false, flatData, labelArray, nSamples, nFeatures,
+                mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub);
+        out.accept(model2Type + " trained on: " + getModelDevice(model2Type, false));
 
         // ── 4. Predict all cells ────────────────────────────────────────────
         updateStatus("Predicting all cells…", 0.65);
@@ -298,8 +348,8 @@ public class DualModelClassifier {
 
         float[] allData = extractor.extractMatrix(allCells);
 
-        float[][] xgbProbs = xgbModel.predictProba(allData, totalCells, nFeatures);
-        float[][] lgbProbs = lgbModel.predictProba(allData, totalCells, nFeatures);
+        float[][] mdl1Probs = predictModel(model1Type, true, allData, totalCells, nFeatures);
+        float[][] mdl2Probs = predictModel(model2Type, false, allData, totalCells, nFeatures);
 
         // ── 5. Build population sets ────────────────────────────────────────
         updateStatus("Building population sets…", 0.85);
@@ -316,15 +366,15 @@ public class DualModelClassifier {
             String cellId = cell.getID().toString();
 
             // Find best class for each model
-            int xgbBest = argmax(xgbProbs[idx]);
-            int lgbBest = argmax(lgbProbs[idx]);
+            int mdl1Best = argmax(mdl1Probs[idx]);
+            int mdl2Best = argmax(mdl2Probs[idx]);
 
-            String xgbLabel = classNames.get(xgbBest);
-            String lgbLabel = classNames.get(lgbBest);
+            String mdl1Label = classNames.get(mdl1Best);
+            String mdl2Label = classNames.get(mdl2Best);
 
             CellPrediction pred = new CellPrediction(
-                    cellId, xgbLabel, lgbLabel,
-                    xgbProbs[idx], lgbProbs[idx], classNames);
+                    cellId, mdl1Label, mdl2Label,
+                    mdl1Probs[idx], mdl2Probs[idx], classNames);
 
             predMDL1.put(cellId, pred);
             predMDL2.put(cellId, pred);
@@ -372,21 +422,21 @@ public class DualModelClassifier {
         out.accept("Predicting " + totalCells + " cells…");
 
         float[] allData = extractor.extractMatrix(cells);
-        float[][] xgbProbs = xgbModel.predictProba(allData, totalCells, nFeatures);
-        float[][] lgbProbs = lgbModel.predictProba(allData, totalCells, nFeatures);
+        float[][] mdl1Probs = predictModel(model1Type, true, allData, totalCells, nFeatures);
+        float[][] mdl2Probs = predictModel(model2Type, false, allData, totalCells, nFeatures);
 
         int idx = 0;
         int disagreements = 0;
         for (PathObject cell : cells) {
-            int xgbBest = argmax(xgbProbs[idx]);
-            int lgbBest = argmax(lgbProbs[idx]);
+            int mdl1Best = argmax(mdl1Probs[idx]);
+            int mdl2Best = argmax(mdl2Probs[idx]);
 
-            String xgbLabel = classNames.get(xgbBest);
-            String lgbLabel = classNames.get(lgbBest);
+            String mdl1Label = classNames.get(mdl1Best);
+            String mdl2Label = classNames.get(mdl2Best);
 
             CellPrediction pred = new CellPrediction(
-                    cell.getID().toString(), xgbLabel, lgbLabel,
-                    xgbProbs[idx], lgbProbs[idx], classNames);
+                    cell.getID().toString(), mdl1Label, mdl2Label,
+                    mdl1Probs[idx], mdl2Probs[idx], classNames);
 
             String avgLabel = pred.avgLabel();
             cell.setPathClass(PathClass.fromString(avgLabel));
@@ -408,9 +458,12 @@ public class DualModelClassifier {
      * @throws Exception if model serialisation fails
      */
     public ClassifierState toClassifierState(String name) throws Exception {
-        byte[] xgbBytes = xgbModel.isTrained() ? xgbModel.toBytes() : null;
-        byte[] lgbBytes = lgbModel.isTrained() ? lgbModel.toBytes() : null;
-        return new ClassifierState(name, featureNames, classNames, xgbBytes, lgbBytes);
+        byte[] xgbBytes = xgbModel != null && xgbModel.isTrained() ? xgbModel.toBytes() : null;
+        byte[] lgbBytes = lgbModel != null && lgbModel.isTrained() ? lgbModel.toBytes() : null;
+        byte[] rf1Bytes = rfModel1 != null && rfModel1.isTrained() ? rfModel1.toBytes() : null;
+        byte[] rf2Bytes = rfModel2 != null && rfModel2.isTrained() ? rfModel2.toBytes() : null;
+        return new ClassifierState(name, featureNames, classNames,
+                xgbBytes, lgbBytes, rf1Bytes, rf2Bytes, model1Type, model2Type);
     }
 
     /**
@@ -422,15 +475,31 @@ public class DualModelClassifier {
     public void loadFromState(ClassifierState state) throws Exception {
         this.classNames = new ArrayList<>(state.getClassNames());
         this.featureNames = new ArrayList<>(state.getFeatureNames());
+        this.model1Type = state.getModel1Type();
+        this.model2Type = state.getModel2Type();
 
         byte[] xgbBytes = state.getXgboostBytes();
         if (xgbBytes != null) {
+            xgbModel = new XGBoostModel();
             xgbModel.loadFromBytes(xgbBytes, classNames, featureNames);
         }
 
         byte[] lgbBytes = state.getLightgbmBytes();
         if (lgbBytes != null) {
+            lgbModel = new LightGBMModel();
             lgbModel.loadFromBytes(lgbBytes, classNames, featureNames);
+        }
+
+        byte[] rf1Bytes = state.getRfModel1Bytes();
+        if (rf1Bytes != null) {
+            rfModel1 = new RandomForestModel();
+            rfModel1.loadFromBytes(rf1Bytes, classNames, featureNames);
+        }
+
+        byte[] rf2Bytes = state.getRfModel2Bytes();
+        if (rf2Bytes != null) {
+            rfModel2 = new RandomForestModel();
+            rfModel2.loadFromBytes(rf2Bytes, classNames, featureNames);
         }
     }
 
@@ -440,11 +509,15 @@ public class DualModelClassifier {
     public void setMaxDepth(int maxDepth)      { this.maxDepth = maxDepth; }
     public void setEta(float eta)              { this.eta = eta; }
     public void setSubsample(float subsample)  { this.subsample = subsample; }
+    public void setModel1Type(ModelType type)  { this.model1Type = type; }
+    public void setModel2Type(ModelType type)  { this.model2Type = type; }
 
     public int getNumRounds()    { return numRounds; }
     public int getMaxDepth()     { return maxDepth; }
     public float getEta()        { return eta; }
     public float getSubsample()  { return subsample; }
+    public ModelType getModel1Type() { return model1Type; }
+    public ModelType getModel2Type() { return model2Type; }
 
     // ── Population set accessors ────────────────────────────────────────────────
 
@@ -457,7 +530,7 @@ public class DualModelClassifier {
     public List<String> getFeatureNames() { return featureNames; }
 
     public boolean isTrained() {
-        return xgbModel.isTrained() && lgbModel.isTrained();
+        return isModelTrained(model1Type, true) && isModelTrained(model2Type, false);
     }
 
     // ── Observable properties ───────────────────────────────────────────────────
@@ -467,9 +540,11 @@ public class DualModelClassifier {
 
     // ── Cleanup ─────────────────────────────────────────────────────────────────
 
-    /** Release native resources held by the LightGBM booster. */
+    /** Release native resources held by model boosters. */
     public void close() {
-        lgbModel.close();
+        if (lgbModel != null) lgbModel.close();
+        if (rfModel1 != null) rfModel1.close();
+        if (rfModel2 != null) rfModel2.close();
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
@@ -528,5 +603,64 @@ public class DualModelClassifier {
         float[] result = new float[indices.length];
         for (int i = 0; i < indices.length; i++) result[i] = labels[indices[i]];
         return result;
+    }
+
+    // ── Model dispatch helpers ──────────────────────────────────────────────────
+
+    private void trainModel(ModelType type, boolean isModel1,
+                            float[] flatData, float[] labels,
+                            int nSamples, int nFeatures,
+                            int rounds, int depth, float lr, float sub) throws Exception {
+        switch (type) {
+            case XGBOOST -> {
+                if (xgbModel == null) xgbModel = new XGBoostModel();
+                xgbModel.train(flatData, labels, nSamples, nFeatures,
+                        classNames, featureNames, rounds, depth, lr, sub);
+            }
+            case LIGHTGBM -> {
+                if (lgbModel == null) lgbModel = new LightGBMModel();
+                lgbModel.train(flatData, labels, nSamples, nFeatures,
+                        classNames, featureNames, rounds, depth, lr, sub);
+            }
+            case RANDOM_FOREST -> {
+                var rf = new RandomForestModel();
+                rf.train(flatData, labels, nSamples, nFeatures,
+                        classNames, featureNames, rounds, depth, lr, sub);
+                if (isModel1) rfModel1 = rf; else rfModel2 = rf;
+            }
+        }
+    }
+
+    private float[][] predictModel(ModelType type, boolean isModel1,
+                                   float[] flatData, int nSamples, int nFeatures)
+            throws Exception {
+        return switch (type) {
+            case XGBOOST -> xgbModel.predictProba(flatData, nSamples, nFeatures);
+            case LIGHTGBM -> lgbModel.predictProba(flatData, nSamples, nFeatures);
+            case RANDOM_FOREST -> (isModel1 ? rfModel1 : rfModel2)
+                    .predictProba(flatData, nSamples, nFeatures);
+        };
+    }
+
+    private boolean isModelTrained(ModelType type, boolean isModel1) {
+        return switch (type) {
+            case XGBOOST -> xgbModel != null && xgbModel.isTrained();
+            case LIGHTGBM -> lgbModel != null && lgbModel.isTrained();
+            case RANDOM_FOREST -> {
+                var rf = isModel1 ? rfModel1 : rfModel2;
+                yield rf != null && rf.isTrained();
+            }
+        };
+    }
+
+    private String getModelDevice(ModelType type, boolean isModel1) {
+        return switch (type) {
+            case XGBOOST -> xgbModel != null ? xgbModel.getLastDevice() : "unknown";
+            case LIGHTGBM -> lgbModel != null ? lgbModel.getLastDevice() : "unknown";
+            case RANDOM_FOREST -> {
+                var rf = isModel1 ? rfModel1 : rfModel2;
+                yield rf != null ? rf.getLastDevice() : "unknown";
+            }
+        };
     }
 }

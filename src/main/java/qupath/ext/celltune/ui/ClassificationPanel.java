@@ -344,13 +344,16 @@ public class ClassificationPanel extends VBox {
                     var state = classifier.toClassifierState("CellTune");
                     ProjectStateManager.saveState(project, state.getName(),
                             storeCopy, state.getFeatureNames(), state.getClassNames(),
-                            state.getXgboostBytes(), state.getLightgbmBytes());
+                            state.getXgboostBytes(), state.getLightgbmBytes(),
+                            state.getRfModel1Bytes(), state.getRfModel2Bytes(),
+                            state.getModel1Type(), state.getModel2Type());
 
                     // Save per-image labels for cross-image pooling
                     var imgEntry = project.getEntry(imageData);
                     if (imgEntry != null) {
+                        var filteredStore = filterLabelStoreToImage(storeCopy, imageData);
                         ProjectStateManager.saveImageLabels(
-                                project, imgEntry.getImageName(), storeCopy);
+                                project, imgEntry.getImageName(), filteredStore);
                     }
                 }
 
@@ -500,8 +503,10 @@ public class ClassificationPanel extends VBox {
                     var imgEntry = project.getEntry(imgData);
                     if (imgEntry != null) {
                         try {
+                            // Filter to only IDs belonging to this image
+                            var filteredStore = filterLabelStoreToImage(labelStore, imgData);
                             ProjectStateManager.saveImageLabels(
-                                    project, imgEntry.getImageName(), labelStore);
+                                    project, imgEntry.getImageName(), filteredStore);
                         } catch (Exception ignored) {}
                     }
                 }
@@ -553,5 +558,26 @@ public class ClassificationPanel extends VBox {
                 }
             }
         }
+    }
+
+    /**
+     * Create a copy of the label store containing only cell IDs that exist
+     * as detections in the given image.
+     */
+    private static LabelStore filterLabelStoreToImage(
+            LabelStore store,
+            qupath.lib.images.ImageData<java.awt.image.BufferedImage> imageData) {
+        var detections = imageData.getHierarchy().getDetectionObjects();
+        var validIds = new java.util.HashSet<String>(detections.size());
+        for (var det : detections) {
+            validIds.add(det.getID().toString());
+        }
+        var filtered = new LabelStore(store.getName());
+        for (var entry : store.getAllLabels().entrySet()) {
+            if (validIds.contains(entry.getKey())) {
+                filtered.setLabel(entry.getKey(), entry.getValue());
+            }
+        }
+        return filtered;
     }
 }

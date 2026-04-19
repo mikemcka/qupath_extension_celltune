@@ -58,6 +58,7 @@ public class ConfusionMatrixView {
     private static final int CELL_SIZE = 64;
     private static final int LABEL_MARGIN = 120;
     private static final int RATE_MARGIN = 110;
+    private static final int BOTTOM_MARGIN = 80;  // bottom margin for Model 2 TP% row
     private static final int HEADER_HEIGHT = 40;
     private static final Font CELL_FONT = Font.font("SansSerif", 13);
     private static final Font LABEL_FONT = Font.font("SansSerif", 12);
@@ -117,7 +118,7 @@ public class ConfusionMatrixView {
 
         // ── Canvas ──────────────────────────────────────────────────────────
         int canvasWidth = LABEL_MARGIN + n * CELL_SIZE + RATE_MARGIN;
-        int canvasHeight = HEADER_HEIGHT + LABEL_MARGIN + n * CELL_SIZE + RATE_MARGIN;
+        int canvasHeight = HEADER_HEIGHT + LABEL_MARGIN + n * CELL_SIZE + BOTTOM_MARGIN + RATE_MARGIN;
         canvas = new Canvas(canvasWidth, canvasHeight);
         drawMatrix();
 
@@ -207,12 +208,33 @@ public class ConfusionMatrixView {
         gc.setFill(Color.WHITE);
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
 
-        // Find max value for colour scaling
-        int maxVal = 1;
-        for (int[] row : matrix) {
-            for (int v : row) {
-                if (v > maxVal) maxVal = v;
+        // ── Separate color scales for diagonal vs off-diagonal ──────────────
+        // (matching Python CellTune: diagonal has its own max, off-diagonal its own)
+        int maxDiag = 1;
+        int maxOffDiag = 1;
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                if (i == j) {
+                    if (matrix[i][j] > maxDiag) maxDiag = matrix[i][j];
+                } else {
+                    if (matrix[i][j] > maxOffDiag) maxOffDiag = matrix[i][j];
+                }
             }
+        }
+
+        // ── Per-model TP rates (for margins) ────────────────────────────────
+        // Model 1 TP% (right margin): TP / row_sum for each class
+        double[] model1TpRate = new double[n];
+        // Model 2 TP% (bottom margin): TP / col_sum for each class
+        double[] model2TpRate = new double[n];
+        for (int i = 0; i < n; i++) {
+            int rowSum = 0, colSum = 0;
+            for (int j = 0; j < n; j++) {
+                rowSum += matrix[i][j];
+                colSum += matrix[j][i];
+            }
+            model1TpRate[i] = rowSum > 0 ? (double) matrix[i][i] / rowSum : 0;
+            model2TpRate[i] = colSum > 0 ? (double) matrix[i][i] / colSum : 0;
         }
 
         double gridLeft = LABEL_MARGIN;
@@ -266,18 +288,24 @@ public class ConfusionMatrixView {
                 double y = gridTop + i * CELL_SIZE;
                 int val = matrix[i][j];
 
-                // Colour: diagonal = green scale, off-diagonal = red scale
                 Color fill;
-                if (i == j) {
-                    double intensity = (double) val / maxVal;
-                    fill = Color.color(0.85 - 0.55 * intensity,
-                                       0.93 - 0.15 * intensity,
-                                       0.85 - 0.55 * intensity);
+                if (val == 0) {
+                    // Blank cell for zero values (matching Python CellTune NaN approach)
+                    fill = Color.WHITE;
+                } else if (i == j) {
+                    // Diagonal: blue scale (agreement) with separate max
+                    double intensity = (double) val / maxDiag;
+                    fill = Color.color(
+                            1.0 - 0.7 * intensity,   // R: 1.0 → 0.3
+                            1.0 - 0.5 * intensity,   // G: 1.0 → 0.5
+                            1.0);                     // B: stays 1.0
                 } else {
-                    double intensity = (double) val / maxVal;
-                    fill = Color.color(1.0 - 0.1 * intensity,
-                                       0.92 - 0.62 * intensity,
-                                       0.92 - 0.62 * intensity);
+                    // Off-diagonal: orangered scale (disagreement) with separate max
+                    double intensity = (double) val / maxOffDiag;
+                    fill = Color.color(
+                            1.0,                      // R: stays 1.0
+                            0.98 - 0.62 * intensity,  // G: ~1.0 → 0.36
+                            0.96 - 0.76 * intensity); // B: ~1.0 → 0.20
                 }
 
                 gc.setFill(fill);
@@ -288,9 +316,10 @@ public class ConfusionMatrixView {
                 gc.setLineWidth(0.5);
                 gc.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
 
-                // Value text
+                // Value text (skip zeros — leave blank)
                 if (val > 0) {
-                    gc.setFill(val > maxVal * 0.7 ? Color.WHITE : Color.BLACK);
+                    double threshold = (i == j) ? maxDiag * 0.65 : maxOffDiag * 0.65;
+                    gc.setFill(val > threshold ? Color.WHITE : Color.BLACK);
                     gc.fillText(String.valueOf(val),
                             x + CELL_SIZE / 2.0,
                             y + CELL_SIZE / 2.0 + 5);
@@ -298,26 +327,31 @@ public class ConfusionMatrixView {
             }
         }
 
-        // ── Right margin: per-class agreement rates ─────────────────────────
+        // ── Right margin: Model 1 TP% (per-class) ──────────────────────────
         gc.setFont(LABEL_FONT);
         gc.setTextAlign(TextAlignment.LEFT);
+        double rightX = gridLeft + n * CELL_SIZE + 6;
         for (int i = 0; i < n; i++) {
             double y = gridTop + i * CELL_SIZE + CELL_SIZE / 2.0 + 4;
-            double x = gridLeft + n * CELL_SIZE + 6;
-            gc.setFill(Color.DARKBLUE);
-            gc.fillText(String.format("%.0f%%", agreementRates[i] * 100), x, y);
+            // Colour the TP% cell background (blue scale like diagonal)
+            double bgIntensity = model1TpRate[i];
+            Color bg = Color.color(1.0 - 0.7 * bgIntensity, 1.0 - 0.5 * bgIntensity, 1.0);
+            gc.setFill(bg);
+            gc.fillRect(rightX - 4, gridTop + i * CELL_SIZE, 46, CELL_SIZE);
+            gc.setStroke(Color.gray(0.7));
+            gc.setLineWidth(0.5);
+            gc.strokeRect(rightX - 4, gridTop + i * CELL_SIZE, 46, CELL_SIZE);
+            // Text
+            gc.setFill(bgIntensity > 0.65 ? Color.WHITE : Color.BLACK);
+            gc.fillText(String.format("%.0f%%", model1TpRate[i] * 100), rightX, y);
         }
 
-        // Rate column header
-        gc.setTextAlign(TextAlignment.LEFT);
+        // TP% header (right)
         gc.setFill(Color.DARKBLUE);
-        gc.setFont(LABEL_FONT);
-        gc.fillText("Agr%", gridLeft + n * CELL_SIZE + 4, gridTop - 6);
+        gc.fillText("TP%", rightX, gridTop - 6);
 
         // ── Right margin: per-class F1 scores ───────────────────────────────
-        double f1X = gridLeft + n * CELL_SIZE + 52;
-        gc.setFont(LABEL_FONT);
-        gc.setTextAlign(TextAlignment.LEFT);
+        double f1X = rightX + 50;
         for (int i = 0; i < n; i++) {
             double y = gridTop + i * CELL_SIZE + CELL_SIZE / 2.0 + 4;
             gc.setFill(Color.DARKRED);
@@ -327,6 +361,45 @@ public class ConfusionMatrixView {
         // F1 column header
         gc.setFill(Color.DARKRED);
         gc.fillText("F1", f1X, gridTop - 6);
+
+        // ── Bottom margin: Model 2 TP% (per-class) ─────────────────────────
+        double bottomY = gridTop + n * CELL_SIZE + 6;
+        gc.setTextAlign(TextAlignment.CENTER);
+        for (int j = 0; j < n; j++) {
+            double x = gridLeft + j * CELL_SIZE;
+            // Colour the TP% cell background (blue scale like diagonal)
+            double bgIntensity = model2TpRate[j];
+            Color bg = Color.color(1.0 - 0.7 * bgIntensity, 1.0 - 0.5 * bgIntensity, 1.0);
+            gc.setFill(bg);
+            gc.fillRect(x, bottomY - 4, CELL_SIZE, 30);
+            gc.setStroke(Color.gray(0.7));
+            gc.setLineWidth(0.5);
+            gc.strokeRect(x, bottomY - 4, CELL_SIZE, 30);
+            // Text
+            gc.setFill(bgIntensity > 0.65 ? Color.WHITE : Color.BLACK);
+            gc.fillText(String.format("%.0f%%", model2TpRate[j] * 100),
+                    x + CELL_SIZE / 2.0, bottomY + 14);
+        }
+
+        // TP% label (bottom left)
+        gc.setTextAlign(TextAlignment.RIGHT);
+        gc.setFill(Color.DARKBLUE);
+        gc.fillText("TP%", gridLeft - 6, bottomY + 14);
+
+        // ── Bottom: column labels (class names) ─────────────────────────────
+        gc.setFont(LABEL_FONT);
+        gc.setTextAlign(TextAlignment.CENTER);
+        double bottomLabelY = bottomY + 44;
+        for (int j = 0; j < n; j++) {
+            double cx = gridLeft + j * CELL_SIZE + CELL_SIZE / 2.0;
+            gc.save();
+            gc.translate(cx, bottomLabelY);
+            gc.rotate(-45);
+            gc.setTextAlign(TextAlignment.RIGHT);
+            gc.setFill(Color.BLACK);
+            gc.fillText(classNames.get(j), 0, 0);
+            gc.restore();
+        }
     }
 
     // ── PNG export ──────────────────────────────────────────────────────────────

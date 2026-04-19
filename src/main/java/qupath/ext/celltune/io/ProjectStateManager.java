@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.lib.projects.Project;
 
@@ -51,6 +52,10 @@ public class ProjectStateManager {
         public Map<String, String> labels; // cellId → class name
         public String xgboostModelBase64;  // null if not yet trained
         public String lightgbmModelBase64; // null if not yet trained
+        public String rfModel1Base64;      // null if not yet trained
+        public String rfModel2Base64;      // null if not yet trained
+        public String model1Type;          // ModelType name, null defaults to XGBOOST
+        public String model2Type;          // ModelType name, null defaults to LIGHTGBM
     }
 
     /**
@@ -86,7 +91,11 @@ public class ProjectStateManager {
                                  List<String> featureNames,
                                  List<String> classNames,
                                  byte[] xgboostBytes,
-                                 byte[] lightgbmBytes) throws IOException {
+                                 byte[] lightgbmBytes,
+                                 byte[] rfModel1Bytes,
+                                 byte[] rfModel2Bytes,
+                                 ModelType model1Type,
+                                 ModelType model2Type) throws IOException {
         Path dir = getCellTuneDir(project);
 
         SavedState state = new SavedState();
@@ -101,6 +110,14 @@ public class ProjectStateManager {
         if (lightgbmBytes != null) {
             state.lightgbmModelBase64 = Base64.getEncoder().encodeToString(lightgbmBytes);
         }
+        if (rfModel1Bytes != null) {
+            state.rfModel1Base64 = Base64.getEncoder().encodeToString(rfModel1Bytes);
+        }
+        if (rfModel2Bytes != null) {
+            state.rfModel2Base64 = Base64.getEncoder().encodeToString(rfModel2Bytes);
+        }
+        state.model1Type = model1Type != null ? model1Type.name() : ModelType.XGBOOST.name();
+        state.model2Type = model2Type != null ? model2Type.name() : ModelType.LIGHTGBM.name();
 
         Path outPath = dir.resolve(STATE_FILENAME);
         String json = GSON.toJson(state);
@@ -161,13 +178,59 @@ public class ProjectStateManager {
 
     /**
      * Decode the LightGBM model bytes from a saved state.
-     *
-     * @param state the loaded state
-     * @return the raw model bytes, or null if not present
      */
     public static byte[] decodeLightGBMModel(SavedState state) {
         if (state.lightgbmModelBase64 == null) return null;
         return Base64.getDecoder().decode(state.lightgbmModelBase64);
+    }
+
+    /**
+     * Decode the Random Forest model 1 bytes from a saved state.
+     */
+    public static byte[] decodeRFModel1(SavedState state) {
+        if (state.rfModel1Base64 == null) return null;
+        return Base64.getDecoder().decode(state.rfModel1Base64);
+    }
+
+    /**
+     * Decode the Random Forest model 2 bytes from a saved state.
+     */
+    public static byte[] decodeRFModel2(SavedState state) {
+        if (state.rfModel2Base64 == null) return null;
+        return Base64.getDecoder().decode(state.rfModel2Base64);
+    }
+
+    /**
+     * Get the model 1 type from a saved state, defaulting to XGBOOST.
+     */
+    public static ModelType getModel1Type(SavedState state) {
+        if (state.model1Type == null) return ModelType.XGBOOST;
+        try { return ModelType.valueOf(state.model1Type); }
+        catch (IllegalArgumentException e) { return ModelType.XGBOOST; }
+    }
+
+    /**
+     * Get the model 2 type from a saved state, defaulting to LIGHTGBM.
+     */
+    public static ModelType getModel2Type(SavedState state) {
+        if (state.model2Type == null) return ModelType.LIGHTGBM;
+        try { return ModelType.valueOf(state.model2Type); }
+        catch (IllegalArgumentException e) { return ModelType.LIGHTGBM; }
+    }
+
+    /**
+     * Backward-compatible overload for XGBoost + LightGBM only.
+     */
+    public static Path saveState(Project<?> project,
+                                 String classifierName,
+                                 LabelStore labelStore,
+                                 List<String> featureNames,
+                                 List<String> classNames,
+                                 byte[] xgboostBytes,
+                                 byte[] lightgbmBytes) throws IOException {
+        return saveState(project, classifierName, labelStore, featureNames, classNames,
+                xgboostBytes, lightgbmBytes, null, null,
+                ModelType.XGBOOST, ModelType.LIGHTGBM);
     }
 
     /**

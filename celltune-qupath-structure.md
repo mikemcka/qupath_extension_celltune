@@ -31,6 +31,7 @@ This extension replicates that loop entirely inside QuPath using Java/JavaFX, wi
 | Extension host | QuPath 0.7 | Whole-slide viewer, cell objects, JavaFX UI |
 | ML model 1 | XGBoost4J 3.2.0 (`xgboost4j_2.13`) | Primary gradient boosted classifier |
 | ML model 2 | LightGBM4J 4.6.0-2 | Secondary classifier for disagreement detection |
+| ML model 3 | Random Forest (pure Java) | Alternative classifier — no external dependency |
 | UI framework | JavaFX (bundled) | Panels, plots, review toolbar |
 | Data format | QuPath measurements | Cell feature vectors stored on PathObjects |
 | Serialisation | JSON (Gson) | Saving classifier state, labels, predictions |
@@ -49,18 +50,21 @@ qupath-extension-celltune/
 │  ├─ CellTuneExtension.java                         // Entry point — registers menus & panels
 │  │
 │  ├─ model/                                         // Data model layer
-│  │  ├─ CellFeatureExtractor.java                   // Reads QuPath measurements → float[]
+│  │  ├─ CellFeatureExtractor.java                   // Reads QuPath measurements → float[] (with normalization)
 │  │  ├─ CellPrediction.java                         // Stores model1, model2 predictions + confidence
+│  │  ├─ FeatureNormalizer.java                      // Per-feature arcsinh/sqrt transforms + cofactor
 │  │  ├─ LabelStore.java                             // Manages ground-truth labels per cell
 │  │  ├─ PopulationSet.java                          // Named group of CellPrediction/label combos
-│  │  └─ CellTypeTable.java                          // Cell type → marker channel mapping
+│  │  └─ CellTypeTable.java                          // Cell type → marker channel mapping + gating
 │  │
 │  ├─ classifier/                                    // ML training and inference
-│  │  ├─ DualModelClassifier.java                    // Orchestrates XGBoost + LightGBM training
+│  │  ├─ DualModelClassifier.java                    // Orchestrates dual-model training (XGB/LGB/RF)
 │  │  ├─ XGBoostModel.java                           // Wraps XGBoost4J train/predict
 │  │  ├─ LightGBMModel.java                          // Wraps LightGBM4J train/predict
-│  │  ├─ ClassifierState.java                        // Serialisable snapshot of trained models
-│  │  └─ UncertaintySampler.java                     // Weighted sampling from disagreement cells
+│  │  ├─ RandomForestModel.java                      // Pure-Java Random Forest (CART, parallel)
+│  │  ├─ ModelType.java                              // Enum: XGBOOST, LIGHTGBM, RANDOM_FOREST
+│  │  ├─ ClassifierState.java                        // Serialisable snapshot (all model types)
+│  │  └─ UncertaintySampler.java                     // 6-tier weighted sampling with FOV balance
 │  │
 │  ├─ ui/                                            // JavaFX panels and controls
 │  │  ├─ ClassificationPanel.java                    // Main classifier sidebar panel
@@ -73,7 +77,13 @@ qupath-extension-celltune/
 │  │  ├─ ManualLabelToolbar.java                     // Floating toolbar for direct cell labelling
 │  │  └─ FeatureSelectionPane.java                   // Feature selection dialog (2000+ features)
 │  │
+│  ├─ gating/                                        // Marker-based gating system
+│  │  ├─ AutoLandmarker.java                         // Multi-threshold cascade landmark engine
+│  │  ├─ GatingExpression.java                       // AST-based boolean expression parser
+│  │  └─ GatingRule.java                             // Numeric encoding for marker rules
+│  │
 │  └─ io/                                            // Import / export
+│     ├─ AnnDataExporter.java                        // AnnData-compatible CSV + H5AD script
 │     ├─ MarkerTableImporter.java                    // CSV → CellTypeTable
 │     ├─ CellTableExporter.java                      // Export predictions + labels to CSV
 │     ├─ GroundTruthIO.java                          // Portable ground truth export/import (CSV)

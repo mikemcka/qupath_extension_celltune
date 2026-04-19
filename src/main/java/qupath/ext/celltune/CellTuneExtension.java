@@ -9,6 +9,9 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.DualModelClassifier;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
+import qupath.ext.celltune.gating.AutoLandmarker;
+import qupath.ext.celltune.gating.GatingRule;
+import qupath.ext.celltune.io.AnnDataExporter;
 import qupath.ext.celltune.io.CellTableExporter;
 import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.io.MarkerTableImporter;
@@ -41,9 +44,12 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ResourceBundle;
+import java.util.Set;
 
 /**
  * QuPath extension that provides CellTune-style active learning cell classification.
@@ -124,12 +130,77 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setOnSampledCellsChanged(ids -> this.lastSampledCellIds = ids);
         classificationPanel.setOnClassifierChanged(cls -> this.classifier = cls);
 
+        // Listen for image changes so we can save/reset/load state per image
+        qupath.imageDataProperty().addListener((obs, oldData, newData) ->
+                handleImageChange(qupath, oldData, newData));
+
         // Dock into QuPath's analysis pane
         var titledPane = new javafx.scene.control.TitledPane(EXTENSION_NAME, classificationPanel);
         titledPane.setCollapsible(true);
         titledPane.setExpanded(false);
         qupath.getAnalysisTabPane().getTabs().add(
                 new javafx.scene.control.Tab(EXTENSION_NAME, titledPane));
+    }
+
+    /**
+     * Called when the user switches images. Saves labels for the old image
+     * (filtered to its detections), resets transient prediction state, and
+     * loads any persisted labels for the new image.
+     */
+    private void handleImageChange(QuPathGUI qupath,
+                                   qupath.lib.images.ImageData<BufferedImage> oldData,
+                                   qupath.lib.images.ImageData<BufferedImage> newData) {
+        var project = qupath.getProject();
+
+        // ── Save labels for the OLD image (filtered) ──
+        if (labelStore != null && labelStore.size() > 0 && oldData != null && project != null) {
+            var oldEntry = project.getEntry(oldData);
+            if (oldEntry != null) {
+                var filteredStore = filterLabelStoreToImage(labelStore, oldData);
+                if (filteredStore.size() > 0) {
+                    try {
+                        ProjectStateManager.saveImageLabels(
+                                project, oldEntry.getImageName(), filteredStore);
+                    } catch (IOException ex) {
+                        logger.warn("Failed to save labels for {} on image switch: {}",
+                                oldEntry.getImageName(), ex.getMessage());
+                    }
+                }
+            }
+        }
+
+        // ── Reset transient state ──
+        this.predAll = null;
+        this.lastAgreementRates = null;
+        this.lastSampledCellIds = null;
+
+        // ── Load labels for the NEW image (if any) ──
+        if (newData != null && project != null) {
+            var newEntry = project.getEntry(newData);
+            if (newEntry != null) {
+                LabelStore loaded = null;
+                try {
+                    loaded = ProjectStateManager.loadImageLabels(
+                            project, newEntry.getImageName());
+                } catch (IOException ex) {
+                    logger.warn("Failed to load labels for {}: {}",
+                            newEntry.getImageName(), ex.getMessage());
+                }
+                this.labelStore = (loaded != null) ? loaded : new LabelStore("CellTune");
+                // Also pick up any annotation-based labels on the new image
+                collectLabelsFromAnnotations(qupath, this.labelStore);
+            } else {
+                this.labelStore = new LabelStore("CellTune");
+            }
+            logger.info("Switched to image '{}' — {} labels loaded",
+                    newEntry != null ? newEntry.getImageName() : "unknown",
+                    labelStore.size());
+        } else {
+            this.labelStore = new LabelStore("CellTune");
+        }
+
+        // ── Push reset state into panel ──
+        syncPanelState();
     }
 
     /** Push current extension state into the docked panel. */
@@ -233,9 +304,17 @@ public class CellTuneExtension implements QuPathExtension {
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem exportAnnDataItem = new MenuItem("Export AnnData (CSV + H5AD script)");
+        exportAnnDataItem.setOnAction(e -> exportAnnData(qupath));
+        exportAnnDataItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem importMarkersItem = new MenuItem(resources.getString("menu.import.markers"));
         importMarkersItem.setOnAction(e -> importMarkerTable(qupath));
         importMarkersItem.disableProperty().bind(enableExtensionProperty.not());
+
+        MenuItem autoLandmarkItem = new MenuItem("Auto Landmark (Gating)");
+        autoLandmarkItem.setOnAction(e -> runAutoLandmarking(qupath));
+        autoLandmarkItem.disableProperty().bind(enableExtensionProperty.not());
 
         MenuItem exportGtItem = new MenuItem(resources.getString("menu.export.groundtruth"));
         exportGtItem.setOnAction(e -> exportGroundTruth(qupath));
@@ -258,7 +337,9 @@ public class CellTuneExtension implements QuPathExtension {
                 confusionsItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,
+                autoLandmarkItem,
                 exportItem,
+                exportAnnDataItem,
                 new SeparatorMenuItem(),
                 exportGtItem,
                 importGtItem
@@ -580,7 +661,9 @@ public class CellTuneExtension implements QuPathExtension {
                     var state = classifier.toClassifierState("CellTune");
                     ProjectStateManager.saveState(project, state.getName(),
                             labelStore, state.getFeatureNames(), state.getClassNames(),
-                            state.getXgboostBytes(), state.getLightgbmBytes());
+                            state.getXgboostBytes(), state.getLightgbmBytes(),
+                            state.getRfModel1Bytes(), state.getRfModel2Bytes(),
+                            state.getModel1Type(), state.getModel2Type());
 
                     // Save per-image labels for cross-image pooling
                     if (currentImageNameFinal != null) {
@@ -696,12 +779,38 @@ public class CellTuneExtension implements QuPathExtension {
         var entry = project.getEntry(imageData);
         if (entry == null) return;
 
+        // Filter to only cell IDs that belong to this image's detections
+        var filteredStore = filterLabelStoreToImage(labelStore, imageData);
+        if (filteredStore.size() == 0) return;
+
         try {
-            ProjectStateManager.saveImageLabels(project, entry.getImageName(), labelStore);
+            ProjectStateManager.saveImageLabels(project, entry.getImageName(), filteredStore);
         } catch (IOException ex) {
             logger.warn("Failed to save per-image labels for {}: {}",
                     entry.getImageName(), ex.getMessage());
         }
+    }
+
+    /**
+     * Create a copy of the label store containing only cell IDs that exist
+     * as detections in the given image. This prevents stale IDs from other
+     * images leaking into per-image label files.
+     */
+    private static LabelStore filterLabelStoreToImage(
+            LabelStore store, qupath.lib.images.ImageData<BufferedImage> imageData) {
+        var detections = imageData.getHierarchy().getDetectionObjects();
+        var validIds = new java.util.HashSet<String>(detections.size());
+        for (var det : detections) {
+            validIds.add(det.getID().toString());
+        }
+
+        var filtered = new LabelStore(store.getName());
+        for (var entry : store.getAllLabels().entrySet()) {
+            if (validIds.contains(entry.getKey())) {
+                filtered.setLabel(entry.getKey(), entry.getValue());
+            }
+        }
+        return filtered;
     }
 
     /**
@@ -925,6 +1034,61 @@ public class CellTuneExtension implements QuPathExtension {
         }
     }
 
+    private void exportAnnData(QuPathGUI qupath) {
+        if (qupath.getProject() == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
+            return;
+        }
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+
+        // Need feature names — use selected features or discover all
+        List<String> feats = selectedFeatures;
+        if (feats == null || feats.isEmpty()) {
+            var detections = imageData.getHierarchy()
+                    .getObjects(null, PathObject.class).stream()
+                    .filter(PathObjectFilter.DETECTIONS_ALL)
+                    .toList();
+            feats = CellFeatureExtractor.discoverFeatureNames(detections);
+        }
+
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Export AnnData-compatible CSV");
+        fc.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
+        var project = qupath.getProject();
+        if (project != null && project.getPath() != null) {
+            File dir = project.getPath().getParent().toFile();
+            if (dir.isDirectory()) fc.setInitialDirectory(dir);
+        }
+        fc.setInitialFileName("celltune_anndata.csv");
+        File chosen = fc.showSaveDialog(qupath.getStage());
+        if (chosen == null) return;
+
+        try {
+            Collection<PathObject> cells = imageData.getHierarchy()
+                    .getObjects(null, PathObject.class).stream()
+                    .filter(PathObjectFilter.DETECTIONS_ALL)
+                    .toList();
+            CellFeatureExtractor extractor = new CellFeatureExtractor(feats);
+            String imageName = null;
+            var entry = project.getEntry(imageData);
+            if (entry != null) imageName = entry.getImageName();
+
+            AnnDataExporter.export(chosen.toPath(), cells, extractor,
+                    predAll, labelStore, imageName);
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Exported " + cells.size() + " cells. "
+                    + "Run convert_to_h5ad.py to generate H5AD file.");
+        } catch (IOException ex) {
+            logger.error("Failed to export AnnData", ex);
+            Dialogs.showErrorMessage(EXTENSION_NAME, "Export failed: " + ex.getMessage());
+        }
+    }
+
     private void importMarkerTable(QuPathGUI qupath) {
         FileChooser fc = new FileChooser();
         fc.setTitle("Import Marker Table");
@@ -947,6 +1111,218 @@ public class CellTuneExtension implements QuPathExtension {
             logger.error("Failed to import marker table", ex);
             Dialogs.showErrorMessage(EXTENSION_NAME, "Import failed: " + ex.getMessage());
         }
+    }
+
+    // ── Auto-landmarking (gating) ──────────────────────────────────────────────
+
+    private void runAutoLandmarking(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+
+        Collection<PathObject> detections = imageData.getHierarchy().getDetectionObjects();
+        if (detections.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No detections found. Run cell detection first.");
+            return;
+        }
+
+        if (cellTypeTable == null || !cellTypeTable.hasGatingRules()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No gating rules loaded. Import a CellTypeTable CSV with "
+                    + "PrimaryMarker/SecondaryMarker/TertiaryMarker columns first.\n\n"
+                    + "Use 'Import Marker Table' and select a rule-format CSV.");
+            return;
+        }
+
+        // Discover available measurement names to match channels
+        List<String> allMeasurements = CellFeatureExtractor.discoverFeatureNames(detections);
+
+        // Get channels from the rule table
+        List<String> ruleChannels = cellTypeTable.getAllRuleChannels();
+
+        // Ask user for gating mode and measurement suffix
+        var modeCombo = new javafx.scene.control.ComboBox<AutoLandmarker.Mode>();
+        modeCombo.getItems().addAll(AutoLandmarker.Mode.values());
+        modeCombo.setValue(AutoLandmarker.Mode.INTENSITY);
+        modeCombo.setMaxWidth(Double.MAX_VALUE);
+
+        // Try to auto-detect the measurement suffix
+        String detectedSuffix = detectMeasurementSuffix(allMeasurements, ruleChannels);
+        var suffixField = new javafx.scene.control.TextField(
+                detectedSuffix != null ? detectedSuffix : ": Mean");
+        suffixField.setPromptText("e.g. ': Mean' or '__Mean__Cell'");
+
+        var probSuffixField = new javafx.scene.control.TextField("__Probability");
+        probSuffixField.setPromptText("e.g. '__Probability'");
+
+        var minCellsField = new javafx.scene.control.TextField(
+                String.valueOf(AutoLandmarker.DEFAULT_MIN_CELLS));
+
+        var grid = new javafx.scene.layout.GridPane();
+        grid.setHgap(8);
+        grid.setVgap(8);
+        grid.setPadding(new javafx.geometry.Insets(8));
+        grid.add(new javafx.scene.control.Label("Gating mode:"), 0, 0);
+        grid.add(modeCombo, 1, 0);
+        grid.add(new javafx.scene.control.Label("Intensity suffix:"), 0, 1);
+        grid.add(suffixField, 1, 1);
+        grid.add(new javafx.scene.control.Label("Probability suffix:"), 0, 2);
+        grid.add(probSuffixField, 1, 2);
+        grid.add(new javafx.scene.control.Label("Min cells/type:"), 0, 3);
+        grid.add(minCellsField, 1, 3);
+        grid.add(new javafx.scene.control.Label(
+                ruleChannels.size() + " channels, "
+                + cellTypeTable.size() + " cell types"), 0, 4, 2, 1);
+
+        var dialog = new javafx.scene.control.Alert(
+                javafx.scene.control.Alert.AlertType.CONFIRMATION);
+        dialog.setTitle(EXTENSION_NAME + " — Auto Landmark");
+        dialog.setHeaderText("Run automated gating to generate landmark cells");
+        dialog.getDialogPane().setContent(grid);
+        var result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != javafx.scene.control.ButtonType.OK) {
+            return;
+        }
+
+        AutoLandmarker.Mode mode = modeCombo.getValue();
+        String intensitySuffix = suffixField.getText().strip();
+        String probabilitySuffix = probSuffixField.getText().strip();
+        int minCells;
+        try {
+            minCells = Integer.parseInt(minCellsField.getText().strip());
+        } catch (NumberFormatException e) {
+            minCells = AutoLandmarker.DEFAULT_MIN_CELLS;
+        }
+
+        // Build gating rules from CellTypeTable
+        List<GatingRule> rules = new ArrayList<>();
+        for (String ct : cellTypeTable.getCellTypes()) {
+            rules.add(new GatingRule(ct,
+                    cellTypeTable.getPrimaryExpression(ct),
+                    cellTypeTable.getSecondaryMarkers(ct),
+                    cellTypeTable.getTertiaryMarkers(ct),
+                    ruleChannels));
+        }
+
+        // Run soft-NOT promotion across all rule pairs (matching Python's convert_not_to_strict_not)
+        for (int i = 0; i < rules.size(); i++) {
+            for (int j = 0; j < rules.size(); j++) {
+                if (i != j) {
+                    rules.get(i).promoteOverlappingSoftNots(rules.get(j));
+                }
+            }
+        }
+
+        // Run landmarking on background thread
+        final int finalMinCells = minCells;
+
+        var progressStage = new javafx.stage.Stage();
+        progressStage.setTitle("CellTune — Auto Landmark");
+        progressStage.initOwner(qupath.getStage());
+        progressStage.initModality(javafx.stage.Modality.NONE);
+        progressStage.setResizable(false);
+        progressStage.setAlwaysOnTop(true);
+
+        var progressBar = new javafx.scene.control.ProgressBar(-1); // indeterminate
+        progressBar.setPrefWidth(400);
+        var statusLabel = new javafx.scene.control.Label("Starting auto-landmarking…");
+        statusLabel.setWrapText(true);
+        statusLabel.setMaxWidth(400);
+        var logArea = new javafx.scene.control.TextArea();
+        logArea.setEditable(false);
+        logArea.setPrefHeight(250);
+        logArea.setPrefWidth(400);
+        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
+
+        var progressBox = new javafx.scene.layout.VBox(8, statusLabel, progressBar, logArea);
+        progressBox.setPadding(new javafx.geometry.Insets(15));
+        progressStage.setScene(new javafx.scene.Scene(progressBox));
+        progressStage.show();
+
+        Thread landmarkThread = new Thread(() -> {
+            try {
+                var results = AutoLandmarker.computeLandmarks(
+                        detections, rules, ruleChannels, mode,
+                        intensitySuffix, probabilitySuffix, finalMinCells,
+                        msg -> {
+                            logger.info("[CellTune] {}", msg);
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText(msg + "\n"));
+                        });
+
+                // Convert landmarks to labels
+                if (labelStore == null) {
+                    labelStore = new LabelStore("CellTune");
+                }
+
+                int totalAdded = 0;
+                for (var entry : results.entrySet()) {
+                    String cellType = entry.getKey();
+                    var landmark = entry.getValue();
+                    for (PathObject cell : landmark.cells()) {
+                        labelStore.setLabel(cell.getID().toString(), cellType);
+                        cell.setPathClass(PathClass.fromString(cellType));
+                        totalAdded++;
+                    }
+                }
+
+                final int total = totalAdded;
+                final int numTypes = results.size();
+                javafx.application.Platform.runLater(() -> {
+                    imageData.getHierarchy().fireHierarchyChangedEvent(this);
+                    syncPanelState();
+                    logArea.appendText("\nDone! " + total + " landmark cells across "
+                            + numTypes + " cell types added to label store.\n");
+                    statusLabel.setText("Complete — " + total + " landmarks generated.");
+                    progressBar.setProgress(1.0);
+
+                    // Save per-image labels
+                    saveCurrentImageLabels(qupath);
+
+                    Dialogs.showInfoNotification(EXTENSION_NAME,
+                            "Auto-landmarking complete: " + total + " landmark cells across "
+                            + numTypes + " cell types.");
+                });
+
+            } catch (Exception ex) {
+                logger.error("Auto-landmarking failed", ex);
+                javafx.application.Platform.runLater(() -> {
+                    logArea.appendText("\nERROR: " + ex.getMessage() + "\n");
+                    statusLabel.setText("Auto-landmarking failed!");
+                    progressBar.setProgress(0);
+                    Dialogs.showErrorMessage(EXTENSION_NAME,
+                            "Auto-landmarking failed: " + ex.getMessage());
+                });
+            }
+        }, "CellTune-AutoLandmark");
+        landmarkThread.setDaemon(true);
+        landmarkThread.start();
+    }
+
+    /**
+     * Try to auto-detect the measurement suffix by checking which of common
+     * suffixes produces matches for the rule channels.
+     */
+    private String detectMeasurementSuffix(List<String> measurements,
+                                            List<String> ruleChannels) {
+        String[] candidates = {": Mean", ": Cell: Mean", "__Mean__Cell", "__mean__cell", ""};
+        Set<String> measSet = new HashSet<>(measurements);
+        String bestSuffix = null;
+        int bestCount = 0;
+        for (String suffix : candidates) {
+            int count = 0;
+            for (String ch : ruleChannels) {
+                if (measSet.contains(ch + suffix)) count++;
+            }
+            if (count > bestCount) {
+                bestCount = count;
+                bestSuffix = suffix;
+            }
+        }
+        return bestSuffix;
     }
 
     // ── Ground truth export/import ─────────────────────────────────────────────
