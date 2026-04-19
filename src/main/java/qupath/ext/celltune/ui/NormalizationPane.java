@@ -17,12 +17,13 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Dialog for configuring per-feature normalization transforms (arcsinh, sqrt).
+ * Checkbox-based dialog for selecting which features to normalise.
  * <p>
- * Follows the same pattern as {@link FeatureSelectionPane}: a searchable,
- * filterable list of features with per-feature transform selection.
+ * The user picks a single transform type (arcsinh or sqrt) at the top,
+ * then ticks the features to apply it to — matching the familiar
+ * {@link FeatureSelectionPane} pattern.
  * <p>
- * Recommended cofactors:
+ * Recommended arcsinh cofactors:
  * <ul>
  *   <li><b>1</b> — fluorescence imaging (COMET, CODEX, IF)</li>
  *   <li><b>100</b> — mass spectrometry (MIBI, IMC)</li>
@@ -31,12 +32,15 @@ import java.util.stream.Collectors;
 public class NormalizationPane {
 
     private final Stage stage;
-    private final ObservableList<NormItem> allItems = FXCollections.observableArrayList();
-    private final FilteredList<NormItem> filteredItems;
-    private final ListView<NormItem> listView;
+    private final ObservableList<FeatureItem> allItems = FXCollections.observableArrayList();
+    private final FilteredList<FeatureItem> filteredItems;
+    private final ListView<FeatureItem> listView;
     private final TextField searchField;
     private final ComboBox<String> prefixCombo;
+    private final ComboBox<Transform> transformCombo;
     private final Spinner<Double> cofactorSpinner;
+    private final Label cofactorLabel;
+    private final Label cofactorHint;
     private final Label countLabel;
 
     private boolean confirmed = false;
@@ -45,18 +49,46 @@ public class NormalizationPane {
      * Create the normalization dialog.
      *
      * @param owner        parent stage
-     * @param featureNames all available feature names (should match selected features)
+     * @param featureNames all available feature names
      * @param existing     existing normalizer to pre-populate from (may be null)
      */
     public NormalizationPane(Stage owner, List<String> featureNames, FeatureNormalizer existing) {
         stage = new Stage();
 
+        // Pre-populate: tick features that already have a transform
         for (String name : featureNames) {
-            Transform t = (existing != null) ? existing.getTransform(name) : Transform.NONE;
-            allItems.add(new NormItem(name, t));
+            boolean selected = existing != null && existing.getTransform(name) != Transform.NONE;
+            allItems.add(new FeatureItem(name, selected));
         }
 
-        // Search / filter
+        // Infer the transform type from existing config (all features share one type)
+        Transform existingTransform = Transform.ARCSINH;
+        if (existing != null && existing.hasTransforms()) {
+            existingTransform = existing.getAllTransforms().values().iterator().next();
+        }
+
+        // ── Transform type selector ──
+        transformCombo = new ComboBox<>();
+        transformCombo.getItems().addAll(Transform.ARCSINH, Transform.SQRT);
+        transformCombo.setValue(existingTransform);
+        transformCombo.setOnAction(e -> updateCofactorVisibility());
+
+        // ── Cofactor ──
+        cofactorLabel = new Label("Cofactor:");
+        cofactorSpinner = new Spinner<>(0.01, 10000.0,
+                existing != null ? existing.getArcsinhCofactor() : 1.0, 1.0);
+        cofactorSpinner.setEditable(true);
+        cofactorSpinner.setPrefWidth(100);
+
+        cofactorHint = new Label("(1 for fluorescence, 100 for mass spec)");
+        cofactorHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11;");
+
+        HBox transformRow = new HBox(8,
+                new Label("Transform:"), transformCombo,
+                cofactorLabel, cofactorSpinner, cofactorHint);
+        transformRow.setAlignment(Pos.CENTER_LEFT);
+
+        // ── Search / filter ──
         searchField = new TextField();
         searchField.setPromptText("Search features…");
         HBox.setHgrow(searchField, Priority.ALWAYS);
@@ -71,58 +103,37 @@ public class NormalizationPane {
         searchField.textProperty().addListener((o, a, b) -> updateFilter());
         prefixCombo.valueProperty().addListener((o, a, b) -> updateFilter());
 
-        // List view
-        listView = new ListView<>(filteredItems);
-        listView.setCellFactory(lv -> new NormListCell());
-        listView.setPrefHeight(400);
-        listView.setPrefWidth(600);
-        VBox.setVgrow(listView, Priority.ALWAYS);
+        HBox filterRow = new HBox(6, new Label("Filter:"), searchField, prefixCombo);
+        filterRow.setAlignment(Pos.CENTER_LEFT);
 
-        // Count label
-        countLabel = new Label();
-        updateCount();
-
-        // ── Cofactor row ──
-        Label cofactorLabel = new Label("arcsinh cofactor:");
-        cofactorSpinner = new Spinner<>(0.01, 10000.0,
-                existing != null ? existing.getArcsinhCofactor() : 1.0, 1.0);
-        cofactorSpinner.setEditable(true);
-        cofactorSpinner.setPrefWidth(100);
-
-        Label cofactorHint = new Label("(1 for fluorescence, 100 for mass spec)");
-        cofactorHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11;");
-
-        HBox cofactorRow = new HBox(8, cofactorLabel, cofactorSpinner, cofactorHint);
-        cofactorRow.setAlignment(Pos.CENTER_LEFT);
-
-        // ── Bulk action buttons ──
-        ComboBox<Transform> bulkTransformCombo = new ComboBox<>();
-        bulkTransformCombo.getItems().addAll(Transform.values());
-        bulkTransformCombo.getSelectionModel().select(Transform.NONE);
-        bulkTransformCombo.setPrefWidth(100);
-
-        Button applyAllBtn = new Button("Apply to All Visible");
-        applyAllBtn.setOnAction(e -> {
-            Transform t = bulkTransformCombo.getValue();
-            for (NormItem item : filteredItems) {
-                item.setTransform(t);
-            }
-            listView.refresh();
-            updateCount();
-        });
+        // ── Buttons ──
+        Button selectAllBtn = new Button("Select All");
+        selectAllBtn.setOnAction(e -> setAllVisible(true));
 
         Button clearAllBtn = new Button("Clear All");
-        clearAllBtn.setOnAction(e -> {
-            for (NormItem item : allItems) {
-                item.setTransform(Transform.NONE);
-            }
-            listView.refresh();
-            updateCount();
-        });
+        clearAllBtn.setOnAction(e -> setAllVisible(false));
 
-        HBox bulkRow = new HBox(6, new Label("Set:"), bulkTransformCombo, applyAllBtn,
-                new Separator(javafx.geometry.Orientation.VERTICAL), clearAllBtn);
-        bulkRow.setAlignment(Pos.CENTER_LEFT);
+        Button selectPrefixBtn = new Button("Select Prefix");
+        selectPrefixBtn.setOnAction(e -> selectCurrentPrefix());
+
+        Button clearPrefixBtn = new Button("Clear Prefix");
+        clearPrefixBtn.setOnAction(e -> clearCurrentPrefix());
+
+        HBox btnRow = new HBox(6, selectAllBtn, clearAllBtn,
+                new Separator(javafx.geometry.Orientation.VERTICAL),
+                selectPrefixBtn, clearPrefixBtn);
+        btnRow.setAlignment(Pos.CENTER_LEFT);
+
+        // ── List view with checkboxes ──
+        listView = new ListView<>(filteredItems);
+        listView.setCellFactory(lv -> new CheckBoxListCell());
+        listView.setPrefHeight(400);
+        listView.setPrefWidth(500);
+        VBox.setVgrow(listView, Priority.ALWAYS);
+
+        // ── Count label ──
+        countLabel = new Label();
+        updateCount();
 
         // ── OK / Cancel ──
         Button okBtn = new Button("OK");
@@ -140,19 +151,17 @@ public class NormalizationPane {
                 okBtn, cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
-        // Filter row
-        HBox filterRow = new HBox(6, new Label("Filter:"), searchField, prefixCombo);
-        filterRow.setAlignment(Pos.CENTER_LEFT);
-
-        VBox root = new VBox(8, filterRow, cofactorRow, bulkRow, listView, okCancelRow);
+        VBox root = new VBox(8, transformRow, filterRow, btnRow, listView, okCancelRow);
         root.setPadding(new Insets(10));
 
         stage.initOwner(owner);
         stage.initModality(Modality.APPLICATION_MODAL);
         stage.setTitle("Normalise Features");
-        stage.setScene(new Scene(root, 650, 580));
-        stage.setMinWidth(450);
-        stage.setMinHeight(400);
+        stage.setScene(new Scene(root, 600, 550));
+        stage.setMinWidth(400);
+        stage.setMinHeight(350);
+
+        updateCofactorVisibility();
     }
 
     /**
@@ -165,19 +174,32 @@ public class NormalizationPane {
         stage.showAndWait();
         if (!confirmed) return null;
 
+        Transform transform = transformCombo.getValue();
         FeatureNormalizer normalizer = new FeatureNormalizer();
-        normalizer.setArcsinhCofactor(cofactorSpinner.getValue());
+        if (transform == Transform.ARCSINH) {
+            normalizer.setArcsinhCofactor(cofactorSpinner.getValue());
+        }
 
-        for (NormItem item : allItems) {
-            if (item.getTransform() != Transform.NONE) {
-                normalizer.setTransform(item.getName(), item.getTransform());
+        for (FeatureItem item : allItems) {
+            if (item.isSelected()) {
+                normalizer.setTransform(item.getName(), transform);
             }
         }
 
         return normalizer;
     }
 
-    // ── Filter logic ────────────────────────────────────────────────────────────
+    // ── UI helpers ───────────────────────────────────────────────────────────────
+
+    private void updateCofactorVisibility() {
+        boolean isArcsinh = transformCombo.getValue() == Transform.ARCSINH;
+        cofactorLabel.setVisible(isArcsinh);
+        cofactorLabel.setManaged(isArcsinh);
+        cofactorSpinner.setVisible(isArcsinh);
+        cofactorSpinner.setManaged(isArcsinh);
+        cofactorHint.setVisible(isArcsinh);
+        cofactorHint.setManaged(isArcsinh);
+    }
 
     private void updateFilter() {
         String search = searchField.getText() == null ? "" : searchField.getText().toLowerCase().strip();
@@ -191,64 +213,82 @@ public class NormalizationPane {
         });
     }
 
+    private void setAllVisible(boolean selected) {
+        for (FeatureItem item : filteredItems) {
+            item.setSelected(selected);
+        }
+        listView.refresh();
+        updateCount();
+    }
+
+    private void selectCurrentPrefix() {
+        String prefix = prefixCombo.getValue();
+        if ("All prefixes".equals(prefix)) { setAllVisible(true); return; }
+        for (FeatureItem item : allItems) {
+            if (item.getName().startsWith(prefix)) item.setSelected(true);
+        }
+        listView.refresh();
+        updateCount();
+    }
+
+    private void clearCurrentPrefix() {
+        String prefix = prefixCombo.getValue();
+        if ("All prefixes".equals(prefix)) { setAllVisible(false); return; }
+        for (FeatureItem item : allItems) {
+            if (item.getName().startsWith(prefix)) item.setSelected(false);
+        }
+        listView.refresh();
+        updateCount();
+    }
+
     private void updateCount() {
-        long transformed = allItems.stream()
-                .filter(i -> i.getTransform() != Transform.NONE)
-                .count();
-        countLabel.setText(transformed + " / " + allItems.size() + " normalised");
+        long selected = allItems.stream().filter(FeatureItem::isSelected).count();
+        countLabel.setText(selected + " / " + allItems.size() + " selected for normalisation");
     }
 
     // ── Inner classes ───────────────────────────────────────────────────────────
 
-    static class NormItem {
+    static class FeatureItem {
         private final String name;
-        private Transform transform;
+        private boolean selected;
 
-        NormItem(String name, Transform transform) {
+        FeatureItem(String name, boolean selected) {
             this.name = name;
-            this.transform = transform;
+            this.selected = selected;
         }
 
-        String getName()                  { return name; }
-        Transform getTransform()          { return transform; }
-        void setTransform(Transform t)    { this.transform = t; }
+        String getName()              { return name; }
+        boolean isSelected()          { return selected; }
+        void setSelected(boolean s)   { this.selected = s; }
 
         @Override
         public String toString() { return name; }
     }
 
-    /** ListView cell with a feature name label and a Transform combo box. */
-    private class NormListCell extends ListCell<NormItem> {
-        private final HBox box = new HBox(8);
-        private final Label nameLabel = new Label();
-        private final ComboBox<Transform> combo = new ComboBox<>();
+    /** ListView cell with a CheckBox — same pattern as FeatureSelectionPane. */
+    private class CheckBoxListCell extends ListCell<FeatureItem> {
+        private final CheckBox checkBox = new CheckBox();
 
-        NormListCell() {
-            combo.getItems().addAll(Transform.values());
-            combo.setPrefWidth(100);
-            combo.setOnAction(e -> {
-                NormItem item = getItem();
+        CheckBoxListCell() {
+            checkBox.setOnAction(e -> {
+                FeatureItem item = getItem();
                 if (item != null) {
-                    item.setTransform(combo.getValue());
+                    item.setSelected(checkBox.isSelected());
                     updateCount();
                 }
             });
-            HBox.setHgrow(nameLabel, Priority.ALWAYS);
-            nameLabel.setMaxWidth(Double.MAX_VALUE);
-            box.setAlignment(Pos.CENTER_LEFT);
-            box.getChildren().addAll(nameLabel, combo);
         }
 
         @Override
-        protected void updateItem(NormItem item, boolean empty) {
+        protected void updateItem(FeatureItem item, boolean empty) {
             super.updateItem(item, empty);
             if (empty || item == null) {
                 setGraphic(null);
                 setText(null);
             } else {
-                nameLabel.setText(item.getName());
-                combo.getSelectionModel().select(item.getTransform());
-                setGraphic(box);
+                checkBox.setSelected(item.isSelected());
+                checkBox.setText(item.getName());
+                setGraphic(checkBox);
                 setText(null);
             }
         }
