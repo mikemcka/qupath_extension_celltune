@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
@@ -130,43 +131,99 @@ public final class HyperparameterTuner {
         HyperParams bestParams = null;
         double bestScore = -1;
 
-        for (int trial = 0; trial < nTrials; trial++) {
-            HyperParams hp = sampler.suggest();
+        int totalCores = Runtime.getRuntime().availableProcessors();
+        int nFolds = folds.size();
+        // Parallelize folds when we have enough cores (at least 2 per fold)
+        boolean parallelFolds = totalCores >= nFolds * 2;
+        int threadsPerFold = parallelFolds ? Math.max(1, totalCores / nFolds) : totalCores;
 
-            double totalScore = 0;
-            int validFolds = 0;
+        if (parallelFolds) {
+            log.accept(String.format("  Parallel CV: %d folds × %d threads/fold (%d cores)",
+                    nFolds, threadsPerFold, totalCores));
+        }
 
-            for (var fold : folds) {
-                int[] trainIdx = fold[0];
-                int[] testIdx = fold[1];
+        ExecutorService foldPool = parallelFolds
+                ? Executors.newFixedThreadPool(nFolds)
+                : null;
 
-                float[] foldTrainData = extractRows(flatData, trainIdx, nFeatures);
-                float[] foldTrainLabels = extractLabels(labels, trainIdx);
-                float[] foldTestData = extractRows(flatData, testIdx, nFeatures);
-                int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
+        try {
+            for (int trial = 0; trial < nTrials; trial++) {
+                HyperParams hp = sampler.suggest();
 
-                double f1 = "XGBoost".equals(modelName)
-                        ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp)
-                        : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp);
+                double totalScore = 0;
+                int validFolds = 0;
 
-                if (f1 >= 0) {
-                    totalScore += f1;
-                    validFolds++;
+                if (parallelFolds) {
+                    // Submit all folds in parallel
+                    List<Future<Double>> futures = new ArrayList<>(nFolds);
+                    for (var fold : folds) {
+                        int[] trainIdx = fold[0];
+                        int[] testIdx = fold[1];
+
+                        float[] foldTrainData = extractRows(flatData, trainIdx, nFeatures);
+                        float[] foldTrainLabels = extractLabels(labels, trainIdx);
+                        float[] foldTestData = extractRows(flatData, testIdx, nFeatures);
+                        int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
+
+                        futures.add(foldPool.submit(() ->
+                                "XGBoost".equals(modelName)
+                                        ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                        foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold)
+                                        : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                        foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold)
+                        ));
+                    }
+
+                    for (Future<Double> f : futures) {
+                        try {
+                            double f1 = f.get();
+                            if (f1 >= 0) {
+                                totalScore += f1;
+                                validFolds++;
+                            }
+                        } catch (InterruptedException | ExecutionException e) {
+                            logger.debug("Parallel fold failed: {}", e.getMessage());
+                        }
+                    }
+                } else {
+                    // Sequential fallback
+                    for (var fold : folds) {
+                        int[] trainIdx = fold[0];
+                        int[] testIdx = fold[1];
+
+                        float[] foldTrainData = extractRows(flatData, trainIdx, nFeatures);
+                        float[] foldTrainLabels = extractLabels(labels, trainIdx);
+                        float[] foldTestData = extractRows(flatData, testIdx, nFeatures);
+                        int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
+
+                        double f1 = "XGBoost".equals(modelName)
+                                ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold)
+                                : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold);
+
+                        if (f1 >= 0) {
+                            totalScore += f1;
+                            validFolds++;
+                        }
+                    }
+                }
+
+                double meanScore = validFolds > 0 ? totalScore / validFolds : 0;
+                sampler.observe(hp, meanScore);
+
+                String marker = meanScore > bestScore ? " ★" : "";
+                log.accept(String.format("  Trial %2d/%d: %s → F1 = %.4f%s",
+                        trial + 1, nTrials, hp, meanScore, marker));
+
+                if (meanScore > bestScore) {
+                    bestScore = meanScore;
+                    bestParams = hp;
                 }
             }
-
-            double meanScore = validFolds > 0 ? totalScore / validFolds : 0;
-            sampler.observe(hp, meanScore);
-
-            String marker = meanScore > bestScore ? " ★" : "";
-            log.accept(String.format("  Trial %2d/%d: %s → F1 = %.4f%s",
-                    trial + 1, nTrials, hp, meanScore, marker));
-
-            if (meanScore > bestScore) {
-                bestScore = meanScore;
-                bestParams = hp;
+        } finally {
+            if (foldPool != null) {
+                foldPool.shutdown();
             }
         }
 
@@ -362,7 +419,7 @@ public final class HyperparameterTuner {
     private static double evaluateXGBoostFold(
             float[] trainData, float[] trainLabels, int trainSize,
             float[] testData, int[] testTruth, int testSize,
-            int nFeatures, int nClasses, HyperParams hp) {
+            int nFeatures, int nClasses, HyperParams hp, int nThreads) {
 
         DMatrix trainMat = null;
         DMatrix testMat = null;
@@ -379,7 +436,7 @@ public final class HyperparameterTuner {
             params.put("eval_metric", nClasses == 2 ? "logloss" : "mlogloss");
             params.put("device", "cpu");
             params.put("tree_method", "hist");
-            params.put("nthread", Runtime.getRuntime().availableProcessors());
+            params.put("nthread", nThreads);
             params.put("seed", 42);
             params.put("verbosity", 0);
             if (nClasses > 2) params.put("num_class", nClasses);
@@ -407,7 +464,7 @@ public final class HyperparameterTuner {
     private static double evaluateLightGBMFold(
             float[] trainData, float[] trainLabels, int trainSize,
             float[] testData, int[] testTruth, int testSize,
-            int nFeatures, int nClasses, HyperParams hp) {
+            int nFeatures, int nClasses, HyperParams hp, int nThreads) {
 
         LGBMDataset dataset = null;
         LGBMBooster booster = null;
@@ -428,7 +485,7 @@ public final class HyperparameterTuner {
             sb.append(" bagging_fraction=").append(hp.subsample());
             sb.append(" bagging_freq=1");
             sb.append(" feature_fraction=0.8");
-            sb.append(" num_threads=").append(Runtime.getRuntime().availableProcessors());
+            sb.append(" num_threads=").append(nThreads);
             sb.append(" seed=42");
             sb.append(" verbosity=-1");
 

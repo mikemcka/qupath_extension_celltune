@@ -560,6 +560,28 @@ Prediction processes cells in chunks of 500,000 to stay within Java's `int`-inde
 - Applies to both `trainAndPredict()` and `predictOnly()`
 - Training uses only the ground-truth set (typically 10K–20K cells), always fits in a single matrix
 
+### 8.9 Parallel k-Fold CV — `classifier/HyperparameterTuner.java` ✅ COMPLETE
+
+Parallelises the k-fold cross-validation within each TPE trial for faster hyperparameter tuning on multi-core systems.
+
+- Within each trial, all k folds are independent — they can run concurrently
+- **Activation threshold:** Parallel folds are enabled when `availableProcessors() >= nFolds × 2` (e.g. ≥10 cores for 5-fold CV)
+- **Thread partitioning:** Each fold's model gets `nthread = cores / nFolds` threads — avoids over-subscribing CPU cores. Example: 20-core HPC node → 5 folds × 4 threads/fold
+- **Sequential fallback:** On machines with fewer cores, folds run sequentially with all cores available per fold (same as before)
+- Uses `ExecutorService` with a fixed thread pool sized to `nFolds`, shut down after tuning completes
+- Trials remain sequential because TPE's `suggest()` depends on `observe()` feedback from prior trials
+- Logs the parallelisation strategy at the start: `"Parallel CV: 5 folds × 4 threads/fold (20 cores)"`
+
+### 8.10 Parallel Export Feature Extraction — `io/` exporters ✅ COMPLETE
+
+All three exporters pre-extract feature vectors in parallel before sequential CSV writing.
+
+- **`CellTableExporter`**, **`AnnDataExporter`**, **`GroundTruthIO`**: use `IntStream.range(0, nCells).parallel()` to extract raw and normalised feature arrays concurrently into pre-allocated `float[][]`
+- CSV row writing remains sequential to preserve deterministic row order and avoid I/O contention
+- Uses the ForkJoinPool common pool (same pool QuPath uses), which auto-sizes to `availableProcessors()`
+- On HPC nodes with 32–64 cores, this provides significant speedup for exports of 100K+ cells with feature values
+- Thread safety: `extractRow()` and `extractRowRaw()` only read from immutable `featureNames` and stateless `normalizer.apply()` — each call allocates its own `float[]`
+
 ### Reference Pattern (from qupath-extension-xgboost)
 
 The xgboost extension in `c:\Users\Mikem\qupath-extension-xgboost\` is a working QuPath 0.7 extension. Key patterns to copy:
@@ -673,6 +695,14 @@ The Java heap must be large enough to hold the feature matrix and native model c
 #### Parallel Feature Extraction ✅ FIXED
 
 - **`CellFeatureExtractor.extractMatrix()`** (`model/CellFeatureExtractor.java`): Changed from sequential `for` loop to `IntStream.range(0, nCells).parallel().forEach(…)`. Each cell's measurement reads are independent, so the work distributes across all available CPU cores. On HPC nodes with 32–64 cores, this provides a significant speedup for the extraction phase. The `Collection<PathObject>` is converted to an indexed `List` for thread-safe indexed access.
+
+#### Parallel k-Fold CV in Hyperparameter Tuning ✅ FIXED
+
+- **`HyperparameterTuner.tuneModel()`** (`classifier/HyperparameterTuner.java`): When `availableProcessors() >= nFolds × 2`, all k folds within each trial run concurrently via an `ExecutorService` thread pool. Threads are partitioned: `nthread = cores / nFolds` per fold. On a 64-core HPC node with 5-fold CV, this means 5 folds running simultaneously with 12 threads each — a ~5× speedup over sequential fold evaluation. Falls back to sequential with all cores per fold on smaller machines.
+
+#### Parallel Export Feature Extraction ✅ FIXED
+
+- **`CellTableExporter`**, **`AnnDataExporter`**, **`GroundTruthIO`** (`io/` package): All three exporters now pre-extract raw and normalised feature vectors in parallel using `IntStream.range(...).parallel()` before writing CSV rows sequentially. On HPC nodes this accelerates large exports significantly.
 
 #### Scalability — Chunked Prediction
 

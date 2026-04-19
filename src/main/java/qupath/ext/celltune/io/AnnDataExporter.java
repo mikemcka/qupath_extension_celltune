@@ -13,8 +13,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.stream.IntStream;
 
 /**
  * Exports cell data in AnnData-compatible CSV format that can be directly
@@ -52,21 +54,48 @@ public class AnnDataExporter {
                               PopulationSet predictions,
                               LabelStore labelStore,
                               String imageName) throws IOException {
+        export(outputPath, cells, extractor, predictions, labelStore, imageName, true, true);
+    }
+
+    /**
+     * Export cell data in AnnData-compatible CSV format.
+     *
+     * @param includeRaw   include raw (un-normalised) feature columns
+     * @param includeNorm  include normalised feature columns (suffixed __norm)
+     */
+    public static void export(Path outputPath,
+                              Collection<PathObject> cells,
+                              CellFeatureExtractor extractor,
+                              PopulationSet predictions,
+                              LabelStore labelStore,
+                              String imageName,
+                              boolean includeRaw,
+                              boolean includeNorm) throws IOException {
 
         List<String> featureNames = extractor.getFeatureNames();
         String fov = imageName != null ? imageName : "image";
+        boolean hasNorm = includeNorm && extractor.getNormalizer() != null;
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
 
-            // Header: unique_id, fov, cellID, features..., centroids, population sets, ground truth
+            // Header: unique_id, fov, cellID, features..., [norm features...], centroids, population sets, ground truth
             StringBuilder header = new StringBuilder();
             header.append("unique_id").append(DELIMITER);
             header.append("fov").append(DELIMITER);
             header.append("cellID");
 
-            // Feature columns
-            for (String feat : featureNames) {
-                header.append(DELIMITER).append(escapeCsv(feat));
+            // Raw feature columns
+            if (includeRaw) {
+                for (String feat : featureNames) {
+                    header.append(DELIMITER).append(escapeCsv(feat));
+                }
+            }
+
+            // Normalized feature columns (only when normaliser is active)
+            if (hasNorm) {
+                for (String feat : featureNames) {
+                    header.append(DELIMITER).append(escapeCsv(feat + "__norm"));
+                }
             }
 
             // Centroid columns (AnnData spatial)
@@ -88,8 +117,30 @@ public class AnnDataExporter {
             writer.write(header.toString());
             writer.newLine();
 
+            List<PathObject> cellList = (cells instanceof List)
+                    ? (List<PathObject>) cells
+                    : new ArrayList<>(cells);
+            int nCells = cellList.size();
+
+            // Pre-extract features in parallel
+            float[][] rawRows = null;
+            float[][] normRows = null;
+            if (includeRaw) {
+                rawRows = new float[nCells][];
+                float[][] rr = rawRows;
+                IntStream.range(0, nCells).parallel().forEach(i ->
+                        rr[i] = extractor.extractRowRaw(cellList.get(i)));
+            }
+            if (hasNorm) {
+                normRows = new float[nCells][];
+                float[][] nr = normRows;
+                IntStream.range(0, nCells).parallel().forEach(i ->
+                        nr[i] = extractor.extractRow(cellList.get(i)));
+            }
+
             int exported = 0;
-            for (PathObject cell : cells) {
+            for (int idx = 0; idx < nCells; idx++) {
+                PathObject cell = cellList.get(idx);
                 String cellId = cell.getID().toString();
                 String uniqueId = fov + "__" + cellId;
 
@@ -98,14 +149,29 @@ public class AnnDataExporter {
                 row.append(escapeCsv(fov)).append(DELIMITER);
                 row.append(escapeCsv(cellId));
 
-                // Feature values
-                float[] features = extractor.extractRow(cell);
-                for (float v : features) {
-                    row.append(DELIMITER);
-                    if (Float.isNaN(v)) {
-                        row.append("");
-                    } else {
-                        row.append(v);
+                // Raw feature values
+                if (includeRaw) {
+                    float[] rawFeatures = rawRows[idx];
+                    for (float v : rawFeatures) {
+                        row.append(DELIMITER);
+                        if (Float.isNaN(v)) {
+                            row.append("");
+                        } else {
+                            row.append(v);
+                        }
+                    }
+                }
+
+                // Normalized feature values
+                if (hasNorm) {
+                    float[] normFeatures = normRows[idx];
+                    for (float v : normFeatures) {
+                        row.append(DELIMITER);
+                        if (Float.isNaN(v)) {
+                            row.append("");
+                        } else {
+                            row.append(v);
+                        }
                     }
                 }
 
@@ -170,14 +236,20 @@ public class AnnDataExporter {
                 # Identify column types
                 centroid_cols = [c for c in data.columns if c.startswith("Centroid_") and "__Cell__RegionProps" in c]
                 pop_set_cols = [c for c in data.columns if c.startswith("PopulationSet__")]
+                norm_cols = [c for c in data.columns if c.endswith("__norm")]
                 meta_cols = ["fov", "cellID", "GroundTruth"] + centroid_cols + pop_set_cols
-                feature_cols = [c for c in data.columns if c not in meta_cols]
+                feature_cols = [c for c in data.columns if c not in meta_cols and c not in norm_cols]
                 
-                # Build AnnData
+                # Build AnnData — raw features as X
                 X = data[feature_cols].to_numpy(dtype=float)
                 adata = anndata.AnnData(X)
                 adata.var_names = feature_cols
                 adata.obs_names = data.index
+                
+                # Store normalised features as a separate layer if present
+                if norm_cols:
+                    adata.layers["normalized"] = data[norm_cols].to_numpy(dtype=float)
+                    print(f"  Added 'normalized' layer with {len(norm_cols)} features")
                 
                 # Metadata
                 for col in ["fov", "cellID", "GroundTruth"]:

@@ -85,6 +85,22 @@ public class CellFeatureExtractor {
     }
 
     /**
+     * Extract a single cell's raw measurements (no normalisation) as a float array.
+     *
+     * @param cell the detection object to extract features from
+     * @return float array of length {@link #getNumFeatures()}, raw values only
+     */
+    public float[] extractRowRaw(PathObject cell) {
+        var mlist = cell.getMeasurementList();
+        float[] row = new float[featureNames.size()];
+        for (int i = 0; i < featureNames.size(); i++) {
+            double v = mlist.get(featureNames.get(i));
+            row[i] = Double.isNaN(v) ? 0f : (float) v;
+        }
+        return row;
+    }
+
+    /**
      * Extract features from multiple cells into a flat float array (row-major),
      * suitable for constructing a DMatrix or LightGBM Dataset.
      * <p>

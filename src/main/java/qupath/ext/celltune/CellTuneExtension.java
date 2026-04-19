@@ -1023,6 +1023,46 @@ public class CellTuneExtension implements QuPathExtension {
                 + " Use 'Enter Review Mode' to start reviewing.");
     }
 
+    /** Export feature options chosen by the user. */
+    private record ExportFeatureOptions(boolean includeRaw, boolean includeNorm) {}
+
+    /**
+     * Show a dialog letting the user choose which feature columns to include.
+     * Only shown when a normaliser is active — otherwise raw-only is returned
+     * without prompting.
+     *
+     * @return options, or null if the user cancelled
+     */
+    private ExportFeatureOptions askExportFeatureOptions() {
+        if (featureNormalizer == null) {
+            return new ExportFeatureOptions(true, false);
+        }
+        var rawCb = new javafx.scene.control.CheckBox("Include raw feature values");
+        rawCb.setSelected(true);
+        var normCb = new javafx.scene.control.CheckBox("Include normalised feature values");
+        normCb.setSelected(true);
+        var box = new javafx.scene.layout.VBox(8, rawCb, normCb);
+        box.setPadding(new javafx.geometry.Insets(8));
+
+        var alert = new javafx.scene.control.Alert(
+                javafx.scene.control.Alert.AlertType.CONFIRMATION);
+        alert.setTitle(EXTENSION_NAME);
+        alert.setHeaderText("Export Feature Options");
+        alert.setContentText("Choose which feature columns to include in the export.");
+        alert.getDialogPane().setExpandableContent(null);
+        alert.getDialogPane().setContent(box);
+        var result = alert.showAndWait();
+        if (result.isEmpty() || result.get() != javafx.scene.control.ButtonType.OK) {
+            return null;
+        }
+        boolean raw = rawCb.isSelected();
+        boolean norm = normCb.isSelected();
+        if (!raw && !norm) {
+            raw = true; // fall back to raw if neither selected
+        }
+        return new ExportFeatureOptions(raw, norm);
+    }
+
     private void exportCellTable(QuPathGUI qupath) {
         if (qupath.getProject() == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
@@ -1051,12 +1091,25 @@ public class CellTuneExtension implements QuPathExtension {
         File chosen = fc.showSaveDialog(qupath.getStage());
         if (chosen == null) return;
 
+        ExportFeatureOptions opts = askExportFeatureOptions();
+        if (opts == null) return;
+
         try {
             Collection<PathObject> cells = imageData.getHierarchy()
                     .getObjects(null, PathObject.class).stream()
                     .filter(PathObjectFilter.DETECTIONS_ALL)
                     .toList();
-            CellTableExporter.export(chosen.toPath(), cells, predAll, labelStore);
+            // Build extractor so feature values (raw + normalised) are included
+            CellFeatureExtractor extractor = null;
+            List<String> feats = selectedFeatures != null && !selectedFeatures.isEmpty()
+                    ? selectedFeatures
+                    : CellFeatureExtractor.discoverFeatureNames(cells);
+            if (!feats.isEmpty()) {
+                extractor = new CellFeatureExtractor(feats);
+                extractor.setNormalizer(featureNormalizer);
+            }
+            CellTableExporter.export(chosen.toPath(), cells, predAll, labelStore,
+                    extractor, opts.includeRaw(), opts.includeNorm());
             Dialogs.showInfoNotification(EXTENSION_NAME,
                     "Exported " + cells.size() + " cells to " + chosen.getName());
         } catch (IOException ex) {
@@ -1099,6 +1152,9 @@ public class CellTuneExtension implements QuPathExtension {
         File chosen = fc.showSaveDialog(qupath.getStage());
         if (chosen == null) return;
 
+        ExportFeatureOptions opts = askExportFeatureOptions();
+        if (opts == null) return;
+
         try {
             Collection<PathObject> cells = imageData.getHierarchy()
                     .getObjects(null, PathObject.class).stream()
@@ -1111,7 +1167,7 @@ public class CellTuneExtension implements QuPathExtension {
             if (entry != null) imageName = entry.getImageName();
 
             AnnDataExporter.export(chosen.toPath(), cells, extractor,
-                    predAll, labelStore, imageName);
+                    predAll, labelStore, imageName, opts.includeRaw(), opts.includeNorm());
             Dialogs.showInfoNotification(EXTENSION_NAME,
                     "Exported " + cells.size() + " cells. "
                     + "Run convert_to_h5ad.py to generate H5AD file.");
@@ -1390,11 +1446,15 @@ public class CellTuneExtension implements QuPathExtension {
         File chosen = fc.showSaveDialog(qupath.getStage());
         if (chosen == null) return;
 
+        ExportFeatureOptions opts = askExportFeatureOptions();
+        if (opts == null) return;
+
         try {
             CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
             extractor.setNormalizer(featureNormalizer);
             String imgName = imageData.getServer().getMetadata().getName();
-            GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName);
+            GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName,
+                    opts.includeRaw(), opts.includeNorm());
             Dialogs.showInfoNotification(EXTENSION_NAME,
                     "Exported " + labelStore.size() + " labelled cells to " + chosen.getName());
         } catch (IOException ex) {

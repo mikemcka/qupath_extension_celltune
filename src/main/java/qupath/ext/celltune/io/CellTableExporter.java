@@ -13,26 +13,18 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.stream.IntStream;
 
 /**
- * Exports cell predictions and labels to a CSV file.
+ * Exports cell predictions, labels, and optionally feature values to CSV.
  * <p>
- * Columns:
- * <ol>
- *   <li>CellID</li>
- *   <li>GroundTruth — human-assigned label (empty if unlabelled)</li>
- *   <li>Pred_MDL1 — XGBoost prediction</li>
- *   <li>Pred_MDL2 — LightGBM prediction</li>
- *   <li>Pred_AVG — averaged prediction</li>
- *   <li>Pred_ALL — combined prediction (agreed or "A/B")</li>
- *   <li>Model1_Confidence — max probability from model 1</li>
- *   <li>Model2_Confidence — max probability from model 2</li>
- *   <li>Disagreement — true/false</li>
- *   <li>CentroidX — cell centroid X coordinate</li>
- *   <li>CentroidY — cell centroid Y coordinate</li>
- * </ol>
+ * Core columns: CellID, GroundTruth, predictions, confidence, centroids.
+ * When an extractor is provided, raw feature values are appended.
+ * When the extractor also has a normaliser, normalised feature values
+ * (suffixed {@code __norm}) are appended after the raw columns.
  */
 public class CellTableExporter {
 
@@ -42,23 +34,58 @@ public class CellTableExporter {
     private CellTableExporter() {} // utility class
 
     /**
-     * Export predictions for all cells to a CSV file.
-     *
-     * @param outputPath   path for the output CSV file
-     * @param cells        collection of cell PathObjects (for coordinates)
-     * @param predictions  the Pred_ALL population set with all cell predictions
-     * @param labelStore   ground-truth labels (may be null if no labels available)
-     * @throws IOException if writing fails
+     * Export predictions for all cells to a CSV file (without feature values).
      */
     public static void export(Path outputPath,
                               Collection<PathObject> cells,
                               PopulationSet predictions,
                               LabelStore labelStore) throws IOException {
+        export(outputPath, cells, predictions, labelStore, null);
+    }
+
+    /**
+     * Export predictions for all cells to a CSV file, optionally including
+     * raw feature values and (when a normaliser is active) normalised values.
+     *
+     * @param outputPath   path for the output CSV file
+     * @param cells        collection of cell PathObjects
+     * @param predictions  the Pred_ALL population set with all cell predictions
+     * @param labelStore   ground-truth labels (may be null)
+     * @param extractor    feature extractor (may be null — features omitted)
+     * @throws IOException if writing fails
+     */
+    public static void export(Path outputPath,
+                              Collection<PathObject> cells,
+                              PopulationSet predictions,
+                              LabelStore labelStore,
+                              CellFeatureExtractor extractor) throws IOException {
+        export(outputPath, cells, predictions, labelStore, extractor, true, true);
+    }
+
+    /**
+     * Export predictions with configurable raw/normalised feature columns.
+     *
+     * @param includeRaw   include raw feature columns
+     * @param includeNorm  include normalised feature columns (suffixed __norm)
+     */
+    public static void export(Path outputPath,
+                              Collection<PathObject> cells,
+                              PopulationSet predictions,
+                              LabelStore labelStore,
+                              CellFeatureExtractor extractor,
+                              boolean includeRaw,
+                              boolean includeNorm) throws IOException {
         logger.info("Exporting cell table to {}", outputPath);
+
+        boolean hasFeatures = extractor != null;
+        boolean writeRaw = hasFeatures && includeRaw;
+        boolean hasNorm = hasFeatures && includeNorm && extractor.getNormalizer() != null;
+        List<String> featureNames = hasFeatures ? extractor.getFeatureNames() : List.of();
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
             // Header
-            writer.write(String.join(DELIMITER,
+            StringBuilder hdr = new StringBuilder();
+            hdr.append(String.join(DELIMITER,
                     "CellID",
                     "GroundTruth",
                     "Pred_MDL1",
@@ -70,10 +97,45 @@ public class CellTableExporter {
                     "Disagreement",
                     "CentroidX",
                     "CentroidY"));
+            if (writeRaw) {
+                for (String feat : featureNames) {
+                    hdr.append(DELIMITER).append(feat);
+                }
+            }
+            if (hasNorm) {
+                for (String feat : featureNames) {
+                    hdr.append(DELIMITER).append(feat).append("__norm");
+                }
+            }
+            writer.write(hdr.toString());
             writer.newLine();
 
+            List<PathObject> cellList = (cells instanceof List)
+                    ? (List<PathObject>) cells
+                    : new ArrayList<>(cells);
+            int nCells = cellList.size();
+
+            // Pre-extract features in parallel if applicable
+            float[][] rawRows = null;
+            float[][] normRows = null;
+            if (writeRaw || hasNorm) {
+                if (writeRaw) {
+                    rawRows = new float[nCells][];
+                    float[][] rr = rawRows;
+                    IntStream.range(0, nCells).parallel().forEach(i ->
+                            rr[i] = extractor.extractRowRaw(cellList.get(i)));
+                }
+                if (hasNorm) {
+                    normRows = new float[nCells][];
+                    float[][] nr = normRows;
+                    IntStream.range(0, nCells).parallel().forEach(i ->
+                            nr[i] = extractor.extractRow(cellList.get(i)));
+                }
+            }
+
             int exported = 0;
-            for (PathObject cell : cells) {
+            for (int idx = 0; idx < nCells; idx++) {
+                PathObject cell = cellList.get(idx);
                 String cellId = cell.getID().toString();
                 CellPrediction pred = predictions.get(cellId);
 
@@ -89,8 +151,9 @@ public class CellTableExporter {
                     if (label != null) gt = label;
                 }
 
+                StringBuilder row = new StringBuilder();
                 if (pred != null) {
-                    writer.write(String.join(DELIMITER,
+                    row.append(String.join(DELIMITER,
                             cellId,
                             gt,
                             pred.getModel1Label(),
@@ -104,7 +167,7 @@ public class CellTableExporter {
                             String.format("%.2f", cy)));
                 } else {
                     // Cell without predictions — still export with coordinates + ground truth
-                    writer.write(String.join(DELIMITER,
+                    row.append(String.join(DELIMITER,
                             cellId,
                             gt,
                             "", "", "", "",
@@ -113,6 +176,23 @@ public class CellTableExporter {
                             String.format("%.2f", cx),
                             String.format("%.2f", cy)));
                 }
+
+                // Raw feature values
+                if (writeRaw) {
+                    float[] raw = rawRows[idx];
+                    for (float v : raw) {
+                        row.append(DELIMITER).append(v);
+                    }
+                }
+                // Normalized feature values
+                if (hasNorm) {
+                    float[] norm = normRows[idx];
+                    for (float v : norm) {
+                        row.append(DELIMITER).append(v);
+                    }
+                }
+
+                writer.write(row.toString());
                 writer.newLine();
                 exported++;
             }

@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.IntStream;
 
 /**
  * Portable import/export of ground-truth labelled cell populations.
@@ -62,8 +63,25 @@ public class GroundTruthIO {
                                  LabelStore labelStore,
                                  CellFeatureExtractor extractor,
                                  String imageName) throws IOException {
+        exportCSV(outputPath, cells, labelStore, extractor, imageName, true, true);
+    }
+
+    /**
+     * Export labelled cells with configurable raw/normalised feature columns.
+     *
+     * @param includeRaw   include raw feature columns
+     * @param includeNorm  include normalised feature columns (suffixed __norm)
+     */
+    public static void exportCSV(Path outputPath,
+                                 Collection<PathObject> cells,
+                                 LabelStore labelStore,
+                                 CellFeatureExtractor extractor,
+                                 String imageName,
+                                 boolean includeRaw,
+                                 boolean includeNorm) throws IOException {
 
         List<String> featureNames = extractor.getFeatureNames();
+        boolean hasNorm = includeNorm && extractor.getNormalizer() != null;
 
         // Build cellId → PathObject lookup
         Map<String, PathObject> cellById = new LinkedHashMap<>();
@@ -80,33 +98,75 @@ public class GroundTruthIO {
             writer.write("# Exported: " + java.time.LocalDateTime.now());
             writer.newLine();
 
-            // Column header
+            // Column header — raw features, then normalized if present
             StringBuilder header = new StringBuilder("Label,CentroidX,CentroidY");
-            for (String feat : featureNames) {
-                header.append(',').append(feat);
+            if (includeRaw) {
+                for (String feat : featureNames) {
+                    header.append(',').append(feat);
+                }
+            }
+            if (hasNorm) {
+                for (String feat : featureNames) {
+                    header.append(',').append(feat).append("__norm");
+                }
             }
             writer.write(header.toString());
             writer.newLine();
 
-            int exported = 0;
+            // Collect labelled cells in order for parallel extraction
+            List<String> labelledIds = new ArrayList<>();
+            List<String> labelledLabels = new ArrayList<>();
+            List<PathObject> labelledCells = new ArrayList<>();
             for (var entry : labelStore.getAllLabels().entrySet()) {
-                String cellId = entry.getKey();
-                String label = entry.getValue();
-                PathObject cell = cellById.get(cellId);
-                if (cell == null) continue;
+                PathObject cell = cellById.get(entry.getKey());
+                if (cell != null) {
+                    labelledIds.add(entry.getKey());
+                    labelledLabels.add(entry.getValue());
+                    labelledCells.add(cell);
+                }
+            }
+            int nLabelled = labelledCells.size();
+
+            // Pre-extract features in parallel
+            float[][] rawRows = null;
+            float[][] normRows = null;
+            if (includeRaw) {
+                rawRows = new float[nLabelled][];
+                float[][] rr = rawRows;
+                IntStream.range(0, nLabelled).parallel().forEach(i ->
+                        rr[i] = extractor.extractRowRaw(labelledCells.get(i)));
+            }
+            if (hasNorm) {
+                normRows = new float[nLabelled][];
+                float[][] nr = normRows;
+                IntStream.range(0, nLabelled).parallel().forEach(i ->
+                        nr[i] = extractor.extractRow(labelledCells.get(i)));
+            }
+
+            int exported = 0;
+            for (int idx = 0; idx < nLabelled; idx++) {
+                PathObject cell = labelledCells.get(idx);
+                String label = labelledLabels.get(idx);
 
                 var roi = cell.getROI();
                 double cx = roi != null ? roi.getCentroidX() : 0;
                 double cy = roi != null ? roi.getCentroidY() : 0;
 
-                float[] features = extractor.extractRow(cell);
-
                 StringBuilder row = new StringBuilder();
                 row.append(label);
                 row.append(',').append(String.format("%.2f", cx));
                 row.append(',').append(String.format("%.2f", cy));
-                for (float f : features) {
-                    row.append(',').append(f);
+                if (includeRaw) {
+                    float[] rawFeatures = rawRows[idx];
+                    for (float f : rawFeatures) {
+                        row.append(',').append(f);
+                    }
+                }
+                if (hasNorm) {
+                    float[] normFeatures = normRows[idx];
+                    for (float f : normFeatures) {
+                        row.append(',').append(f);
+                    }
                 }
                 writer.write(row.toString());
                 writer.newLine();
