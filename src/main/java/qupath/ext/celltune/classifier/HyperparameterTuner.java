@@ -135,16 +135,17 @@ public final class HyperparameterTuner {
         int nFolds = folds.size();
         // Parallelize folds when we have enough cores (at least 2 per fold)
         boolean parallelFolds = totalCores >= nFolds * 2;
-        int threadsPerFold = parallelFolds ? Math.max(1, totalCores / nFolds) : totalCores;
+        int threadsPerFoldXGB = parallelFolds ? Math.max(1, totalCores / nFolds) : totalCores;
+        int threadsPerFoldLGB = totalCores; // Always use all cores for LightGBM
 
         if (parallelFolds) {
-            log.accept(String.format("  Parallel CV: %d folds × %d threads/fold (%d cores)",
-                    nFolds, threadsPerFold, totalCores));
+            log.accept(String.format("  Parallel CV: %d folds × %d threads/fold (XGB), %d threads/fold (LGB) (%d cores)",
+                nFolds, threadsPerFoldXGB, threadsPerFoldLGB, totalCores));
         }
 
         ExecutorService foldPool = parallelFolds
-                ? Executors.newFixedThreadPool(nFolds)
-                : null;
+            ? Executors.newFixedThreadPool(nFolds)
+            : null;
 
         try {
             for (int trial = 0; trial < nTrials; trial++) {
@@ -166,11 +167,11 @@ public final class HyperparameterTuner {
                         int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
 
                         futures.add(foldPool.submit(() ->
-                                "XGBoost".equals(modelName)
-                                        ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                        foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold)
-                                        : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                        foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold)
+                            "XGBoost".equals(modelName)
+                                ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldXGB)
+                                : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldLGB)
                         ));
                     }
 
@@ -197,10 +198,10 @@ public final class HyperparameterTuner {
                         int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
 
                         double f1 = "XGBoost".equals(modelName)
-                                ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold)
-                                : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFold);
+                            ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                            foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldXGB)
+                            : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
+                            foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldLGB);
 
                         if (f1 >= 0) {
                             totalScore += f1;
