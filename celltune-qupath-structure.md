@@ -67,15 +67,16 @@ qupath-extension-celltune/
 │  │  └─ UncertaintySampler.java                     // 6-tier weighted sampling with FOV balance
 │  │
 │  ├─ ui/                                            // JavaFX panels and controls
-│  │  ├─ ClassificationPanel.java                    // Main classifier sidebar panel
-│  │  ├─ ConfusionMatrixView.java                    // JavaFX Canvas inter-model confusion plot
-│  │  ├─ ReviewToolbar.java                          // Nav + dynamic prediction buttons + All Classes menu
-│  │  ├─ ReviewController.java                       // Review queue logic, viewer navigation
-│  │  ├─ PopulationPanel.java                        // Lists population sets, triggers review
+│  │  ├─ ClassificationPanel.java                    // Main sidebar (train, confuse, sample, model type selectors)
+│  │  ├─ ConfusionMatrixView.java                    // Canvas confusion matrix with F1 scores
+│  │  ├─ ReviewController.java                       // Review queue logic + viewer navigation
+│  │  ├─ ReviewToolbar.java                          // Nav + prediction buttons + All Classes
+│  │  ├─ PopulationPanel.java                        // Population set display with colour swatches
 │  │  ├─ ChannelSelector.java                        // Auto channel switching during review
 │  │  ├─ ImageSelectionPane.java                     // Dual-list image selector for batch classification
 │  │  ├─ ManualLabelToolbar.java                     // Floating toolbar for direct cell labelling
-│  │  └─ FeatureSelectionPane.java                   // Feature selection dialog (2000+ features)
+│  │  ├─ NormalizationPane.java                      // Per-feature arcsinh/sqrt dialog + cofactor
+│  │  └─ FeatureSelectionPane.java                   // Filterable feature checkbox list
 │  │
 │  ├─ gating/                                        // Marker-based gating system
 │  │  ├─ AutoLandmarker.java                         // Multi-threshold cascade landmark engine

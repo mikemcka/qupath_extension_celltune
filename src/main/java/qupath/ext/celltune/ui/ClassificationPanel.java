@@ -6,10 +6,12 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.*;
+import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
@@ -44,6 +46,7 @@ public class ClassificationPanel extends VBox {
     private PopulationSet predAll;
     private double[] lastAgreementRates;
     private List<String> lastSampledCellIds;
+    private FeatureNormalizer featureNormalizer;
 
     // ── Callbacks ──
     private Consumer<LabelStore> onLabelStoreChanged;
@@ -65,6 +68,8 @@ public class ClassificationPanel extends VBox {
     private final Spinner<Integer> depthSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
     private final ComboBox<ResamplingStrategy> resamplingCombo = new ComboBox<>();
+    private final ComboBox<ModelType> model1Combo = new ComboBox<>();
+    private final ComboBox<ModelType> model2Combo = new ComboBox<>();
     private final CheckBox autoTuneCheckBox = new CheckBox("Auto-tune hyperparameters");
     private final CheckBox earlyStopCheckBox = new CheckBox("Early stopping");
     private final PopulationPanel populationPanel = new PopulationPanel();
@@ -104,6 +109,21 @@ public class ClassificationPanel extends VBox {
         resamplingCombo.setMaxWidth(Double.MAX_VALUE);
         resamplingCombo.setTooltip(new Tooltip(
                 "Resampling strategy to address class imbalance before training"));
+
+        model1Combo.getItems().addAll(ModelType.values());
+        model1Combo.setValue(ModelType.XGBOOST);
+        model1Combo.setMaxWidth(Double.MAX_VALUE);
+        model1Combo.setTooltip(new Tooltip("Model 1 type"));
+
+        model2Combo.getItems().addAll(ModelType.values());
+        model2Combo.setValue(ModelType.LIGHTGBM);
+        model2Combo.setMaxWidth(Double.MAX_VALUE);
+        model2Combo.setTooltip(new Tooltip("Model 2 type"));
+
+        HBox modelRow = new HBox(8,
+                new Label("Model 1:"), model1Combo,
+                new Label("Model 2:"), model2Combo);
+        modelRow.setAlignment(Pos.CENTER_LEFT);
 
         autoTuneCheckBox.setSelected(false);
         autoTuneCheckBox.setTooltip(new Tooltip(
@@ -155,6 +175,7 @@ public class ClassificationPanel extends VBox {
         getChildren().addAll(
                 title,
                 paramRow,
+                modelRow,
                 poolImagesCheckBox,
                 resamplingCombo,
                 autoTuneCheckBox,
@@ -179,6 +200,7 @@ public class ClassificationPanel extends VBox {
         refreshStats();
     }
     public void setClassifier(DualModelClassifier cls) { this.classifier = cls; }
+    public void setFeatureNormalizer(FeatureNormalizer normalizer) { this.featureNormalizer = normalizer; }
     public void setSelectedFeatures(List<String> features) { this.selectedFeatures = features; }
     public void setCellTypeTable(CellTypeTable table) { this.cellTypeTable = table; }
     public void setPredAll(PopulationSet pa) {
@@ -245,7 +267,12 @@ public class ClassificationPanel extends VBox {
         }
 
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+        extractor.setNormalizer(featureNormalizer);
         if (classifier == null) classifier = new DualModelClassifier();
+
+        // Apply model types from combos
+        classifier.setModel1Type(model1Combo.getValue());
+        classifier.setModel2Type(model2Combo.getValue());
 
         // Apply hyperparameters from spinners
         classifier.setNumRounds(roundsSpinner.getValue());
@@ -311,6 +338,7 @@ public class ClassificationPanel extends VBox {
                             if (otherLabels.size() == 0) continue;
 
                             var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            otherExtractor.setNormalizer(featureNormalizer);
                             Map<String, PathObject> otherCellById = new LinkedHashMap<>();
                             for (PathObject cell : otherDetections) {
                                 otherCellById.put(cell.getID().toString(), cell);

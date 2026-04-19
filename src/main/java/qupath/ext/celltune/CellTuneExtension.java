@@ -24,6 +24,8 @@ import qupath.ext.celltune.ui.ChannelSelector;
 import qupath.ext.celltune.ui.ClassificationPanel;
 import qupath.ext.celltune.ui.ConfusionMatrixView;
 import qupath.ext.celltune.ui.FeatureSelectionPane;
+import qupath.ext.celltune.ui.NormalizationPane;
+import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.ui.ImageSelectionPane;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
 import qupath.ext.celltune.ui.ReviewController;
@@ -83,6 +85,8 @@ public class CellTuneExtension implements QuPathExtension {
     private DualModelClassifier classifier;
     /** User-selected feature subset; null means use all features. */
     private List<String> selectedFeatures;
+    /** Per-feature normalization config; null means no transforms. */
+    private FeatureNormalizer featureNormalizer;
     /** Per-class agreement rates from the last confusion matrix. */
     private double[] lastAgreementRates;
     /** Cell IDs sampled for review. */
@@ -209,6 +213,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setLabelStore(labelStore);
         classificationPanel.setClassifier(classifier);
         classificationPanel.setSelectedFeatures(selectedFeatures);
+        classificationPanel.setFeatureNormalizer(featureNormalizer);
         classificationPanel.setCellTypeTable(cellTypeTable);
         classificationPanel.setPredAll(predAll);
         classificationPanel.setLastAgreementRates(lastAgreementRates);
@@ -328,9 +333,14 @@ public class CellTuneExtension implements QuPathExtension {
         featuresItem.setOnAction(e -> showFeatureSelection(qupath));
         featuresItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem normalizeItem = new MenuItem("Normalise Features");
+        normalizeItem.setOnAction(e -> showNormalization(qupath));
+        normalizeItem.disableProperty().bind(enableExtensionProperty.not());
+
         menu.getItems().addAll(
                 classifyItem,
                 featuresItem,
+                normalizeItem,
                 new SeparatorMenuItem(),
                 reviewItem,
                 manualLabelItem,
@@ -514,6 +524,7 @@ public class CellTuneExtension implements QuPathExtension {
         if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
 
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+        extractor.setNormalizer(featureNormalizer);
         if (classifier == null) {
             classifier = new DualModelClassifier();
         }
@@ -615,6 +626,7 @@ public class CellTuneExtension implements QuPathExtension {
                             if (otherLabels.size() == 0) continue;
 
                             var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            otherExtractor.setNormalizer(featureNormalizer);
                             java.util.Map<String, PathObject> otherCellById = new java.util.LinkedHashMap<>();
                             for (PathObject cell : otherDetections) {
                                 otherCellById.put(cell.getID().toString(), cell);
@@ -699,6 +711,7 @@ public class CellTuneExtension implements QuPathExtension {
                             }
 
                             var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            otherExtractor.setNormalizer(featureNormalizer);
                             classifier.predictOnly(otherDetections, otherExtractor,
                                     msg -> {
                                         logger.info("[CellTune] [{}] {}", imgName, msg);
@@ -1074,6 +1087,7 @@ public class CellTuneExtension implements QuPathExtension {
                     .filter(PathObjectFilter.DETECTIONS_ALL)
                     .toList();
             CellFeatureExtractor extractor = new CellFeatureExtractor(feats);
+            extractor.setNormalizer(featureNormalizer);
             String imageName = null;
             var entry = project.getEntry(imageData);
             if (entry != null) imageName = entry.getImageName();
@@ -1360,6 +1374,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         try {
             CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+            extractor.setNormalizer(featureNormalizer);
             String imgName = imageData.getServer().getMetadata().getName();
             GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName);
             Dialogs.showInfoNotification(EXTENSION_NAME,
@@ -1478,6 +1493,51 @@ public class CellTuneExtension implements QuPathExtension {
                         chosen.size() + " of " + allFeatures.size() + " features selected for training.");
             }
             syncPanelState();
+        }
+    }
+
+    // ── Normalization ──────────────────────────────────────────────────────────
+
+    private void showNormalization(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+
+        Collection<PathObject> detections = imageData.getHierarchy().getDetectionObjects();
+        if (detections.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No detections found. Run cell detection first.");
+            return;
+        }
+
+        // Use selected features if available, otherwise discover all
+        List<String> featureNames;
+        if (selectedFeatures != null && !selectedFeatures.isEmpty()) {
+            featureNames = selectedFeatures;
+        } else {
+            featureNames = CellFeatureExtractor.discoverFeatureNames(detections);
+        }
+
+        if (featureNames.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No cell measurements found.");
+            return;
+        }
+
+        var pane = new NormalizationPane(qupath.getStage(), featureNames, featureNormalizer);
+        FeatureNormalizer result = pane.showAndWait();
+        if (result != null) {
+            if (result.hasTransforms()) {
+                featureNormalizer = result;
+                long count = result.getAllTransforms().size();
+                Dialogs.showInfoNotification(EXTENSION_NAME,
+                        count + " feature(s) will be normalised (cofactor="
+                        + result.getArcsinhCofactor() + ").");
+            } else {
+                featureNormalizer = null;
+                Dialogs.showInfoNotification(EXTENSION_NAME,
+                        "Feature normalization cleared.");
+            }
         }
     }
 }
