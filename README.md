@@ -11,7 +11,8 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override
 - **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates, per-class F1 scores, macro F1, and PNG export
 - **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
-- **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane. The panel includes **Model 1** and **Model 2** dropdowns for selecting model types (XGBoost, LightGBM, or Random Forest), boosting rounds and depth spinners, resampling strategy, auto-tune, and early stopping options.
+- **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane. Includes boosting rounds and depth spinners, resampling strategy, auto-tune, and early stopping options.
+- **Model type selectors** — choose **Model 1** and **Model 2** independently from XGBoost, LightGBM, or Random Forest in the training confirmation dialog. Default pairing is XGBoost + LightGBM.
 - **Multi-image training data pooling** — optionally pool labelled cells from all project images into a single training set. A "Pool labels from all images" checkbox appears in the Classification Panel and training confirmation dialog. When enabled, the extension opens each project image, collects annotation-based labels (landmarks) plus persisted review and manual labels, extracts features using the same column ordering, and adds them as supplementary training rows. Per-image labels are automatically saved to `<project>/celltune/image-labels/` after training, review, and manual labelling sessions.
 - **Resampling strategies** — address class imbalance before training with a selectable strategy: **SMOTE** (synthetic minority oversampling via k-NN interpolation), **ADASYN** (adaptive synthetic sampling weighted toward harder boundary examples), **Tomek links** (remove majority-class samples forming mutual nearest-neighbour pairs with minority samples), or combinations (**SMOTE + Tomek**, **ADASYN + Tomek**). A dropdown appears in both the Classification Panel and the training confirmation dialog. Training logs report the original and resampled class distributions.
 - **Hyperparameter auto-tuning (TPE)** — optional Bayesian optimisation using Tree-structured Parzen Estimator (TPE) with stratified 5-fold cross-validation over boosting rounds, max depth, learning rate, and subsample ratio. Each model (XGBoost and LightGBM) is tuned independently — they may have different optimal settings. After an initial warm-up of random trials, subsequent trials are guided by kernel density estimates fitted to the best-performing observations. An "Auto-tune hyperparameters" checkbox appears in the Classification Panel and training dialog. When enabled, 20 TPE trials per model are tested before training, and the best-performing parameters are applied to each model independently.
@@ -20,7 +21,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Training progress dialog** — real-time progress bar with scrollable log showing training phases, device info (GPU/CPU), and per-image classification status
 - **Ground truth portability** — export/import labelled cells as CSV for cross-image or cross-project transfer (spatial matching or training-data-only modes)
 - **Feature selection** — filterable, searchable feature selector handles panels with 2000+ measurements
-- **Feature normalization** — optional per-feature transforms configured via *Extensions > CellTune Classifier > Normalise Features*. A dedicated dialog shows the full feature list with per-feature transform dropdowns (**None**, **arcsinh**, **sqrt**), a cofactor spinner, bulk-apply buttons, and search/prefix filtering. **arcsinh** (`arcsinh(x / cofactor)`) is standard in cytometry workflows; recommended cofactor is **1** for fluorescence imaging (COMET, CODEX) and **100** for mass spectrometry methods (MIBI, IMC). **sqrt** (`√max(0, x)`) is a simpler variance-stabilising alternative. Transforms are applied consistently during both training and inference, including when training from the docked panel and when classifying batch images.
+- **Feature normalization** — optional per-feature transforms configured via *Extensions > CellTune Classifier > Normalise Features*. A dedicated dialog provides a single **transform type selector** (arcsinh or sqrt) at the top, a **cofactor spinner** (visible only when arcsinh is selected), and a **checkbox list** of all features to normalise — with Select All / Clear All / Select Prefix / Clear Prefix buttons and search filtering. **arcsinh** (`arcsinh(x / cofactor)`) is standard in cytometry workflows; recommended cofactor is **1** for fluorescence imaging (COMET, CODEX) and **100** for mass spectrometry methods (MIBI, IMC). **sqrt** (`√max(0, x)`) is a simpler variance-stabilising alternative. Transforms are applied consistently during both training and inference, including when training from the docked panel and when classifying batch images.
 - **AnnData export** — export cell data as AnnData-compatible CSV with a companion Python script for H5AD conversion. The CSV includes unique cell IDs, FOV assignments, feature values, population predictions, and ground truth labels. Run the generated `convert_to_h5ad.py` script to produce a standard `.h5ad` file for downstream analysis in scanpy or other Python tools.
 - **Random Forest classifier** — a pure-Java Random Forest implementation (no external dependencies) is available as an alternative to XGBoost or LightGBM. Uses CART decision trees with cross-entropy split criterion, bootstrap sampling, and random feature subsets (mtry = √features). Both model slots (Model 1 and Model 2) can be independently set to XGBoost, LightGBM, or Random Forest.
 - **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling.
@@ -75,12 +76,11 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 3. **Import a marker table** (optional) — *Extensions > CellTune Classifier > Import Marker Table* — a CSV mapping cell types to up to 3 marker channel names, used for auto-channel switching during review
 4. **Select features** (optional) — *Extensions > CellTune Classifier > Select Features* — choose which measurements to include in training
 5. **Normalise features** (optional) — *Extensions > CellTune Classifier > Normalise Features* — apply arcsinh or sqrt transforms to selected features. Use cofactor=1 for fluorescence (COMET, CODEX) or cofactor=100 for mass spectrometry (MIBI, IMC).
-6. **Choose model types** (optional) — in the CellTune panel, use the **Model 1** and **Model 2** dropdowns to select XGBoost, LightGBM, or Random Forest. Default: XGBoost + LightGBM.
-7. **Train** — click *Train* in the CellTune panel (or *Extensions > CellTune Classifier > Run CellTune Classification…*). If features haven't been selected yet, you'll be prompted to select them or use all. A confirmation dialog shows the feature and label counts before training begins. If the project has multiple images, a dual-list image selector lets you choose which images to apply the trained classifier to. A progress dialog shows real-time training status including GPU/CPU device info.
-8. **Plot confusions** — click *Plot Confusions* to see the inter-model confusion matrix with per-class agreement rates and F1 scores
-9. **Sample & review** — click *Sample & Review*, choose a sample size (default 200), then *Enter Review Mode* to step through disputed cells. Each cell shows coloured prediction buttons (e.g. `XGB: CD4 (87%)`, `LGB: Bcell (65%)`) — click to accept. Use the *All Classes* dropdown if neither prediction is correct.
-10. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
-11. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
+6. **Train** — click *Train* in the CellTune panel (or *Extensions > CellTune Classifier > Run CellTune Classification…*). If features haven't been selected yet, you'll be prompted to select them or use all. A confirmation dialog shows the feature and label counts, **Model 1** and **Model 2** type selectors (default: XGBoost + LightGBM), resampling, auto-tune, and early stopping options. If the project has multiple images, a dual-list image selector lets you choose which images to apply the trained classifier to. A progress dialog shows real-time training status including GPU/CPU device info.
+7. **Plot confusions** — click *Plot Confusions* to see the inter-model confusion matrix with per-class agreement rates and F1 scores
+8. **Sample & review** — click *Sample & Review*, choose a sample size (default 200), then *Enter Review Mode* to step through disputed cells. Each cell shows coloured prediction buttons (e.g. `XGB: CD4 (87%)`, `LGB: Bcell (65%)`) — click to accept. Use the *All Classes* dropdown if neither prediction is correct.
+9. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
+10. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
 
 ### Marker Table Format
 
@@ -190,7 +190,7 @@ src/main/java/qupath/ext/celltune/
 │   └── GatingRule.java             # Numeric encoding table for marker rules
 │
 ├── ui/                             # JavaFX panels and controls
-│   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review, model type selection)
+│   ├── ClassificationPanel.java    # Main sidebar panel (train, confuse, sample, review)
 │   ├── PopulationPanel.java        # Population set display with colour swatches
 │   ├── ConfusionMatrixView.java    # Canvas confusion matrix with F1 scores + PNG export
 │   ├── ReviewController.java       # Review queue logic + viewer navigation
@@ -198,7 +198,7 @@ src/main/java/qupath/ext/celltune/
 │   ├── ChannelSelector.java        # Optional auto channel switching
 │   ├── ImageSelectionPane.java     # Dual-list image selector for batch classification
 │   ├── ManualLabelToolbar.java     # Floating toolbar for direct cell labelling
-│   ├── NormalizationPane.java      # Per-feature arcsinh/sqrt transform dialog with cofactor
+│   ├── NormalizationPane.java      # Checkbox-based arcsinh/sqrt normalization dialog
 │   └── FeatureSelectionPane.java   # Filterable feature checkbox list
 │
 └── io/                             # Import / export
@@ -234,9 +234,9 @@ The extension includes two built-in memory safeguards:
 - **DMatrix cleanup** — `XGBoostModel` wraps all `DMatrix` objects in `try/finally` blocks with `dispose()` calls, preventing native memory leaks that would otherwise leave multi-GiB allocations lingering until garbage collection
 - **Parallel feature extraction** — `CellFeatureExtractor.extractMatrix()` uses `IntStream.parallel()` to distribute measurement reads across all available CPU cores, significantly reducing extraction time on multi-core HPC nodes
 
-### Scalability Limits
+### Scalability — Chunked Prediction
 
-At 2000 features, the flat `float[]` matrix used by XGBoost4J and LightGBM4J imposes an array index limit of approximately **1.07 million cells** (Java arrays are indexed by `int`, max ~2.1 billion elements, so 2,147,483,647 / 2000 ≈ 1.07M rows). For datasets exceeding 1M cells, the feature matrix would need to be chunked into segments — a more involved change that is not yet implemented.
+Prediction is performed in chunks of 500,000 cells to stay within Java's `int`-indexed `float[]` limit (~1.07M rows at 2000 features). Each chunk is extracted, predicted by both models, results applied to cells, and then discarded — so memory pressure stays bounded regardless of total cell count. This applies to both `trainAndPredict()` (current image) and `predictOnly()` (batch image classification). Training uses only the labelled ground-truth set (typically 10K–20K cells), which is always small enough for a single matrix.
 
 ### GPU Notes
 
@@ -315,6 +315,7 @@ The default cofactor is 1. Configure per-feature transforms and cofactor through
 ## TODO / Future Exploration
 
 - Native H5AD export (currently generates CSV + Python conversion script)
+- Auto-tune cofactor estimation from data distribution
 
 ## License
 

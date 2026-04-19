@@ -47,6 +47,9 @@ public class DualModelClassifier {
     private float eta     = 0.1f;
     private float subsample = 0.8f;
 
+    /** Max cells per prediction chunk to stay within flat float[] int-index limit. */
+    private static final int PREDICT_CHUNK_SIZE = 500_000;
+
     // ── Model type selection ────────────────────────────────────────────────────
     private ModelType model1Type = ModelType.XGBOOST;
     private ModelType model2Type = ModelType.LIGHTGBM;
@@ -341,53 +344,60 @@ public class DualModelClassifier {
                 mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub);
         out.accept(model2Type + " trained on: " + getModelDevice(model2Type, false));
 
-        // ── 4. Predict all cells ────────────────────────────────────────────
+        // ── 4. Predict all cells (chunked for large datasets) ────────────
         updateStatus("Predicting all cells…", 0.65);
         int totalCells = allCells.size();
         out.accept("Predicting " + totalCells + " cells…");
-
-        float[] allData = extractor.extractMatrix(allCells);
-
-        float[][] mdl1Probs = predictModel(model1Type, true, allData, totalCells, nFeatures);
-        float[][] mdl2Probs = predictModel(model2Type, false, allData, totalCells, nFeatures);
-
-        // ── 5. Build population sets ────────────────────────────────────────
-        updateStatus("Building population sets…", 0.85);
-        out.accept("Building population sets…");
 
         predMDL1 = new PopulationSet("Pred_MDL1");
         predMDL2 = new PopulationSet("Pred_MDL2");
         predAVG  = new PopulationSet("Pred_AVG");
         predALL  = new PopulationSet("Pred_ALL");
 
-        int idx = 0;
         int disagreements = 0;
-        for (PathObject cell : allCells) {
-            String cellId = cell.getID().toString();
+        List<PathObject> cellList = (allCells instanceof List)
+                ? (List<PathObject>) allCells
+                : new ArrayList<>(allCells);
 
-            // Find best class for each model
-            int mdl1Best = argmax(mdl1Probs[idx]);
-            int mdl2Best = argmax(mdl2Probs[idx]);
+        for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
+            int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
+            int chunkSize = chunkEnd - chunkStart;
+            List<PathObject> chunk = cellList.subList(chunkStart, chunkEnd);
 
-            String mdl1Label = classNames.get(mdl1Best);
-            String mdl2Label = classNames.get(mdl2Best);
+            float[] chunkData = extractor.extractMatrix(chunk);
+            float[][] mdl1Probs = predictModel(model1Type, true, chunkData, chunkSize, nFeatures);
+            float[][] mdl2Probs = predictModel(model2Type, false, chunkData, chunkSize, nFeatures);
 
-            CellPrediction pred = new CellPrediction(
-                    cellId, mdl1Label, mdl2Label,
-                    mdl1Probs[idx], mdl2Probs[idx], classNames);
+            for (int i = 0; i < chunkSize; i++) {
+                PathObject cell = chunk.get(i);
+                String cellId = cell.getID().toString();
 
-            predMDL1.put(cellId, pred);
-            predMDL2.put(cellId, pred);
-            predAVG.put(cellId, pred);
-            predALL.put(cellId, pred);
+                int mdl1Best = argmax(mdl1Probs[i]);
+                int mdl2Best = argmax(mdl2Probs[i]);
 
-            // Set the Pred_AVG classification on the PathObject
-            String avgLabel = pred.avgLabel();
-            cell.setPathClass(PathClass.fromString(avgLabel));
+                String mdl1Label = classNames.get(mdl1Best);
+                String mdl2Label = classNames.get(mdl2Best);
 
-            if (pred.isDisagreement()) disagreements++;
-            idx++;
+                CellPrediction pred = new CellPrediction(
+                        cellId, mdl1Label, mdl2Label,
+                        mdl1Probs[i], mdl2Probs[i], classNames);
+
+                predMDL1.put(cellId, pred);
+                predMDL2.put(cellId, pred);
+                predAVG.put(cellId, pred);
+                predALL.put(cellId, pred);
+
+                String avgLabel = pred.avgLabel();
+                cell.setPathClass(PathClass.fromString(avgLabel));
+
+                if (pred.isDisagreement()) disagreements++;
+            }
+
+            double progress = 0.65 + 0.20 * ((double) chunkEnd / totalCells);
+            updateStatus("Predicting… " + chunkEnd + "/" + totalCells, progress);
         }
+
+        // ── 5. Summary ─────────────────────────────────────────────────────
 
         out.accept("Predictions complete: " + totalCells + " cells, "
                 + disagreements + " disagreements ("
@@ -421,28 +431,39 @@ public class DualModelClassifier {
 
         out.accept("Predicting " + totalCells + " cells…");
 
-        float[] allData = extractor.extractMatrix(cells);
-        float[][] mdl1Probs = predictModel(model1Type, true, allData, totalCells, nFeatures);
-        float[][] mdl2Probs = predictModel(model2Type, false, allData, totalCells, nFeatures);
+        List<PathObject> cellList = (cells instanceof List)
+                ? (List<PathObject>) cells
+                : new ArrayList<>(cells);
 
-        int idx = 0;
         int disagreements = 0;
-        for (PathObject cell : cells) {
-            int mdl1Best = argmax(mdl1Probs[idx]);
-            int mdl2Best = argmax(mdl2Probs[idx]);
+        for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
+            int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
+            int chunkSize = chunkEnd - chunkStart;
+            List<PathObject> chunk = cellList.subList(chunkStart, chunkEnd);
 
-            String mdl1Label = classNames.get(mdl1Best);
-            String mdl2Label = classNames.get(mdl2Best);
+            float[] chunkData = extractor.extractMatrix(chunk);
+            float[][] mdl1Probs = predictModel(model1Type, true, chunkData, chunkSize, nFeatures);
+            float[][] mdl2Probs = predictModel(model2Type, false, chunkData, chunkSize, nFeatures);
 
-            CellPrediction pred = new CellPrediction(
-                    cell.getID().toString(), mdl1Label, mdl2Label,
-                    mdl1Probs[idx], mdl2Probs[idx], classNames);
+            for (int i = 0; i < chunkSize; i++) {
+                PathObject cell = chunk.get(i);
+                int mdl1Best = argmax(mdl1Probs[i]);
+                int mdl2Best = argmax(mdl2Probs[i]);
 
-            String avgLabel = pred.avgLabel();
-            cell.setPathClass(PathClass.fromString(avgLabel));
+                String mdl1Label = classNames.get(mdl1Best);
+                String mdl2Label = classNames.get(mdl2Best);
 
-            if (pred.isDisagreement()) disagreements++;
-            idx++;
+                CellPrediction pred = new CellPrediction(
+                        cell.getID().toString(), mdl1Label, mdl2Label,
+                        mdl1Probs[i], mdl2Probs[i], classNames);
+
+                String avgLabel = pred.avgLabel();
+                cell.setPathClass(PathClass.fromString(avgLabel));
+
+                if (pred.isDisagreement()) disagreements++;
+            }
+
+            out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
         }
 
         out.accept("Predictions applied: " + totalCells + " cells, "

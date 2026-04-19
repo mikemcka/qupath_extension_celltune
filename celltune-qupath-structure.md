@@ -67,7 +67,7 @@ qupath-extension-celltune/
 │  │  └─ UncertaintySampler.java                     // 6-tier weighted sampling with FOV balance
 │  │
 │  ├─ ui/                                            // JavaFX panels and controls
-│  │  ├─ ClassificationPanel.java                    // Main sidebar (train, confuse, sample, model type selectors)
+│  │  ├─ ClassificationPanel.java                    // Main sidebar (train, confuse, sample)
 │  │  ├─ ConfusionMatrixView.java                    // Canvas confusion matrix with F1 scores
 │  │  ├─ ReviewController.java                       // Review queue logic + viewer navigation
 │  │  ├─ ReviewToolbar.java                          // Nav + prediction buttons + All Classes
@@ -75,7 +75,7 @@ qupath-extension-celltune/
 │  │  ├─ ChannelSelector.java                        // Auto channel switching during review
 │  │  ├─ ImageSelectionPane.java                     // Dual-list image selector for batch classification
 │  │  ├─ ManualLabelToolbar.java                     // Floating toolbar for direct cell labelling
-│  │  ├─ NormalizationPane.java                      // Per-feature arcsinh/sqrt dialog + cofactor
+│  │  ├─ NormalizationPane.java                      // Checkbox-based arcsinh/sqrt normalization dialog
 │  │  └─ FeatureSelectionPane.java                   // Filterable feature checkbox list
 │  │
 │  ├─ gating/                                        // Marker-based gating system
@@ -194,8 +194,8 @@ This is the intellectual core of the extension — the two-model training loop t
 > **Phase 4 Build Notes:**
 > - `XGBoostModel`: uses `multi:softprob` / `binary:logistic`, embeds feature names + class names in booster attrs, serialises via `toByteArray()`. Attempts GPU (CUDA) training first with `device=cuda`, falls back to CPU. Reports device via `getLastDevice()`.
 > - `LightGBMModel`: uses `com.microsoft.ml.lightgbm.PredictionType.C_API_PREDICT_NORMAL` (SWIG package, not lightgbm4j package). `saveModelToString()` requires 3 args including `LGBMBooster.FeatureImportanceType.SPLIT`. Attempts GPU training first with `device_type=gpu`, falls back to CPU. Reports device via `getLastDevice()`.
-> - `DualModelClassifier`: orchestrates train → predict → build 4 PopulationSets, sets `Pred_AVG` as PathClass on cells, exposes `progressProperty()` / `statusProperty()` for UI binding. `predictOnly()` method applies trained models to other images without retraining. Logs device info (GPU/CPU) and thread count through the progress callback.
-> - `CellTuneExtension.showClassifierPanel()`: collects labels from point annotations overlapping detections, prompts for feature selection if needed, shows confirmation dialog, presents `ImageSelectionPane` for batch image selection, displays a progress dialog with real-time progress bar and scrollable log, trains on daemon thread, applies predictions to selected images, auto-backs up labels, saves classifier state to project
+> - `DualModelClassifier`: orchestrates train → predict (chunked) → build 4 PopulationSets, sets `Pred_AVG` as PathClass on cells, exposes `progressProperty()` / `statusProperty()` for UI binding. `predictOnly()` method applies trained models to other images without retraining. Logs device info (GPU/CPU) and thread count through the progress callback. Prediction uses 500K-cell chunks to avoid Java array index overflow on large datasets.
+> - `CellTuneExtension.showClassifierPanel()`: collects labels from point annotations overlapping detections, prompts for feature selection if needed, shows confirmation dialog with **Model 1** / **Model 2** type selectors (default XGBoost + LightGBM), presents `ImageSelectionPane` for batch image selection, displays a progress dialog with real-time progress bar and scrollable log, trains on daemon thread, applies predictions to selected images, auto-backs up labels, saves classifier state to project
 > - `ImageSelectionPane`: dual-list dialog with Included/Excluded image lists, search filters, `>>` / `>` / `<` / `<<` transfer buttons. Current image is always included (protected). Returns selected image names or null on cancel.
 > - Classifier menu item renamed from "CellTune Classifier..." to "Run CellTune Classification..."
 
@@ -507,6 +507,59 @@ A floating toolbar that lets users click on cells directly in the QuPath viewer 
 
 **Menu item:** Extensions > CellTune Classifier > Manual Label Mode…
 
+### 8.4 Feature Normalization — `model/FeatureNormalizer.java` + `ui/NormalizationPane.java` ✅ COMPLETE
+
+Optional per-feature transforms applied during both training and inference.
+
+**FeatureNormalizer:**
+- `Transform` enum: `NONE`, `ARCSINH`, `SQRT`
+- Per-feature transform map — defaults to `NONE` for unmapped features
+- Configurable cofactor (default 1.0) — used by arcsinh: `arcsinh(x / cofactor)`
+- `apply(featureName, value)` method with switch expression
+
+**NormalizationPane (checkbox-based UI):**
+- Single `ComboBox<Transform>` at top — pick arcsinh or sqrt for all selected features
+- Cofactor spinner — visible only when arcsinh is selected
+- Checkbox list for ticking features to normalise (same pattern as FeatureSelectionPane)
+- Select All / Clear All / Select Prefix / Clear Prefix buttons
+- Search filter with prefix grouping
+- Returns a configured `FeatureNormalizer` applied to `CellFeatureExtractor` for all training and prediction paths
+
+### 8.5 AnnData Export — `io/AnnDataExporter.java` ✅ COMPLETE
+
+Exports cell data as AnnData-compatible CSV with a companion Python script for H5AD conversion.
+
+- CSV columns: unique cell IDs, FOV assignments, feature values, population predictions, ground truth labels
+- Generates `convert_to_h5ad.py` script alongside the CSV
+- Run the script to produce a standard `.h5ad` file for downstream analysis in scanpy
+
+### 8.6 Random Forest — `classifier/RandomForestModel.java` ✅ COMPLETE
+
+Pure-Java Random Forest implementation available as an alternative to XGBoost or LightGBM.
+
+- CART decision trees with cross-entropy (log loss) split criterion
+- Bootstrap sampling with random feature subsets (mtry = √features)
+- Parallel tree training across available CPU cores
+- Sealed `Node` interface with `SplitNode` and `LeafNode` records
+- Both model slots (Model 1 and Model 2) can independently select Random Forest
+
+### 8.7 Model Type Selection — `classifier/ModelType.java` ✅ COMPLETE
+
+- `ModelType` enum: `XGBOOST`, `LIGHTGBM`, `RANDOM_FOREST`
+- Model 1 and Model 2 `ComboBox<ModelType>` selectors in the training confirmation dialog
+- Defaults: Model 1 = XGBoost, Model 2 = LightGBM
+- Persisted in `ClassifierState` for save/restore
+
+### 8.8 Chunked Prediction — `classifier/DualModelClassifier.java` ✅ COMPLETE
+
+Prediction processes cells in chunks of 500,000 to stay within Java's `int`-indexed `float[]` limit.
+
+- Each chunk: extract feature matrix → predict with both models → apply results to cells → discard arrays
+- Memory pressure stays bounded regardless of total cell count (millions of cells supported)
+- Progress updates report chunk progress (e.g. "Predicted 500000/2000000 cells…")
+- Applies to both `trainAndPredict()` and `predictOnly()`
+- Training uses only the ground-truth set (typically 10K–20K cells), always fits in a single matrix
+
 ### Reference Pattern (from qupath-extension-xgboost)
 
 The xgboost extension in `c:\Users\Mikem\qupath-extension-xgboost\` is a working QuPath 0.7 extension. Key patterns to copy:
@@ -533,7 +586,7 @@ Explore how adding ground truth labels from multiple project images — via both
 - What is the optimal workflow: train on one heavily-labelled image then predict + review on others, or label a small seed set across all images and train jointly?
 - How do Review Mode corrections on Image B interact with the existing ground truth from Image A after merge?
 
-### 9.2 Resampling Strategies for Class Imbalance
+### 9.2 Resampling Strategies for Class Imbalance ✅ IMPLEMENTED
 
 Evaluate the impact of synthetic resampling techniques on training quality, especially for rare cell populations (e.g. Tregs, DCs) that are underrepresented in typical labelling sessions.
 
@@ -560,7 +613,7 @@ Evaluate the impact of synthetic resampling techniques on training quality, espe
 - Consider making resampling strategy a dropdown option in `ClassificationPanel` with default = None
 - k-neighbour search for SMOTE/ADASYN can use brute-force Euclidean distance (feature vectors are typically <200 dimensions)
 
-### 9.3 Hyperparameter Tuning
+### 9.3 Hyperparameter Tuning ✅ IMPLEMENTED
 
 Currently users manually set hyperparameters via spinners in `ClassificationPanel` (boosting rounds = 200, max depth = 6, learning rate = 0.1, subsample = 0.8). Investigate automated tuning to find optimal settings per dataset.
 
@@ -621,9 +674,17 @@ The Java heap must be large enough to hold the feature matrix and native model c
 
 - **`CellFeatureExtractor.extractMatrix()`** (`model/CellFeatureExtractor.java`): Changed from sequential `for` loop to `IntStream.range(0, nCells).parallel().forEach(…)`. Each cell's measurement reads are independent, so the work distributes across all available CPU cores. On HPC nodes with 32–64 cores, this provides a significant speedup for the extraction phase. The `Collection<PathObject>` is converted to an indexed `List` for thread-safe indexed access.
 
-#### Scalability Limits
+#### Scalability — Chunked Prediction
 
-At 2000 features, XGBoost4J and LightGBM4J use a flat `float[]` array indexed by Java `int`, limiting the matrix to approximately **1.07 million cells** (2,147,483,647 / 2000 ≈ 1.07M rows). For datasets exceeding 1M cells, the feature matrix would need to be split into chunks and models trained/predicted in segments — a more involved refactor not yet implemented.
+Prediction is now performed in chunks of 500,000 cells to stay within Java's `int`-indexed `float[]` limit. Each chunk is extracted from detections, predicted by both models, results applied to cells, and then the chunk arrays are discarded — so memory pressure stays bounded regardless of total cell count. This applies to both `trainAndPredict()` (current image) and `predictOnly()` (batch image classification).
+
+Training uses only the labelled ground-truth set (typically 10K–20K cells), which is always small enough for a single flat array.
+
+The chunk size constant `PREDICT_CHUNK_SIZE = 500_000` is defined in `DualModelClassifier.java`. At 2000 features this gives a per-chunk array of ~3.7 GiB, well within Java's int index limit.
+
+#### Scalability Limits (Historical)
+
+Prior to chunked prediction, the flat `float[]` array imposed a hard limit of ~1.07M cells at 2000 features. This has been resolved.
 
 #### GPU Notes
 
