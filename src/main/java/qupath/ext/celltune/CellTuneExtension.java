@@ -7,6 +7,7 @@ import javafx.stage.FileChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
 import qupath.ext.celltune.gating.AutoLandmarker;
@@ -467,6 +468,19 @@ public class CellTuneExtension implements QuPathExtension {
                 "Pool labelled cells from all project images into training set");
         poolCheckBox.setSelected(false);
 
+        var model1Combo = new javafx.scene.control.ComboBox<ModelType>();
+        model1Combo.getItems().addAll(ModelType.values());
+        model1Combo.setValue(ModelType.XGBOOST);
+        model1Combo.setMaxWidth(Double.MAX_VALUE);
+        var model2Combo = new javafx.scene.control.ComboBox<ModelType>();
+        model2Combo.getItems().addAll(ModelType.values());
+        model2Combo.setValue(ModelType.LIGHTGBM);
+        model2Combo.setMaxWidth(Double.MAX_VALUE);
+        var modelRow = new javafx.scene.layout.HBox(8,
+                new javafx.scene.control.Label("Model 1:"), model1Combo,
+                new javafx.scene.control.Label("Model 2:"), model2Combo);
+        modelRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
         var resamplingCombo = new javafx.scene.control.ComboBox<ResamplingStrategy>();
         resamplingCombo.getItems().addAll(ResamplingStrategy.values());
         resamplingCombo.setValue(ResamplingStrategy.NONE);
@@ -499,14 +513,14 @@ public class CellTuneExtension implements QuPathExtension {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg), poolCheckBox,
-                    resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
+                    modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         } else {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg),
-                    resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
+                    modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         }
@@ -519,6 +533,8 @@ public class CellTuneExtension implements QuPathExtension {
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final boolean autoTuneHyperparams = autoTuneCheckBox.isSelected();
         final boolean earlyStopEnabled = earlyStopCheckBox.isSelected();
+        final ModelType model1Type = model1Combo.getValue();
+        final ModelType model2Type = model2Combo.getValue();
 
         // Check whether the JVM has enough heap for this dataset
         if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
@@ -528,6 +544,8 @@ public class CellTuneExtension implements QuPathExtension {
         if (classifier == null) {
             classifier = new DualModelClassifier();
         }
+        classifier.setModel1Type(model1Type);
+        classifier.setModel2Type(model2Type);
 
         // Show image selection dialog (current image is always included)
         List<String> selectedImages;
