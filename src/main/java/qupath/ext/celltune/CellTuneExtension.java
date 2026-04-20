@@ -1184,6 +1184,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         // When the review window is closed, merge labels back
         stage.setOnHidden(e -> {
+            reviewController.removeHighlight();
             var outputLabels = reviewController.getOutputLabels();
             if (outputLabels.size() > 0) {
                 if (labelStore == null) {

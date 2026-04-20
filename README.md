@@ -8,7 +8,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 
 - **Dual-model disagreement detection** — two models are trained on the same labels; cells where they disagree are flagged for review. Model types are configurable: **XGBoost**, **LightGBM**, or **Random Forest**. The default pairing is XGBoost + LightGBM. Both boosted models attempt GPU (CUDA) training automatically and fall back to CPU if unavailable.
 - **6-tier weighted uncertainty sampling** — the review sample is built in six priority tiers: **Tier 0 (FOV balance):** disagreement cells are grouped by field of view and sampled proportionally so that no single FOV dominates the review queue. **Tier 1 (confusion-weighted):** remaining disagreement cells weighted by confusion severity (`w = 2 - agreementRate[i] - agreementRate[j]`). **Tier 2 (low-confidence agreement):** cells where both models agree but confidence is below 60%. **Tier 3 (boundary):** cells near the decision boundary (confidence between 60–75%). **Tier 4 (random disagreement):** any remaining disagreement cells sampled uniformly. **Tier 5 (exploration):** agreement cells sampled uniformly to guard against rare cell types that both models confidently misclassify.
-- **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override
+- **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override. When the averaged probability prediction differs from both individual models, an additional "Avg" button appears. Entering review mode prompts for how many cells to sample each time, and if switching to a new image with a trained classifier, predictions are automatically applied before review begins.
 - **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates, per-class F1 scores, macro F1, and PNG export
 - **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
 - **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane. Includes boosting rounds and depth spinners, resampling strategy, auto-tune, and early stopping options.
@@ -25,7 +25,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **Parallel feature extraction in exporters** — all three export formats (Cell Table, AnnData, Ground Truth) pre-extract feature vectors in parallel across all available CPU cores using `IntStream.parallel()` before writing rows sequentially. On HPC nodes with 32–64 cores this significantly accelerates large exports (100K+ cells).
 - **AnnData export** — export cell data as AnnData-compatible CSV with a companion Python script for H5AD conversion. The CSV includes unique cell IDs, FOV assignments, feature values, population predictions, and ground truth labels. Run the generated `convert_to_h5ad.py` script to produce a standard `.h5ad` file for downstream analysis in scanpy or other Python tools.
 - **Random Forest classifier** — a pure-Java Random Forest implementation (no external dependencies) is available as an alternative to XGBoost or LightGBM. Uses CART decision trees with cross-entropy split criterion, bootstrap sampling, and random feature subsets (mtry = √features). Both model slots (Model 1 and Model 2) can be independently set to XGBoost, LightGBM, or Random Forest.
-- **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling.
+- **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling. On restart or image switch, the trained classifier is automatically restored from saved state — no retraining needed to continue reviewing or classifying new images.
 
 ## The Active Learning Loop
 
@@ -40,11 +40,8 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
    → per-class agreement rates
                     │
                     ▼
-④ Sample uncertain / disagreement cells
-   → weighted toward confused class pairs
-                    │
-                    ▼
-⑤ Review sampled cells one-by-one
+④ Enter review mode → choose sample size
+   → step through disagreement cells
    → assign or correct labels
                     │
                     ▼
@@ -79,7 +76,7 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 5. **Normalise features** (optional) — *Extensions > CellTune Classifier > Normalise Features* — apply arcsinh or sqrt transforms to selected features. Use cofactor=1 for fluorescence (COMET, CODEX) or cofactor=100 for mass spectrometry (MIBI, IMC).
 6. **Train** — click *Train* in the CellTune panel (or *Extensions > CellTune Classifier > Run CellTune Classification…*). If features haven't been selected yet, you'll be prompted to select them or use all. A confirmation dialog shows the feature and label counts, **Model 1** and **Model 2** type selectors (default: XGBoost + LightGBM), resampling, auto-tune, and early stopping options. If the project has multiple images, a dual-list image selector lets you choose which images to apply the trained classifier to. A progress dialog shows real-time training status including GPU/CPU device info.
 7. **Plot confusions** — click *Plot Confusions* to see the inter-model confusion matrix with per-class agreement rates and F1 scores
-8. **Sample & review** — click *Sample & Review*, choose a sample size (default 200), then *Enter Review Mode* to step through disputed cells. Each cell shows coloured prediction buttons (e.g. `XGB: CD4 (87%)`, `LGB: Bcell (65%)`) — click to accept. Use the *All Classes* dropdown if neither prediction is correct.
+8. **Review** — click *Enter Review Mode*. You'll be prompted for how many disagreement cells to review (default 200), then step through disputed cells one-by-one. Each cell shows coloured prediction buttons (e.g. `XGB: CD4 (87%)`, `LGB: Bcell (65%)`) — click to accept. Use the *All Classes* dropdown if neither prediction is correct. If you switch to a different image, the trained classifier is automatically applied so you can review that image immediately.
 9. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
 10. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
 

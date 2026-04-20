@@ -648,6 +648,7 @@ public class ClassificationPanel extends VBox {
         stage.setMinWidth(750);
 
         stage.setOnHidden(e -> {
+            reviewController.removeHighlight();
             var outputLabels = reviewController.getOutputLabels();
             if (outputLabels.size() > 0) {
                 if (labelStore == null) labelStore = new LabelStore("CellTune");

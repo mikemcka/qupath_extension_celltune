@@ -7,7 +7,10 @@ import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.roi.ROIs;
+import qupath.lib.roi.interfaces.ROI;
 
 import java.util.*;
 
@@ -28,6 +31,7 @@ public class ReviewController {
     private final PopulationSet predictions;
     private final LabelStore outputLabels;
     private int currentIndex = -1;
+    private PathObject highlightMarker;
 
     /**
      * Create a review controller.
@@ -203,10 +207,47 @@ public class ReviewController {
         // Select this cell in the hierarchy so it's highlighted
         var imageData = viewer.getImageData();
         if (imageData != null) {
-            imageData.getHierarchy().getSelectionModel().setSelectedObject(cell);
+            var hierarchy = imageData.getHierarchy();
+            hierarchy.getSelectionModel().setSelectedObject(cell);
+
+            // Remove previous highlight marker
+            if (highlightMarker != null) {
+                hierarchy.removeObject(highlightMarker, false);
+                highlightMarker = null;
+            }
+
+            // Add a bright crosshair annotation at the cell centroid
+            double cx = roi.getCentroidX();
+            double cy = roi.getCentroidY();
+            double r = Math.max(roi.getBoundsWidth(), roi.getBoundsHeight()) * 0.8;
+            if (r < 15) r = 15;
+
+            // Create an ellipse annotation around the cell as a highlight ring
+            var highlightRoi = ROIs.createEllipseROI(
+                    cx - r, cy - r, r * 2, r * 2, roi.getImagePlane());
+            // Bright magenta for visibility: packed RGB = 0xFF00FF
+            var highlightClass = PathClass.fromString("CellTune-Highlight",
+                    (255 << 16) | (0 << 8) | 255);
+            highlightMarker = PathObjects.createAnnotationObject(highlightRoi, highlightClass);
+            highlightMarker.setLocked(true);
+            hierarchy.addObject(highlightMarker);
         }
 
         logger.debug("Navigated to cell {} ({}/{})",
                 cell.getID(), currentIndex + 1, reviewCells.size());
+    }
+
+    /**
+     * Remove the highlight marker from the hierarchy.
+     * Should be called when the review window closes.
+     */
+    public void removeHighlight() {
+        if (highlightMarker != null) {
+            var imageData = qupath.getImageData();
+            if (imageData != null) {
+                imageData.getHierarchy().removeObject(highlightMarker, false);
+            }
+            highlightMarker = null;
+        }
     }
 }
