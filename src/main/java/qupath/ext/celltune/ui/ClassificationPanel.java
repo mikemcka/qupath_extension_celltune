@@ -22,6 +22,7 @@ import qupath.lib.projects.ProjectImageEntry;
 import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -54,6 +55,7 @@ public class ClassificationPanel extends VBox {
     private Consumer<double[]> onAgreementRatesChanged;
     private Consumer<List<String>> onSampledCellsChanged;
     private Consumer<DualModelClassifier> onClassifierChanged;
+    private Supplier<Boolean> autoClassifyCallback;
 
     // ── UI widgets ──
     private final Label statusLabel = new Label("Ready");
@@ -220,6 +222,7 @@ public class ClassificationPanel extends VBox {
     public void setOnAgreementRatesChanged(Consumer<double[]> cb) { this.onAgreementRatesChanged = cb; }
     public void setOnSampledCellsChanged(Consumer<List<String>> cb) { this.onSampledCellsChanged = cb; }
     public void setOnClassifierChanged(Consumer<DualModelClassifier> cb) { this.onClassifierChanged = cb; }
+    public void setAutoClassifyCallback(Supplier<Boolean> cb) { this.autoClassifyCallback = cb; }
 
     // ── Actions ──
 
@@ -481,6 +484,12 @@ public class ClassificationPanel extends VBox {
     }
 
     private void doShowConfusions() {
+        // Auto-classify current image if a trained classifier exists
+        if ((predAll == null || predAll.size() == 0) && autoClassifyCallback != null) {
+            if (autoClassifyCallback.get()) {
+                // predAll was updated via setPredAll callback
+            }
+        }
         if (predAll == null || predAll.size() == 0 || classifier == null) {
             Dialogs.showErrorMessage(STRINGS.getString("name"),
                     "No predictions available. Train first.");
@@ -495,6 +504,10 @@ public class ClassificationPanel extends VBox {
     }
 
     private void doSampleAndReview() {
+        // Auto-classify current image if a trained classifier exists
+        if (predAll == null && autoClassifyCallback != null) {
+            autoClassifyCallback.get();
+        }
         if (predAll == null || classifier == null) return;
 
         long disagreeCount = predAll.getDisagreementCount();
@@ -553,6 +566,60 @@ public class ClassificationPanel extends VBox {
     }
 
     private void doEnterReview() {
+        // Auto-classify current image if a trained classifier exists
+        if (predAll == null && autoClassifyCallback != null) {
+            autoClassifyCallback.get();
+        }
+
+        // If no sampled cells, prompt the user to sample now
+        if ((lastSampledCellIds == null || lastSampledCellIds.isEmpty())
+                && predAll != null && predAll.size() > 0 && classifier != null) {
+            long disagreeCount = predAll.getDisagreementCount();
+            if (disagreeCount == 0) {
+                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                        "Perfect agreement — no disagreement cells to review.");
+                return;
+            }
+            // Compute agreement rates if not yet available
+            if (lastAgreementRates == null) {
+                var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
+                lastAgreementRates = confView.getAgreementRates();
+                if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
+            }
+            String countStr = Dialogs.showInputDialog(
+                    STRINGS.getString("sample.dialog.title"),
+                    "How many disagreement cells to review?"
+                            + " (" + disagreeCount + " available)",
+                    "200");
+            if (countStr == null) return;
+            int sampleSize;
+            try {
+                sampleSize = Integer.parseInt(countStr.strip());
+            } catch (NumberFormatException e) {
+                Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
+                return;
+            }
+            if (sampleSize <= 0) return;
+            lastSampledCellIds = UncertaintySampler.sample(
+                    predAll, classifier.getClassNames(), lastAgreementRates, sampleSize);
+            reviewButton.setDisable(lastSampledCellIds.isEmpty());
+            if (onSampledCellsChanged != null) onSampledCellsChanged.accept(lastSampledCellIds);
+
+            // Persist sampled cell IDs
+            var project = qupath.getProject();
+            var imageData = qupath.getImageData();
+            if (project != null && imageData != null) {
+                var imgEntry = project.getEntry(imageData);
+                if (imgEntry != null) {
+                    try {
+                        ProjectStateManager.saveImageSampledCells(project, imgEntry.getImageName(), lastSampledCellIds);
+                    } catch (Exception ex) {
+                        // Ignore errors
+                    }
+                }
+            }
+        }
+
         if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
             Dialogs.showErrorMessage(STRINGS.getString("name"), STRINGS.getString("review.no_sample"));
             return;

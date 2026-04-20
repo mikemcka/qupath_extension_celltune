@@ -412,14 +412,21 @@ public class DualModelClassifier {
     /**
      * Apply predictions from the already-trained models to a collection of cells
      * without retraining. Used for classifying cells in other project images.
+     * <p>
+     * If {@code populateSets} is true, the internal PopulationSets
+     * (predALL, predMDL1, predMDL2, predAVG) are rebuilt so that
+     * disagreement counts, confusion matrices and review mode work
+     * on the predicted image.
      *
-     * @param cells     detection objects to classify
-     * @param extractor feature extractor (must use the same feature columns as training)
-     * @param log       optional progress callback
+     * @param cells         detection objects to classify
+     * @param extractor     feature extractor (must use the same feature columns as training)
+     * @param populateSets  whether to rebuild the internal PopulationSets
+     * @param log           optional progress callback
      * @throws Exception if prediction fails
      */
     public void predictOnly(Collection<PathObject> cells,
                             CellFeatureExtractor extractor,
+                            boolean populateSets,
                             Consumer<String> log) throws Exception {
         if (!isTrained()) {
             throw new IllegalStateException("Models must be trained before predicting.");
@@ -435,6 +442,11 @@ public class DualModelClassifier {
                 ? (List<PathObject>) cells
                 : new ArrayList<>(cells);
 
+        PopulationSet localMDL1 = populateSets ? new PopulationSet("Pred_MDL1") : null;
+        PopulationSet localMDL2 = populateSets ? new PopulationSet("Pred_MDL2") : null;
+        PopulationSet localAVG  = populateSets ? new PopulationSet("Pred_AVG")  : null;
+        PopulationSet localALL  = populateSets ? new PopulationSet("Pred_ALL")  : null;
+
         int disagreements = 0;
         for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
             int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
@@ -447,6 +459,7 @@ public class DualModelClassifier {
 
             for (int i = 0; i < chunkSize; i++) {
                 PathObject cell = chunk.get(i);
+                String cellId = cell.getID().toString();
                 int mdl1Best = argmax(mdl1Probs[i]);
                 int mdl2Best = argmax(mdl2Probs[i]);
 
@@ -454,11 +467,18 @@ public class DualModelClassifier {
                 String mdl2Label = classNames.get(mdl2Best);
 
                 CellPrediction pred = new CellPrediction(
-                        cell.getID().toString(), mdl1Label, mdl2Label,
+                        cellId, mdl1Label, mdl2Label,
                         mdl1Probs[i], mdl2Probs[i], classNames);
 
                 String avgLabel = pred.avgLabel();
                 cell.setPathClass(PathClass.fromString(avgLabel));
+
+                if (populateSets) {
+                    localMDL1.put(cellId, pred);
+                    localMDL2.put(cellId, pred);
+                    localAVG.put(cellId, pred);
+                    localALL.put(cellId, pred);
+                }
 
                 if (pred.isDisagreement()) disagreements++;
             }
@@ -466,9 +486,25 @@ public class DualModelClassifier {
             out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
         }
 
+        if (populateSets) {
+            this.predMDL1 = localMDL1;
+            this.predMDL2 = localMDL2;
+            this.predAVG  = localAVG;
+            this.predALL  = localALL;
+        }
+
         out.accept("Predictions applied: " + totalCells + " cells, "
                 + disagreements + " disagreements ("
                 + String.format("%.1f%%", 100.0 * disagreements / totalCells) + ")");
+    }
+
+    /**
+     * Convenience overload — does not populate internal PopulationSets.
+     */
+    public void predictOnly(Collection<PathObject> cells,
+                            CellFeatureExtractor extractor,
+                            Consumer<String> log) throws Exception {
+        predictOnly(cells, extractor, false, log);
     }
 
     /**

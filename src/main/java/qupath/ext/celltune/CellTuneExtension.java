@@ -134,6 +134,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setOnAgreementRatesChanged(ar -> this.lastAgreementRates = ar);
         classificationPanel.setOnSampledCellsChanged(ids -> this.lastSampledCellIds = ids);
         classificationPanel.setOnClassifierChanged(cls -> this.classifier = cls);
+        classificationPanel.setAutoClassifyCallback(() -> autoClassifyCurrentImage(qupath));
 
         // Listen for image changes so we can save/reset/load state per image
         qupath.imageDataProperty().addListener((obs, oldData, newData) ->
@@ -1010,6 +1011,50 @@ public class CellTuneExtension implements QuPathExtension {
         });
     }
 
+    /**
+     * If a trained classifier exists but predictions have not been run on the
+     * current image (e.g. after an image switch), automatically classify all
+     * cells so that review mode, confusion matrices and sampling work
+     * immediately without retraining.
+     *
+     * @return true if predictions are now available (existing or freshly generated)
+     */
+    private boolean autoClassifyCurrentImage(QuPathGUI qupath) {
+        if (predAll != null && predAll.size() > 0) {
+            return true;  // already have predictions
+        }
+        if (classifier == null || !classifier.isTrained()) {
+            return false;  // no trained classifier
+        }
+        var imageData = qupath.getImageData();
+        if (imageData == null) return false;
+
+        var detections = imageData.getHierarchy().getDetectionObjects();
+        if (detections.isEmpty()) return false;
+
+        // Use the feature columns from the trained classifier
+        List<String> featureNames = classifier.getFeatureNames();
+        if (featureNames == null || featureNames.isEmpty()) return false;
+
+        try {
+            var extractor = new CellFeatureExtractor(featureNames);
+            if (featureNormalizer != null) {
+                extractor.setNormalizer(featureNormalizer);
+            }
+            classifier.predictOnly(detections, extractor, true,
+                    msg -> logger.info("[CellTune] Auto-classify: {}", msg));
+            predAll = classifier.getPredALL();
+            imageData.getHierarchy().fireHierarchyChangedEvent(this);
+            syncPanelState();
+            logger.info("[CellTune] Auto-classified {} cells on current image.",
+                    predAll != null ? predAll.size() : 0);
+            return predAll != null && predAll.size() > 0;
+        } catch (Exception e) {
+            logger.error("[CellTune] Auto-classify failed: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
     private void showReviewMode(QuPathGUI qupath) {
         if (qupath.getProject() == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
@@ -1035,10 +1080,60 @@ public class CellTuneExtension implements QuPathExtension {
             }
         }
 
+        // Auto-classify if we have a trained classifier but no predictions yet
+        autoClassifyCurrentImage(qupath);
+
+        // If no sampled cells, prompt the user to sample now
+        if ((lastSampledCellIds == null || lastSampledCellIds.isEmpty())
+                && predAll != null && predAll.size() > 0 && classifier != null) {
+            long disagreeCount = predAll.getDisagreementCount();
+            if (disagreeCount == 0) {
+                Dialogs.showInfoNotification(EXTENSION_NAME,
+                        "Perfect agreement — no disagreement cells to review.");
+                return;
+            }
+            // Compute agreement rates if not yet available
+            if (lastAgreementRates == null) {
+                var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
+                lastAgreementRates = confView.getAgreementRates();
+            }
+            String countStr = Dialogs.showInputDialog(
+                    resources.getString("sample.dialog.title"),
+                    "How many disagreement cells to review?"
+                            + " (" + disagreeCount + " available)",
+                    "200");
+            if (countStr == null) return;
+            int sampleSize;
+            try {
+                sampleSize = Integer.parseInt(countStr.strip());
+            } catch (NumberFormatException e) {
+                Dialogs.showErrorMessage(EXTENSION_NAME, "Invalid number.");
+                return;
+            }
+            if (sampleSize <= 0) return;
+            lastSampledCellIds = UncertaintySampler.sample(
+                    predAll, classifier.getClassNames(), lastAgreementRates, sampleSize);
+            syncPanelState();
+
+            // Persist sampled cell IDs
+            if (qupath.getProject() != null && qupath.getImageData() != null) {
+                var imgEntry = qupath.getProject().getEntry(qupath.getImageData());
+                if (imgEntry != null) {
+                    try {
+                        ProjectStateManager.saveImageSampledCells(
+                                qupath.getProject(), imgEntry.getImageName(), lastSampledCellIds);
+                    } catch (Exception ex) {
+                        logger.warn("Failed to save sampled cells: {}", ex.getMessage());
+                    }
+                }
+            }
+        }
+
         if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("review.no_sample"));
             return;
         }
+
         if (predAll == null || predAll.size() == 0) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
                     "No predictions available. Train and sample first.");
@@ -1092,6 +1187,9 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     private void showConfusions(QuPathGUI qupath) {
+        // Auto-classify if we have a trained classifier but no predictions yet
+        autoClassifyCurrentImage(qupath);
+
         if (predAll == null || predAll.size() == 0) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
                     "No predictions available. Train a classifier first.");
@@ -1107,38 +1205,6 @@ public class CellTuneExtension implements QuPathExtension {
         var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames);
         lastAgreementRates = view.getAgreementRates();
         view.show();
-
-        // Offer to sample disagreement cells for review
-        long disagreeCount = predAll.getDisagreementCount();
-        if (disagreeCount == 0) {
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Perfect agreement — no disagreement cells to sample.");
-            return;
-        }
-
-        String countStr = Dialogs.showInputDialog(
-                resources.getString("sample.dialog.title"),
-                resources.getString("sample.count.label")
-                        + " (" + disagreeCount + " disagreements available)",
-                "200");
-        if (countStr == null) return;
-
-        int sampleSize;
-        try {
-            sampleSize = Integer.parseInt(countStr.strip());
-        } catch (NumberFormatException e) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, "Invalid number.");
-            return;
-        }
-        if (sampleSize <= 0) return;
-
-        lastSampledCellIds = UncertaintySampler.sample(
-                predAll, classNames, lastAgreementRates, sampleSize);
-        syncPanelState();
-
-        Dialogs.showInfoNotification(EXTENSION_NAME,
-                "Sampled " + lastSampledCellIds.size() + " cells for review."
-                + " Use 'Enter Review Mode' to start reviewing.");
     }
 
     /** Export feature options chosen by the user. */
