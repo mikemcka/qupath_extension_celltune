@@ -1083,9 +1083,8 @@ public class CellTuneExtension implements QuPathExtension {
         // Auto-classify if we have a trained classifier but no predictions yet
         autoClassifyCurrentImage(qupath);
 
-        // If no sampled cells, prompt the user to sample now
-        if ((lastSampledCellIds == null || lastSampledCellIds.isEmpty())
-                && predAll != null && predAll.size() > 0 && classifier != null) {
+        // Always prompt the user to choose how many cells to review
+        if (predAll != null && predAll.size() > 0 && classifier != null) {
             long disagreeCount = predAll.getDisagreementCount();
             if (disagreeCount == 0) {
                 Dialogs.showInfoNotification(EXTENSION_NAME,

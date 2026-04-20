@@ -571,9 +571,8 @@ public class ClassificationPanel extends VBox {
             autoClassifyCallback.get();
         }
 
-        // If no sampled cells, prompt the user to sample now
-        if ((lastSampledCellIds == null || lastSampledCellIds.isEmpty())
-                && predAll != null && predAll.size() > 0 && classifier != null) {
+        // Always prompt the user to choose how many cells to review
+        if (predAll != null && predAll.size() > 0 && classifier != null) {
             long disagreeCount = predAll.getDisagreementCount();
             if (disagreeCount == 0) {
                 Dialogs.showInfoNotification(STRINGS.getString("name"),
