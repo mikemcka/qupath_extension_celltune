@@ -645,6 +645,7 @@ public class ClassificationPanel extends VBox {
         stage.setScene(new javafx.scene.Scene(vbox));
         stage.setAlwaysOnTop(true);
         stage.setResizable(true);
+        stage.setMinWidth(750);
 
         stage.setOnHidden(e -> {
             var outputLabels = reviewController.getOutputLabels();

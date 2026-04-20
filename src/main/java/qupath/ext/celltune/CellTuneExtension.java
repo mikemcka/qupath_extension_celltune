@@ -7,6 +7,7 @@ import javafx.stage.FileChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.ClassifierState;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
@@ -238,6 +239,24 @@ public class CellTuneExtension implements QuPathExtension {
                         if (state.featureTransforms != null) norm.fromTransformMap(state.featureTransforms);
                         if (state.arcsinhCofactor != null) norm.setArcsinhCofactor(state.arcsinhCofactor);
                         this.featureNormalizer = norm;
+                    }
+                    // Restore trained classifier from saved model bytes
+                    if (classifier == null || !classifier.isTrained()) {
+                        byte[] xgbBytes = ProjectStateManager.decodeXGBoostModel(state);
+                        byte[] lgbBytes = ProjectStateManager.decodeLightGBMModel(state);
+                        byte[] rf1Bytes = ProjectStateManager.decodeRFModel1(state);
+                        byte[] rf2Bytes = ProjectStateManager.decodeRFModel2(state);
+                        if (xgbBytes != null || lgbBytes != null || rf1Bytes != null || rf2Bytes != null) {
+                            var classifierState = new ClassifierState(
+                                    state.name != null ? state.name : "CellTune",
+                                    state.featureNames, state.classNames,
+                                    xgbBytes, lgbBytes, rf1Bytes, rf2Bytes,
+                                    ProjectStateManager.getModel1Type(state),
+                                    ProjectStateManager.getModel2Type(state));
+                            classifier = new DualModelClassifier();
+                            classifier.loadFromState(classifierState);
+                            logger.info("[CellTune] Restored trained classifier from saved state.");
+                        }
                     }
                 }
             } catch (Exception ex) {
@@ -670,14 +689,14 @@ public class CellTuneExtension implements QuPathExtension {
         progressStage.setAlwaysOnTop(true);
 
         var progressBar = new javafx.scene.control.ProgressBar(0);
-        progressBar.setPrefWidth(400);
+        progressBar.setPrefWidth(500);
         var statusLabel = new javafx.scene.control.Label("Initialising…");
         statusLabel.setWrapText(true);
-        statusLabel.setMaxWidth(400);
+        statusLabel.setMaxWidth(500);
         var logArea = new javafx.scene.control.TextArea();
         logArea.setEditable(false);
         logArea.setPrefHeight(150);
-        logArea.setPrefWidth(400);
+        logArea.setPrefWidth(500);
         logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
 
         var progressBox = new javafx.scene.layout.VBox(8, statusLabel, progressBar, logArea);
@@ -1161,6 +1180,7 @@ public class CellTuneExtension implements QuPathExtension {
         stage.setScene(new javafx.scene.Scene(vbox));
         stage.setAlwaysOnTop(true);
         stage.setResizable(true);
+        stage.setMinWidth(750);
 
         // When the review window is closed, merge labels back
         stage.setOnHidden(e -> {
@@ -1498,14 +1518,14 @@ public class CellTuneExtension implements QuPathExtension {
         progressStage.setAlwaysOnTop(true);
 
         var progressBar = new javafx.scene.control.ProgressBar(-1); // indeterminate
-        progressBar.setPrefWidth(400);
+        progressBar.setPrefWidth(500);
         var statusLabel = new javafx.scene.control.Label("Starting auto-landmarking…");
         statusLabel.setWrapText(true);
-        statusLabel.setMaxWidth(400);
+        statusLabel.setMaxWidth(500);
         var logArea = new javafx.scene.control.TextArea();
         logArea.setEditable(false);
         logArea.setPrefHeight(250);
-        logArea.setPrefWidth(400);
+        logArea.setPrefWidth(500);
         logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
 
         var progressBox = new javafx.scene.layout.VBox(8, statusLabel, progressBar, logArea);

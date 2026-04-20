@@ -58,7 +58,7 @@ public class ChannelSelector {
         CellPrediction pred = controller.getCurrentPrediction();
         if (pred == null) return;
 
-        String predictedType = pred.allLabel();
+        String predictedType = pred.avgLabel();
         if (predictedType == null) return;
 
         List<String> markers = cellTypeTable.getMarkers(predictedType);
@@ -81,12 +81,21 @@ public class ChannelSelector {
             var channels = display.availableChannels();
             if (channels == null) return;
 
+            logger.info("Auto-switch: looking for markers {} in {} channels",
+                    markerNames, channels.size());
+
             for (var ch : channels) {
                 String chName = ch.getName();
                 boolean shouldShow = markerNames.stream()
                         .anyMatch(m -> chName.toLowerCase().contains(m.toLowerCase()));
+                if (shouldShow) {
+                    logger.info("  Showing channel: {}", chName);
+                }
                 display.setChannelSelected(ch, shouldShow);
             }
+
+            // Force the viewer to repaint with the updated channel visibility
+            viewer.repaintEntireImage();
 
             logger.debug("Auto-switched channels to: {}", markerNames);
         } catch (Exception e) {
