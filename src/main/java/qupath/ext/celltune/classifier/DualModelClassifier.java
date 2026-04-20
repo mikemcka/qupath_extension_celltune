@@ -48,7 +48,7 @@ public class DualModelClassifier {
     private float subsample = 0.8f;
 
     /** Max cells per prediction chunk to stay within flat float[] int-index limit. */
-    private static final int PREDICT_CHUNK_SIZE = 500_000;
+    private static final int PREDICT_CHUNK_SIZE = 100_000;
 
     // ── Model type selection ────────────────────────────────────────────────────
     private ModelType model1Type = ModelType.XGBOOST;

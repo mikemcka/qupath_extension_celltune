@@ -158,16 +158,28 @@ public class CellTuneExtension implements QuPathExtension {
         var project = qupath.getProject();
 
         // ── Save labels for the OLD image (filtered) ──
-        if (labelStore != null && labelStore.size() > 0 && oldData != null && project != null) {
+        if (oldData != null && project != null) {
             var oldEntry = project.getEntry(oldData);
             if (oldEntry != null) {
-                var filteredStore = filterLabelStoreToImage(labelStore, oldData);
-                if (filteredStore.size() > 0) {
+                // Save labels
+                if (labelStore != null && labelStore.size() > 0) {
+                    var filteredStore = filterLabelStoreToImage(labelStore, oldData);
+                    if (filteredStore.size() > 0) {
+                        try {
+                            ProjectStateManager.saveImageLabels(
+                                    project, oldEntry.getImageName(), filteredStore);
+                        } catch (IOException ex) {
+                            logger.warn("Failed to save labels for {} on image switch: {}",
+                                    oldEntry.getImageName(), ex.getMessage());
+                        }
+                    }
+                }
+                // Save sampled cell IDs (independent of labels)
+                if (lastSampledCellIds != null && !lastSampledCellIds.isEmpty()) {
                     try {
-                        ProjectStateManager.saveImageLabels(
-                                project, oldEntry.getImageName(), filteredStore);
+                        ProjectStateManager.saveImageSampledCells(project, oldEntry.getImageName(), lastSampledCellIds);
                     } catch (IOException ex) {
-                        logger.warn("Failed to save labels for {} on image switch: {}",
+                        logger.warn("Failed to save sampled cells for {} on image switch: {}",
                                 oldEntry.getImageName(), ex.getMessage());
                     }
                 }
@@ -194,14 +206,24 @@ public class CellTuneExtension implements QuPathExtension {
                 this.labelStore = (loaded != null) ? loaded : new LabelStore("CellTune");
                 // Also pick up any annotation-based labels on the new image
                 collectLabelsFromAnnotations(qupath, this.labelStore);
+
+                // Load sampled cell IDs for new image
+                try {
+                    List<String> sampledIds = ProjectStateManager.loadImageSampledCells(project, newEntry.getImageName());
+                    this.lastSampledCellIds = sampledIds;
+                } catch (IOException ex) {
+                    logger.warn("Failed to load sampled cell IDs for {}: {}", newEntry.getImageName(), ex.getMessage());
+                }
             } else {
                 this.labelStore = new LabelStore("CellTune");
+                this.lastSampledCellIds = null;
             }
             logger.info("Switched to image '{}' — {} labels loaded",
                     newEntry != null ? newEntry.getImageName() : "unknown",
                     labelStore.size());
         } else {
             this.labelStore = new LabelStore("CellTune");
+            this.lastSampledCellIds = null;
         }
 
         // ── Try to restore feature selection and normalization from project state ──
@@ -221,6 +243,8 @@ public class CellTuneExtension implements QuPathExtension {
                 logger.warn("Failed to restore feature selection/normalization: {}", ex.getMessage());
             }
         }
+        // ── Sync labels with current QuPath class list ──
+        syncLabelsToCurrentClasses(qupath);
         // ── Push reset state into panel ──
         syncPanelState();
     }
@@ -236,6 +260,32 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setPredAll(predAll);
         classificationPanel.setLastAgreementRates(lastAgreementRates);
         classificationPanel.setLastSampledCellIds(lastSampledCellIds);
+    }
+
+    /**
+     * Synchronise the label store with the current QuPath class list.
+     * Removes any labels whose class name no longer exists in the project's class list.
+     * This ensures removed/renamed classes don't persist as stale labels.
+     */
+    private void syncLabelsToCurrentClasses(QuPathGUI qupath) {
+        if (labelStore == null || labelStore.size() == 0) return;
+
+        var project = qupath.getProject();
+        if (project == null) return;
+
+        Set<String> validClasses = new java.util.LinkedHashSet<>();
+        for (var pc : project.getPathClasses()) {
+            if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
+                validClasses.add(pc.getName());
+            }
+        }
+
+        if (validClasses.isEmpty()) return; // No classes defined — don't purge everything
+
+        int removed = labelStore.retainClasses(validClasses);
+        if (removed > 0) {
+            logger.info("Removed {} labels for classes no longer in QuPath class list", removed);
+        }
     }
 
     /**
@@ -402,6 +452,37 @@ public class CellTuneExtension implements QuPathExtension {
 
         // Discover labels from annotation objects that overlap detections
         collectLabelsFromAnnotations(qupath, labelStore);
+
+        // If not enough labels, try to load from persisted image labels
+        if (labelStore.size() < 10) {
+            var project = qupath.getProject();
+            if (project != null) {
+                var imgEntry = project.getEntry(imageData);
+                if (imgEntry != null) {
+                    try {
+                        var savedLabels = ProjectStateManager.loadImageLabels(project, imgEntry.getImageName());
+                        if (savedLabels != null && savedLabels.size() > labelStore.size()) {
+                            labelStore.mergeFrom(savedLabels);
+                            logger.info("Loaded {} saved labels for current image", labelStore.size());
+                        }
+                    } catch (IOException ex) {
+                        logger.warn("Failed to load saved labels: {}", ex.getMessage());
+                    }
+                }
+                // Also try the global classifier state labels
+                if (labelStore.size() < 10) {
+                    try {
+                        var state = ProjectStateManager.loadState(project);
+                        if (state != null && state.labels != null && state.labels.size() > labelStore.size()) {
+                            labelStore.mergeFrom(new LabelStore("saved", state.labels));
+                            logger.info("Loaded {} labels from classifier state", labelStore.size());
+                        }
+                    } catch (IOException ex) {
+                        logger.warn("Failed to load classifier state labels: {}", ex.getMessage());
+                    }
+                }
+            }
+        }
 
         if (labelStore.size() < 10) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
@@ -934,6 +1015,26 @@ public class CellTuneExtension implements QuPathExtension {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
             return;
         }
+
+        // Try to load persisted sampled cell IDs if not in memory
+        if ((lastSampledCellIds == null || lastSampledCellIds.isEmpty()) && qupath.getProject() != null) {
+            var imgData = qupath.getImageData();
+            if (imgData != null) {
+                var entry = qupath.getProject().getEntry(imgData);
+                if (entry != null) {
+                    try {
+                        var loaded = ProjectStateManager.loadImageSampledCells(qupath.getProject(), entry.getImageName());
+                        if (loaded != null && !loaded.isEmpty()) {
+                            this.lastSampledCellIds = loaded;
+                            syncPanelState();
+                        }
+                    } catch (IOException ex) {
+                        logger.warn("Failed to load sampled cells: {}", ex.getMessage());
+                    }
+                }
+            }
+        }
+
         if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("review.no_sample"));
             return;

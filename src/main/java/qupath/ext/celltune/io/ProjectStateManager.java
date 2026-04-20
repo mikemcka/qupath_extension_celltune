@@ -326,4 +326,39 @@ public class ProjectStateManager {
     private static String sanitiseFileName(String name) {
         return name.replaceAll("[^a-zA-Z0-9._\\-]", "_");
     }
+
+    // ── Per-image sampled cell state ──────────────────────────────────────────
+
+    private static final String IMAGE_SAMPLED_DIR = "image-sampled";
+
+    /**
+     * Save sampled cell IDs for a specific image.
+     */
+    public static Path saveImageSampledCells(Project<?> project, String imageName, List<String> sampledCellIds) throws IOException {
+        Path dir = getCellTuneDir(project).resolve(IMAGE_SAMPLED_DIR);
+        Files.createDirectories(dir);
+        String safeFileName = sanitiseFileName(imageName) + ".json";
+        Path outPath = dir.resolve(safeFileName);
+        String json = GSON.toJson(sampledCellIds);
+        Files.writeString(outPath, json, StandardCharsets.UTF_8);
+        logger.info("Saved {} sampled cell IDs for image '{}' to {}", sampledCellIds.size(), imageName, outPath);
+        return outPath;
+    }
+
+    /**
+     * Load sampled cell IDs previously saved for a specific image.
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> loadImageSampledCells(Project<?> project, String imageName) throws IOException {
+        Path dir = getCellTuneDir(project).resolve(IMAGE_SAMPLED_DIR);
+        String safeFileName = sanitiseFileName(imageName) + ".json";
+        Path filePath = dir.resolve(safeFileName);
+        if (!Files.exists(filePath)) {
+            return null;
+        }
+        String json = Files.readString(filePath, StandardCharsets.UTF_8);
+        List<String> ids = GSON.fromJson(json, List.class);
+        if (ids == null || ids.isEmpty()) return null;
+        return ids;
+    }
 }

@@ -92,6 +92,36 @@ public class LabelStore {
         labels.putAll(other.labels);
     }
 
+    /**
+     * Remove all labels whose class name is not in the given set of valid classes.
+     *
+     * @param validClasses the set of class names to keep
+     * @return number of labels removed
+     */
+    public int retainClasses(Set<String> validClasses) {
+        int before = labels.size();
+        labels.entrySet().removeIf(e -> !validClasses.contains(e.getValue()));
+        return before - labels.size();
+    }
+
+    /**
+     * Rename all labels from one class name to another.
+     *
+     * @param oldName the old class name
+     * @param newName the new class name
+     * @return number of labels renamed
+     */
+    public int renameClass(String oldName, String newName) {
+        int count = 0;
+        for (var entry : labels.entrySet()) {
+            if (oldName.equals(entry.getValue())) {
+                entry.setValue(newName);
+                count++;
+            }
+        }
+        return count;
+    }
+
     /** Create a deep copy of this label store. */
     public LabelStore copy() {
         return new LabelStore(name, labels);

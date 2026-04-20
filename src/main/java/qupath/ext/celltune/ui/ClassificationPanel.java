@@ -237,13 +237,63 @@ public class ClassificationPanel extends VBox {
             return;
         }
 
+
         // Collect labels from annotations
         if (labelStore == null) labelStore = new LabelStore("CellTune");
         collectLabelsFromAnnotations(labelStore);
 
+        // Sync labels with current QuPath class list — remove labels for deleted classes
+        var project = qupath.getProject();
+        Set<String> validClasses = new LinkedHashSet<>();
+        if (project != null) {
+            for (var pc : project.getPathClasses()) {
+                if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
+                    validClasses.add(pc.getName());
+                }
+            }
+            if (!validClasses.isEmpty()) {
+                labelStore.retainClasses(validClasses);
+            }
+        }
+
+        // If not enough labels, try to reload from saved state
+        if (labelStore.size() < 10) {
+            if (project != null && imageData != null) {
+                var imgEntry = project.getEntry(imageData);
+                if (imgEntry != null) {
+                    try {
+                        var savedLabels = ProjectStateManager.loadImageLabels(project, imgEntry.getImageName());
+                        if (savedLabels != null && savedLabels.size() > labelStore.size()) {
+                            labelStore.mergeFrom(savedLabels);
+                            // Re-sync after merge
+                            if (!validClasses.isEmpty()) {
+                                labelStore.retainClasses(validClasses);
+                            }
+                        }
+                    } catch (Exception ex) {
+                        // Ignore errors
+                    }
+                }
+                // Also try the global classifier state labels
+                if (labelStore.size() < 10) {
+                    try {
+                        var state = ProjectStateManager.loadState(project);
+                        if (state != null && state.labels != null && state.labels.size() > labelStore.size()) {
+                            labelStore.mergeFrom(new LabelStore("saved", state.labels));
+                            if (!validClasses.isEmpty()) {
+                                labelStore.retainClasses(validClasses);
+                            }
+                        }
+                    } catch (Exception ex) {
+                        // Ignore errors
+                    }
+                }
+            }
+        }
+
         if (labelStore.size() < 10) {
             Dialogs.showErrorMessage(STRINGS.getString("name"),
-                    "Need at least 10 labelled cells. Found: " + labelStore.size());
+                    "Need at least 10 labelled cells to train. Found: " + labelStore.size() + "\nUse point annotations placed on detections to label cells.");
             return;
         }
 
@@ -290,25 +340,25 @@ public class ClassificationPanel extends VBox {
         final boolean autoTuneSelected = autoTuneCheckBox.isSelected();
         final boolean earlyStopSelected = earlyStopCheckBox.isSelected();
         final List<String> finalFeatureNames = featureNames;
+        final var projectRef = project;
         Thread trainThread = new Thread(() -> {
             try {
                 // Auto-backup labels
-                var project = qupath.getProject();
-                if (project != null) {
-                    ProjectStateManager.backupLabels(project, storeCopy);
+                if (projectRef != null) {
+                    ProjectStateManager.backupLabels(projectRef, storeCopy);
                 }
 
                 // Collect supplementary training data from other project images
                 List<float[]> supplementaryRows = null;
                 List<String> supplementaryLabels = null;
 
-                if (poolAllImages && project != null) {
+                if (poolAllImages && projectRef != null) {
                     supplementaryRows = new ArrayList<>();
                     supplementaryLabels = new ArrayList<>();
 
                     @SuppressWarnings("unchecked")
-                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-                    var currentEntry = project.getEntry(imageData);
+                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) projectRef.getImageList();
+                    var currentEntry = projectRef.getEntry(imageData);
 
                     for (var entry : allEntries) {
                         if (currentEntry != null && entry.equals(currentEntry)) continue;
@@ -327,7 +377,7 @@ public class ClassificationPanel extends VBox {
                             // reviewed cells and manually labelled cells
                             try {
                                 var savedLabels = ProjectStateManager.loadImageLabels(
-                                        project, entry.getImageName());
+                                        projectRef, entry.getImageName());
                                 if (savedLabels != null) {
                                     otherLabels.mergeFrom(savedLabels);
                                 }
@@ -368,20 +418,20 @@ public class ClassificationPanel extends VBox {
                 predAll = classifier.getPredALL();
 
                 // Save classifier state
-                if (project != null) {
+                if (projectRef != null) {
                     var state = classifier.toClassifierState("CellTune");
-                    ProjectStateManager.saveState(project, state.getName(),
+                    ProjectStateManager.saveState(projectRef, state.getName(),
                             storeCopy, state.getFeatureNames(), state.getClassNames(),
                             state.getXgboostBytes(), state.getLightgbmBytes(),
                             state.getRfModel1Bytes(), state.getRfModel2Bytes(),
                             state.getModel1Type(), state.getModel2Type());
 
                     // Save per-image labels for cross-image pooling
-                    var imgEntry = project.getEntry(imageData);
+                    var imgEntry = projectRef.getEntry(imageData);
                     if (imgEntry != null) {
                         var filteredStore = filterLabelStoreToImage(storeCopy, imageData);
                         ProjectStateManager.saveImageLabels(
-                                project, imgEntry.getImageName(), filteredStore);
+                                projectRef, imgEntry.getImageName(), filteredStore);
                     }
                 }
 
@@ -483,6 +533,20 @@ public class ClassificationPanel extends VBox {
 
         reviewButton.setDisable(lastSampledCellIds.isEmpty());
         if (onSampledCellsChanged != null) onSampledCellsChanged.accept(lastSampledCellIds);
+
+        // Persist sampled cell IDs for this image
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project != null && imageData != null) {
+            var imgEntry = project.getEntry(imageData);
+            if (imgEntry != null && lastSampledCellIds != null && !lastSampledCellIds.isEmpty()) {
+                try {
+                    ProjectStateManager.saveImageSampledCells(project, imgEntry.getImageName(), lastSampledCellIds);
+                } catch (Exception ex) {
+                    // Ignore errors
+                }
+            }
+        }
 
         Dialogs.showInfoNotification(STRINGS.getString("name"),
                 "Sampled " + lastSampledCellIds.size() + " cells. Use 'Enter Review Mode' to start.");
