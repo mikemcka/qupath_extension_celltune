@@ -368,6 +368,12 @@ public class DualModelClassifier {
         predAVG  = new PopulationSet("Pred_AVG");
         predALL  = new PopulationSet("Pred_ALL");
 
+        // Collect PathClass assignments for batch application on the FX thread.
+        // PathObject.setPathClass() may use a JavaFX property in future QuPath
+        // versions; always apply on the FX thread to be forward-compatible.
+        List<PathObject> classifyObjects = new ArrayList<>(totalCells);
+        List<PathClass>  classifyClasses = new ArrayList<>(totalCells);
+
         int disagreements = 0;
         List<PathObject> cellList = (allCells instanceof List)
                 ? (List<PathObject>) allCells
@@ -401,8 +407,8 @@ public class DualModelClassifier {
                 predAVG.put(cellId, pred);
                 predALL.put(cellId, pred);
 
-                String avgLabel = pred.avgLabel();
-                cell.setPathClass(PathClass.fromString(avgLabel));
+                classifyObjects.add(cell);
+                classifyClasses.add(PathClass.fromString(pred.avgLabel()));
 
                 if (pred.isDisagreement()) disagreements++;
             }
@@ -410,6 +416,14 @@ public class DualModelClassifier {
             double progress = 0.65 + 0.20 * ((double) chunkEnd / totalCells);
             updateStatus("Predicting… " + chunkEnd + "/" + totalCells, progress);
         }
+
+        // Apply PathClass assignments on the FX thread (queued before the hierarchy
+        // event that CellTuneExtension fires in its own Platform.runLater block).
+        Platform.runLater(() -> {
+            for (int i = 0; i < classifyObjects.size(); i++) {
+                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+            }
+        });
 
         // ── 5. Summary ─────────────────────────────────────────────────────
 
@@ -450,6 +464,14 @@ public class DualModelClassifier {
         int totalCells = cells.size();
         int nFeatures = extractor.getNumFeatures();
 
+        // Guard against mis-matched feature sets (e.g. loading a model from a different session)
+        if (featureNames != null && featureNames.size() != nFeatures) {
+            throw new IllegalStateException(
+                    "Feature count mismatch: extractor has " + nFeatures
+                    + " feature(s) but this classifier was trained with "
+                    + featureNames.size() + ". Re-select features and retrain.");
+        }
+
         out.accept("Predicting " + totalCells + " cells…");
 
         List<PathObject> cellList = (cells instanceof List)
@@ -460,6 +482,9 @@ public class DualModelClassifier {
         PopulationSet localMDL2 = populateSets ? new PopulationSet("Pred_MDL2") : null;
         PopulationSet localAVG  = populateSets ? new PopulationSet("Pred_AVG")  : null;
         PopulationSet localALL  = populateSets ? new PopulationSet("Pred_ALL")  : null;
+
+        List<PathObject> classifyObjects = new ArrayList<>(totalCells);
+        List<PathClass>  classifyClasses = new ArrayList<>(totalCells);
 
         int disagreements = 0;
         for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
@@ -484,8 +509,8 @@ public class DualModelClassifier {
                         cellId, mdl1Label, mdl2Label,
                         mdl1Probs[i], mdl2Probs[i], classNames);
 
-                String avgLabel = pred.avgLabel();
-                cell.setPathClass(PathClass.fromString(avgLabel));
+                classifyObjects.add(cell);
+                classifyClasses.add(PathClass.fromString(pred.avgLabel()));
 
                 if (populateSets) {
                     localMDL1.put(cellId, pred);
@@ -499,6 +524,13 @@ public class DualModelClassifier {
 
             out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
         }
+
+        // Apply PathClass assignments on the FX thread.
+        Platform.runLater(() -> {
+            for (int i = 0; i < classifyObjects.size(); i++) {
+                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+            }
+        });
 
         if (populateSets) {
             this.predMDL1 = localMDL1;

@@ -80,6 +80,9 @@ public class CellTuneExtension implements QuPathExtension {
 
     private boolean isInstalled = false;
 
+    /** Listener for image changes — stored so it can be removed if needed. */
+    private javafx.beans.value.ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>> imageDataListener;
+
     /** Shared extension state — populated as the user works. */
     private CellTypeTable cellTypeTable;
     private LabelStore labelStore;
@@ -137,9 +140,10 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setOnClassifierChanged(cls -> this.classifier = cls);
         classificationPanel.setAutoClassifyCallback(() -> autoClassifyCurrentImage(qupath));
 
-        // Listen for image changes so we can save/reset/load state per image
-        qupath.imageDataProperty().addListener((obs, oldData, newData) ->
-                handleImageChange(qupath, oldData, newData));
+        // Listen for image changes so we can save/reset/load state per image.
+        // Store the listener reference so it can be removed if the extension is ever reloaded.
+        imageDataListener = (obs, oldData, newData) -> handleImageChange(qupath, oldData, newData);
+        qupath.imageDataProperty().addListener(imageDataListener);
 
         // Dock into QuPath's analysis pane
         var titledPane = new javafx.scene.control.TitledPane(EXTENSION_NAME, classificationPanel);
@@ -457,7 +461,10 @@ public class CellTuneExtension implements QuPathExtension {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
             return;
         }
-        if (classifier == null || !classifier.isTrained()) {
+        // Snapshot the classifier field now (on the FX thread) so the background
+        // thread uses a stable reference even if retraining is triggered later.
+        final DualModelClassifier snap = classifier;
+        if (snap == null || !snap.isTrained()) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
                     "No trained classifier found. Run CellTune Classification first.");
             return;
@@ -467,7 +474,7 @@ public class CellTuneExtension implements QuPathExtension {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No detections found.");
             return;
         }
-        List<String> featureNames = classifier.getFeatureNames();
+        List<String> featureNames = snap.getFeatureNames();
         if (featureNames == null || featureNames.isEmpty()) return;
 
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
@@ -475,7 +482,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         Thread worker = new Thread(() -> {
             try {
-                var result = classifier.computeFeatureImportance(detections, extractor);
+                var result = snap.computeFeatureImportance(detections, extractor);
                 javafx.application.Platform.runLater(() ->
                         new qupath.ext.celltune.ui.FeatureImportanceView(
                                 qupath.getStage(), result).show());
