@@ -69,6 +69,7 @@ qupath-extension-celltune/
 │  ├─ ui/                                            // JavaFX panels and controls
 │  │  ├─ ClassificationPanel.java                    // Main sidebar (train, confuse, sample)
 │  │  ├─ ConfusionMatrixView.java                    // Canvas confusion matrix with F1 scores
+│  │  ├─ FeatureImportanceView.java                  // Top-10 SHAP bar chart with per-class selector
 │  │  ├─ ReviewController.java                       // Review queue logic + viewer navigation
 │  │  ├─ ReviewToolbar.java                          // Nav + prediction buttons + All Classes
 │  │  ├─ PopulationPanel.java                        // Population set display with colour swatches
@@ -581,6 +582,42 @@ All three exporters pre-extract feature vectors in parallel before sequential CS
 - Uses the ForkJoinPool common pool (same pool QuPath uses), which auto-sizes to `availableProcessors()`
 - On HPC nodes with 32–64 cores, this provides significant speedup for exports of 100K+ cells with feature values
 - Thread safety: `extractRow()` and `extractRowRaw()` only read from immutable `featureNames` and stateless `normalizer.apply()` — each call allocates its own `float[]`
+
+### 8.11 XGBoost TreeSHAP Feature Importance — `classifier/` + `ui/FeatureImportanceView.java` ✅ COMPLETE
+
+Per-class feature importance using native XGBoost TreeSHAP values, displayed as a JavaFX bar chart.
+
+**`XGBoostModel.computeMeanAbsShap(float[] flatData, int nSamples, int nFeatures)`:**
+- Calls `booster.predictContrib(dmat, 0)` — the public TreeSHAP API in XGBoost4J 3.2.0
+- Binary classification: raw output stride = `nFeatures + 1`; values reflected for both classes
+- Multiclass: stride = `nClasses × (nFeatures + 1)`; per-class rows extracted correctly
+- Returns `double[nClasses][nFeatures]` of mean absolute SHAP values averaged across all samples
+- `DMatrix` disposed in `finally` block to prevent native memory leaks
+
+**`RandomForestModel.computeSplitImportance()`:**
+- Traverses all trees recursively via `accumulateSplits(Node, double[])`, counting splits per feature
+- Normalises to [0, 1] range; result replicated across all classes (RF importance is class-agnostic)
+- Returns `double[nClasses][nFeatures]`
+
+**`DualModelClassifier.computeFeatureImportance(Collection<PathObject>, CellFeatureExtractor)`:**
+- Samples up to `MAX_SHAP_SAMPLES = 5000` cells (shuffled with seed 42)
+- Runs XGBoost SHAP and/or RF split importance depending on active model types
+- LightGBM SHAP is **excluded** (native `lib_lightgbm.so` crashes with SIGSEGV inside `LightGBM::Predictor` when called via `C_API_PREDICT_CONTRIB`)
+- Averages results across active models when both contribute
+- Returns a `ShapResult` record: `List<String> classNames`, `List<String> featureNames`, `double[][] meanAbsShap`
+
+**`FeatureImportanceView` (new JavaFX dialog):**
+- Canvas-based horizontal bar chart, top 10 features sorted by importance descending
+- `ComboBox<String>` class selector at the top — redraws chart instantly on change
+- Alternating row backgrounds; value labels inside/outside bars depending on bar width
+- x-axis labelled `"mean |SHAP value|"`; subtitle notes which models contributed
+- `Modality.NONE` — window stays open while QuPath remains interactive
+- 8 colour palette cycling for >8 classes
+
+**Integration points:**
+- Menu item: *Extensions > CellTune Classifier > Feature Importance…* — available any time after training
+- Training dialog checkbox: **"Show top 10 feature importance after training"** — auto-opens the view on completion
+- Both call the shared `showFeatureImportance(QuPathGUI)` method which runs SHAP on a daemon background thread
 
 ### Reference Pattern (from qupath-extension-xgboost)
 
