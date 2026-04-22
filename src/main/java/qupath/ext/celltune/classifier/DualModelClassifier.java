@@ -49,6 +49,20 @@ public class DualModelClassifier {
 
     /** Max cells per prediction chunk to stay within flat float[] int-index limit. */
     private static final int PREDICT_CHUNK_SIZE = 100_000;
+    /** Max cells sampled for SHAP computation (TreeSHAP is O(n·depth·features)). */
+    private static final int MAX_SHAP_SAMPLES = 5_000;
+
+    /**
+     * Per-class feature importance computed by {@link #computeFeatureImportance}.
+     *
+     * @param classNames   ordered class names
+     * @param featureNames ordered feature names
+     * @param meanAbsShap  mean |SHAP| values indexed as [nClasses][nFeatures]
+     */
+    public record ShapResult(
+            List<String> classNames,
+            List<String> featureNames,
+            double[][] meanAbsShap) {}
 
     // ── Model type selection ────────────────────────────────────────────────────
     private ModelType model1Type = ModelType.XGBOOST;
@@ -558,6 +572,87 @@ public class DualModelClassifier {
             rfModel2 = new RandomForestModel();
             rfModel2.loadFromBytes(rf2Bytes, classNames, featureNames);
         }
+    }
+
+    // ── SHAP Feature Importance ─────────────────────────────────────────────────
+
+    /**
+     * Compute per-class mean absolute SHAP feature importances using the active
+     * trained models.
+     * <p>
+     * XGBoost and LightGBM use their native TreeSHAP implementations.
+     * Random Forest uses normalised split counts (class-agnostic; same values
+     * shown for every class).
+     * Results from multiple active models are averaged.
+     * <p>
+     * A random sample of up to {@value MAX_SHAP_SAMPLES} cells is used for
+     * performance.
+     *
+     * @param cells     cells to compute importances over
+     * @param extractor feature extractor initialised with training feature names
+     * @return per-class mean |SHAP| values
+     * @throws Exception if SHAP computation fails
+     */
+    public ShapResult computeFeatureImportance(Collection<PathObject> cells,
+                                               CellFeatureExtractor extractor)
+            throws Exception {
+        if (!isTrained()) {
+            throw new IllegalStateException(
+                    "Models must be trained before computing feature importance.");
+        }
+
+        int nFeatures = extractor.getNumFeatures();
+        int nClasses  = classNames.size();
+
+        // Sample cells for performance
+        List<PathObject> sample = new ArrayList<>(cells);
+        if (sample.size() > MAX_SHAP_SAMPLES) {
+            Collections.shuffle(sample, new Random(42));
+            sample = sample.subList(0, MAX_SHAP_SAMPLES);
+        }
+        int nSamples = sample.size();
+        float[] flatData = extractor.extractMatrix(sample);
+
+        double[][] result = new double[nClasses][nFeatures];
+        int modelCount = 0;
+
+        // ── XGBoost TreeSHAP ────────────────────────────────────────────────
+        if (xgbModel != null && xgbModel.isTrained()
+                && (model1Type == ModelType.XGBOOST || model2Type == ModelType.XGBOOST)) {
+            double[][] shap = xgbModel.computeMeanAbsShap(flatData, nSamples, nFeatures);
+            for (int c = 0; c < nClasses; c++)
+                for (int f = 0; f < nFeatures; f++)
+                    result[c][f] += shap[c][f];
+            modelCount++;
+        }
+
+        // ── Random Forest split importance ──────────────────────────────────
+        if (model1Type == ModelType.RANDOM_FOREST
+                && rfModel1 != null && rfModel1.isTrained()) {
+            double[][] imp = rfModel1.computeSplitImportance();
+            for (int c = 0; c < nClasses; c++)
+                for (int f = 0; f < nFeatures; f++)
+                    result[c][f] += imp[c][f];
+            modelCount++;
+        }
+        // RF model 2 only if it is a distinct model slot
+        if (model2Type == ModelType.RANDOM_FOREST
+                && rfModel2 != null && rfModel2.isTrained()
+                && model1Type != ModelType.RANDOM_FOREST) {
+            double[][] imp = rfModel2.computeSplitImportance();
+            for (int c = 0; c < nClasses; c++)
+                for (int f = 0; f < nFeatures; f++)
+                    result[c][f] += imp[c][f];
+            modelCount++;
+        }
+
+        if (modelCount > 1) {
+            for (int c = 0; c < nClasses; c++)
+                for (int f = 0; f < nFeatures; f++)
+                    result[c][f] /= modelCount;
+        }
+
+        return new ShapResult(classNames, featureNames, result);
     }
 
     // ── Hyperparameter setters ──────────────────────────────────────────────────

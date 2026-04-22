@@ -232,6 +232,51 @@ public class RandomForestModel {
     public List<String> getClassNames()   { return classNames; }
     public List<String> getFeatureNames() { return featureNames; }
 
+    // ── Feature Importance ───────────────────────────────────────────────────────
+
+    /**
+     * Compute feature importance as normalised split counts across all trees.
+     * <p>
+     * This approximates mean decrease in impurity. Because Random Forest trees
+     * do not expose class-specific contributions natively, the same importances
+     * are returned for every class.
+     *
+     * @return importance matrix [nClasses][nFeatures], values in [0, 1] (sum to 1)
+     * @throws Exception if tree deserialisation fails
+     */
+    public double[][] computeSplitImportance() throws Exception {
+        int nFeatures = featureNames.size();
+        double[] counts = new double[nFeatures];
+
+        for (byte[] treeBytes : serialisedTrees) {
+            Node tree = deserialiseTree(treeBytes);
+            accumulateSplits(tree, counts);
+        }
+
+        // Normalise
+        double total = 0;
+        for (double c : counts) total += c;
+        if (total > 0) {
+            for (int f = 0; f < nFeatures; f++) counts[f] /= total;
+        }
+
+        // Replicate for all classes (RF importance is class-agnostic here)
+        double[][] result = new double[nClasses][nFeatures];
+        for (int c = 0; c < nClasses; c++) {
+            result[c] = counts.clone();
+        }
+        return result;
+    }
+
+    /** Recursively count feature uses in split nodes. */
+    private static void accumulateSplits(Node node, double[] counts) {
+        if (node instanceof InternalNode internal) {
+            counts[internal.featureIdx()]++;
+            accumulateSplits(internal.left(), counts);
+            accumulateSplits(internal.right(), counts);
+        }
+    }
+
     // ── CART tree building ───────────────────────────────────────────────────────
 
     private static int[] bootstrapSample(int n, int sampleSize, Random rng) {

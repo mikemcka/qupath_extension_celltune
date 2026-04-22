@@ -393,6 +393,10 @@ public class CellTuneExtension implements QuPathExtension {
         confusionsItem.setOnAction(e -> showConfusions(qupath));
         confusionsItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem featureImportanceItem = new MenuItem("Feature Importance...");
+        featureImportanceItem.setOnAction(e -> showFeatureImportance(qupath));
+        featureImportanceItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem exportItem = new MenuItem(resources.getString("menu.export"));
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
@@ -433,6 +437,7 @@ public class CellTuneExtension implements QuPathExtension {
                 reviewItem,
                 manualLabelItem,
                 confusionsItem,
+                featureImportanceItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,
                 autoLandmarkItem,
@@ -445,6 +450,45 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     // ── Placeholder actions (wired in later phases) ────────────────────────────
+
+    private void showFeatureImportance(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+        if (classifier == null || !classifier.isTrained()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No trained classifier found. Run CellTune Classification first.");
+            return;
+        }
+        var detections = imageData.getHierarchy().getDetectionObjects();
+        if (detections.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No detections found.");
+            return;
+        }
+        List<String> featureNames = classifier.getFeatureNames();
+        if (featureNames == null || featureNames.isEmpty()) return;
+
+        CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+        extractor.setNormalizer(featureNormalizer);
+
+        Thread worker = new Thread(() -> {
+            try {
+                var result = classifier.computeFeatureImportance(detections, extractor);
+                javafx.application.Platform.runLater(() ->
+                        new qupath.ext.celltune.ui.FeatureImportanceView(
+                                qupath.getStage(), result).show());
+            } catch (Throwable ex) {
+                logger.error("Feature importance failed", ex);
+                javafx.application.Platform.runLater(() ->
+                        Dialogs.showErrorMessage(EXTENSION_NAME,
+                                "Feature importance failed: " + ex.getMessage()));
+            }
+        }, "CellTune-FeatureImportance");
+        worker.setDaemon(true);
+        worker.start();
+    }
 
     private void showClassifierPanel(QuPathGUI qupath) {
         if (qupath.getProject() == null) {
@@ -615,6 +659,12 @@ public class CellTuneExtension implements QuPathExtension {
                 "Early stopping (find optimal boosting rounds)");
         earlyStopCheckBox.setSelected(false);
 
+        var featureImportanceCheckBox = new javafx.scene.control.CheckBox(
+                "Show top 10 feature importance after training");
+        featureImportanceCheckBox.setSelected(false);
+        featureImportanceCheckBox.setTooltip(new javafx.scene.control.Tooltip(
+                "After training, compute mean |SHAP| values and display a per-class bar chart"));
+
         var confirmAlert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.CONFIRMATION);
         confirmAlert.setTitle(EXTENSION_NAME);
@@ -631,14 +681,16 @@ public class CellTuneExtension implements QuPathExtension {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg), poolCheckBox,
-                    modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
+                    modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox,
+                    featureImportanceCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         } else {
             confirmAlert.getDialogPane().setExpandableContent(null);
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg),
-                    modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox);
+                    modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox,
+                    featureImportanceCheckBox);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         }
@@ -651,6 +703,7 @@ public class CellTuneExtension implements QuPathExtension {
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final boolean autoTuneHyperparams = autoTuneCheckBox.isSelected();
         final boolean earlyStopEnabled = earlyStopCheckBox.isSelected();
+        final boolean showFeatureImportance = featureImportanceCheckBox.isSelected();
         final ModelType model1Type = model1Combo.getValue();
         final ModelType model2Type = model2Combo.getValue();
 
@@ -876,6 +929,7 @@ public class CellTuneExtension implements QuPathExtension {
                         statusLabel.setText("Complete — close this window when ready.");
                         progressBar.progressProperty().unbind();
                         progressBar.setProgress(1.0);
+                        if (showFeatureImportance) showFeatureImportance(qupath);
                     });
                 } else {
                     javafx.application.Platform.runLater(() -> {
@@ -887,6 +941,7 @@ public class CellTuneExtension implements QuPathExtension {
                         statusLabel.setText("Complete — close this window when ready.");
                         progressBar.progressProperty().unbind();
                         progressBar.setProgress(1.0);
+                        if (showFeatureImportance) showFeatureImportance(qupath);
                     });
                 }
             } catch (Exception ex) {

@@ -255,6 +255,66 @@ public class XGBoostModel {
         return preds;
     }
 
+    // ── SHAP / Feature Importance ────────────────────────────────────────────────
+
+    /**
+     * Compute per-class mean absolute SHAP values using XGBoost's native
+     * TreeSHAP implementation ({@code predContrib=true}).
+     * <p>
+     * For binary models ({@code binary:logistic}) SHAP values are for the
+     * decision margin; the same values are reflected for both classes.
+     * For multiclass ({@code multi:softprob}) values are class-specific.
+     *
+     * @param flatData  row-major feature matrix (nSamples × nFeatures)
+     * @param nSamples  number of samples
+     * @param nFeatures number of features
+     * @return mean absolute SHAP matrix [nClasses][nFeatures]
+     * @throws XGBoostError if prediction fails
+     */
+    public double[][] computeMeanAbsShap(float[] flatData, int nSamples, int nFeatures)
+            throws XGBoostError {
+        DMatrix dmat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
+        try {
+            // predictContrib → TreeSHAP contributions (public API in XGBoost4J 3.x)
+            // Binary:     raw[nSamples][nFeatures + 1]                   (last = bias)
+            // Multiclass: raw[nSamples][nClasses * (nFeatures + 1)]       (class-major)
+            float[][] raw = booster.predictContrib(dmat, 0);
+
+            double[][] result = new double[nClasses][nFeatures];
+            int stride = nFeatures + 1; // +1 for the bias term
+
+            if (nClasses == 2 && raw[0].length == stride) {
+                // Binary: contributions are for the positive class (class 1)
+                for (int i = 0; i < nSamples; i++) {
+                    for (int f = 0; f < nFeatures; f++) {
+                        double s = Math.abs(raw[i][f]);
+                        result[0][f] += s;
+                        result[1][f] += s;
+                    }
+                }
+            } else {
+                // Multiclass: class k, feature f → raw[i][k*(nFeatures+1) + f]
+                for (int i = 0; i < nSamples; i++) {
+                    for (int c = 0; c < nClasses; c++) {
+                        for (int f = 0; f < nFeatures; f++) {
+                            result[c][f] += Math.abs(raw[i][stride * c + f]);
+                        }
+                    }
+                }
+            }
+
+            // Average over samples
+            for (int c = 0; c < nClasses; c++) {
+                for (int f = 0; f < nFeatures; f++) {
+                    result[c][f] /= nSamples;
+                }
+            }
+            return result;
+        } finally {
+            dmat.dispose();
+        }
+    }
+
     // ── Serialisation ───────────────────────────────────────────────────────────
 
     /**

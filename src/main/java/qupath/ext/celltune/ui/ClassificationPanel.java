@@ -64,6 +64,8 @@ public class ClassificationPanel extends VBox {
     private final Button confusionsButton = new Button();
     private final Button sampleButton = new Button();
     private final Button reviewButton = new Button();
+    private final CheckBox showFeatureImportanceCheckBox =
+            new CheckBox("Show top 10 feature importance after training");
     private final Label labelCountLabel = new Label("Labels: 0");
     private final Label predCountLabel = new Label("Predictions: 0");
     private final Spinner<Integer> roundsSpinner;
@@ -135,6 +137,10 @@ public class ClassificationPanel extends VBox {
         earlyStopCheckBox.setTooltip(new Tooltip(
                 "Find optimal boosting rounds via validation loss monitoring (patience=20)"));
 
+        showFeatureImportanceCheckBox.setSelected(false);
+        showFeatureImportanceCheckBox.setTooltip(new Tooltip(
+                "After training, compute and display top 10 features by mean |SHAP| value per class"));
+
         // ── Status row ──
         HBox statsRow = new HBox(12, labelCountLabel, predCountLabel);
         statsRow.setAlignment(Pos.CENTER_LEFT);
@@ -182,6 +188,7 @@ public class ClassificationPanel extends VBox {
                 resamplingCombo,
                 autoTuneCheckBox,
                 earlyStopCheckBox,
+                showFeatureImportanceCheckBox,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -445,6 +452,11 @@ public class ClassificationPanel extends VBox {
                     confusionsButton.setDisable(false);
                     sampleButton.setDisable(false);
 
+                    // Auto-show feature importance if checkbox is selected
+                    if (showFeatureImportanceCheckBox.isSelected()) {
+                        doShowFeatureImportance();
+                    }
+
                     // Update spinners if auto-tuned
                     // (Tuned params are now per-model; spinners retain user defaults)
 
@@ -501,6 +513,42 @@ public class ClassificationPanel extends VBox {
         lastAgreementRates = view.getAgreementRates();
         if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
         view.show();
+    }
+
+    private void doShowFeatureImportance() {
+        var imageData = qupath.getImageData();
+        if (imageData == null || classifier == null) return;
+
+        Collection<PathObject> detections = imageData.getHierarchy().getDetectionObjects();
+        if (detections.isEmpty()) {
+            Dialogs.showErrorMessage(STRINGS.getString("name"), "No detections found.");
+            return;
+        }
+
+        List<String> featureNames = classifier.getFeatureNames();
+        if (featureNames == null || featureNames.isEmpty()) return;
+
+        CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+        extractor.setNormalizer(featureNormalizer);
+
+        showFeatureImportanceCheckBox.setDisable(true);
+        Thread worker = new Thread(() -> {
+            try {
+                var result = classifier.computeFeatureImportance(detections, extractor);
+                Platform.runLater(() -> {
+                    showFeatureImportanceCheckBox.setDisable(false);
+                    new FeatureImportanceView(qupath.getStage(), result).show();
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    showFeatureImportanceCheckBox.setDisable(false);
+                    Dialogs.showErrorMessage(STRINGS.getString("name"),
+                            "Feature importance failed: " + ex.getMessage());
+                });
+            }
+        }, "CellTune-FeatureImportance");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void doSampleAndReview() {
