@@ -139,7 +139,10 @@ public class CellTuneExtension implements QuPathExtension {
 
         // Sync state back from panel to extension
         classificationPanel.setOnLabelStoreChanged(ls -> this.labelStore = ls);
-        classificationPanel.setOnPredAllChanged(pa -> this.predAll = pa);
+        classificationPanel.setOnPredAllChanged(pa -> {
+            this.predAll = pa;
+            persistCurrentImagePredictions(qupath);
+        });
         classificationPanel.setOnAgreementRatesChanged(ar -> this.lastAgreementRates = ar);
         classificationPanel.setOnSampledCellsChanged(ids -> this.lastSampledCellIds = ids);
         classificationPanel.setOnClassifierChanged(cls -> this.classifier = cls);
@@ -194,6 +197,17 @@ public class CellTuneExtension implements QuPathExtension {
                                 oldEntry.getImageName(), ex.getMessage());
                     }
                 }
+
+                // Save predictions for the old image so confidence is available
+                // immediately when returning to it.
+                if (predAll != null && predAll.size() > 0) {
+                    try {
+                        ProjectStateManager.saveImagePredictions(project, oldEntry.getImageName(), predAll);
+                    } catch (IOException ex) {
+                        logger.warn("Failed to save predictions for {} on image switch: {}",
+                                oldEntry.getImageName(), ex.getMessage());
+                    }
+                }
             }
         }
 
@@ -225,9 +239,18 @@ public class CellTuneExtension implements QuPathExtension {
                 } catch (IOException ex) {
                     logger.warn("Failed to load sampled cell IDs for {}: {}", newEntry.getImageName(), ex.getMessage());
                 }
+
+                // Load per-image predictions if available.
+                try {
+                    this.predAll = ProjectStateManager.loadImagePredictions(project, newEntry.getImageName());
+                } catch (IOException ex) {
+                    logger.warn("Failed to load predictions for {}: {}",
+                            newEntry.getImageName(), ex.getMessage());
+                }
             } else {
                 this.labelStore = new LabelStore("CellTune");
                 this.lastSampledCellIds = null;
+                this.predAll = null;
             }
             logger.info("Switched to image '{}' — {} labels loaded",
                     newEntry != null ? newEntry.getImageName() : "unknown",
@@ -235,6 +258,7 @@ public class CellTuneExtension implements QuPathExtension {
         } else {
             this.labelStore = new LabelStore("CellTune");
             this.lastSampledCellIds = null;
+            this.predAll = null;
         }
 
         // ── Try to restore feature selection and normalization from project state ──
@@ -292,6 +316,49 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setLastAgreementRates(lastAgreementRates);
         classificationPanel.setLastSampledCellIds(lastSampledCellIds);
         classificationPanel.setImportedTrainingData(importedTrainingRows, importedTrainingFeatureNames);
+    }
+
+    /** Persist Pred_ALL for the current image so manual mode can show confidence after reload. */
+    private void persistCurrentImagePredictions(QuPathGUI qupath) {
+        if (qupath == null || qupath.getProject() == null || qupath.getImageData() == null
+                || predAll == null || predAll.size() == 0) {
+            return;
+        }
+
+        var project = qupath.getProject();
+        var entry = project.getEntry(qupath.getImageData());
+        if (entry == null) return;
+
+        try {
+            ProjectStateManager.saveImagePredictions(project, entry.getImageName(), predAll);
+        } catch (IOException ex) {
+            logger.warn("Failed to save predictions for {}: {}",
+                    entry.getImageName(), ex.getMessage());
+        }
+    }
+
+    /** Load Pred_ALL for the current image if it was previously saved. */
+    private boolean loadCurrentImagePredictions(QuPathGUI qupath) {
+        if (qupath == null || qupath.getProject() == null || qupath.getImageData() == null) {
+            return false;
+        }
+
+        var project = qupath.getProject();
+        var entry = project.getEntry(qupath.getImageData());
+        if (entry == null) return false;
+
+        try {
+            var loaded = ProjectStateManager.loadImagePredictions(project, entry.getImageName());
+            if (loaded != null && loaded.size() > 0) {
+                this.predAll = loaded;
+                syncPanelState();
+                return true;
+            }
+        } catch (IOException ex) {
+            logger.warn("Failed to load predictions for {}: {}",
+                    entry.getImageName(), ex.getMessage());
+        }
+        return false;
     }
 
     /**
@@ -1149,6 +1216,17 @@ public class CellTuneExtension implements QuPathExtension {
             labelStore = new LabelStore("CellTune");
         }
 
+        // First try to restore saved predictions for this image.
+        if (predAll == null || predAll.size() == 0) {
+            loadCurrentImagePredictions(qupath);
+        }
+
+        // If a trained classifier exists, ensure predictions are available for
+        // the current image so manual mode can show per-cell confidence scores.
+        if (predAll == null || predAll.size() == 0) {
+            autoClassifyCurrentImage(qupath);
+        }
+
         // Gather extra class names from CellTypeTable if loaded
         java.util.Set<String> extraClasses = null;
         if (cellTypeTable != null) {
@@ -1204,6 +1282,7 @@ public class CellTuneExtension implements QuPathExtension {
             classifier.predictOnly(detections, extractor, true,
                     msg -> logger.info("[CellTune] Auto-classify: {}", msg));
             predAll = classifier.getPredALL();
+                persistCurrentImagePredictions(qupath);
             imageData.getHierarchy().fireHierarchyChangedEvent(this);
             syncPanelState();
             logger.info("[CellTune] Auto-classified {} cells on current image.",

@@ -15,8 +15,10 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
+import qupath.lib.roi.ROIs;
 
 import java.util.*;
 
@@ -60,6 +62,7 @@ public class ManualLabelToolbar {
 
     // Currently selected detection
     private PathObject currentCell = null;
+    private PathObject highlightMarker = null;
 
     // Optional: predictions for cells (may be null)
     private final PopulationSet predictions;
@@ -154,11 +157,13 @@ public class ManualLabelToolbar {
                             ? pathObjectSelected.getPathClass().getName() : "unlabelled";
                     selectedCellLabel.setText("Selected: " + id + " (" + cls + ")");
                     statusDot.setFill(pathObjectSelected.getPathClass() != null ? Color.LIMEGREEN : Color.WHITE);
+                    updateSelectionHighlight(currentCell);
                     updatePredictionButtons(currentCell);
                 } else {
                     currentCell = null;
                     selectedCellLabel.setText("Select a detection cell in the viewer");
                     statusDot.setFill(Color.WHITE);
+                    clearSelectionHighlight();
                     updatePredictionButtons(null);
                 }
             });
@@ -171,10 +176,23 @@ public class ManualLabelToolbar {
     // ── Model prediction buttons (model 1/model 2) ─────────────────────────
     private void updatePredictionButtons(PathObject cell) {
         predictionBox.getChildren().clear();
-        if (cell == null || predictions == null) return;
+        if (cell == null) return;
+
+        if (predictions == null) {
+            Label unavailable = new Label("Confidence unavailable: train/classify first");
+            unavailable.setStyle("-fx-font-size: 11px; -fx-text-fill: #666666;");
+            predictionBox.getChildren().add(unavailable);
+            return;
+        }
+
         String cellId = cell.getID().toString();
         CellPrediction pred = predictions.get(cellId);
-        if (pred == null) return;
+        if (pred == null) {
+            Label unavailable = new Label("Confidence unavailable for selected cell");
+            unavailable.setStyle("-fx-font-size: 11px; -fx-text-fill: #666666;");
+            predictionBox.getChildren().add(unavailable);
+            return;
+        }
 
         // Model 1 button
         Button mdl1Btn = new Button(String.format("Model 1: %s (%.0f%%)",
@@ -198,7 +216,45 @@ public class ManualLabelToolbar {
             imageData.getHierarchy().getSelectionModel()
                     .removePathObjectSelectionListener(selectionListener);
         }
+        clearSelectionHighlight();
         selectionListener = null;
+    }
+
+    private void updateSelectionHighlight(PathObject cell) {
+        var imageData = qupath.getImageData();
+        if (imageData == null || cell == null || cell.getROI() == null) {
+            clearSelectionHighlight();
+            return;
+        }
+
+        var hierarchy = imageData.getHierarchy();
+        if (highlightMarker != null) {
+            hierarchy.removeObject(highlightMarker, false);
+            highlightMarker = null;
+        }
+
+        var roi = cell.getROI();
+        double cx = roi.getCentroidX();
+        double cy = roi.getCentroidY();
+        double r = Math.max(roi.getBoundsWidth(), roi.getBoundsHeight()) * 0.8;
+        if (r < 15) r = 15;
+
+        var highlightRoi = ROIs.createEllipseROI(
+                cx - r, cy - r, r * 2, r * 2, roi.getImagePlane());
+        var highlightClass = PathClass.fromString("CellTune-Highlight",
+                (255 << 16) | (0 << 8) | 255);
+        highlightMarker = PathObjects.createAnnotationObject(highlightRoi, highlightClass);
+        highlightMarker.setLocked(true);
+        hierarchy.addObject(highlightMarker);
+    }
+
+    private void clearSelectionHighlight() {
+        if (highlightMarker == null) return;
+        var imageData = qupath.getImageData();
+        if (imageData != null) {
+            imageData.getHierarchy().removeObject(highlightMarker, false);
+        }
+        highlightMarker = null;
     }
 
     // ── Class buttons ───────────────────────────────────────────────────────

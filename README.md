@@ -317,6 +317,7 @@ The default cofactor is 1. Configure per-feature transforms and cofactor through
 
 - Native H5AD export (currently generates CSV + Python conversion script)
 - Auto-tune cofactor estimation from data distribution
+- look at bug with using mac screenshot freezing extension on mac
 
 ## License
 
