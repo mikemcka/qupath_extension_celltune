@@ -21,8 +21,8 @@ dependencies {
     shadow(libs.qupath.fxtras)
 
     // ML models — bundled into the shadow jar
-    implementation("ml.dmlc:xgboost4j_2.13:3.2.0")
-    shadow("ml.dmlc:xgboost4j_2.13:3.2.0")
+    implementation("ml.dmlc:xgboost4j-gpu_2.13:2.1.4")
+    shadow("ml.dmlc:xgboost4j-gpu_2.13:2.1.4")
     implementation("io.github.metarank:lightgbm4j:4.6.0-2")
     shadow("io.github.metarank:lightgbm4j:4.6.0-2")
 
