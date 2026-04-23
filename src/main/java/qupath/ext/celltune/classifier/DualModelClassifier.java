@@ -722,6 +722,12 @@ public class DualModelClassifier {
     public DoubleProperty progressProperty() { return progress; }
     public StringProperty statusProperty()   { return status; }
 
+    /** Synchronously reset progress and status to their initial state. */
+    public void resetProgress() {
+        progress.set(0);
+        status.set("");
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────────────
 
     /** Release native resources held by model boosters. */

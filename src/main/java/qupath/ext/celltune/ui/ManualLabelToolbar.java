@@ -60,8 +60,8 @@ public class ManualLabelToolbar {
     private final CheckBox autoAdvance = new CheckBox("Auto-advance to next detection");
 
 
-    // Currently selected detection
-    private PathObject currentCell = null;
+    // Currently selected detections (may be more than one)
+    private List<PathObject> selectedCells = new ArrayList<>();
     private PathObject highlightMarker = null;
 
     // Optional: predictions for cells (may be null)
@@ -150,17 +150,29 @@ public class ManualLabelToolbar {
 
         selectionListener = (pathObjectSelected, previousObject, allSelected) -> {
             javafx.application.Platform.runLater(() -> {
-                if (pathObjectSelected != null && pathObjectSelected.isDetection()) {
-                    currentCell = pathObjectSelected;
-                    String id = shortId(pathObjectSelected);
-                    String cls = pathObjectSelected.getPathClass() != null
-                            ? pathObjectSelected.getPathClass().getName() : "unlabelled";
+                // Collect all selected detections
+                selectedCells = new ArrayList<>();
+                if (allSelected != null) {
+                    for (PathObject obj : allSelected) {
+                        if (obj.isDetection()) selectedCells.add(obj);
+                    }
+                }
+
+                if (selectedCells.size() == 1) {
+                    PathObject cell = selectedCells.get(0);
+                    String id = shortId(cell);
+                    String cls = cell.getPathClass() != null
+                            ? cell.getPathClass().getName() : "unlabelled";
                     selectedCellLabel.setText("Selected: " + id + " (" + cls + ")");
-                    statusDot.setFill(pathObjectSelected.getPathClass() != null ? Color.LIMEGREEN : Color.WHITE);
-                    updateSelectionHighlight(currentCell);
-                    updatePredictionButtons(currentCell);
+                    statusDot.setFill(cell.getPathClass() != null ? Color.LIMEGREEN : Color.WHITE);
+                    updateSelectionHighlight(cell);
+                    updatePredictionButtons(cell);
+                } else if (selectedCells.size() > 1) {
+                    selectedCellLabel.setText(selectedCells.size() + " cells selected");
+                    statusDot.setFill(Color.LIMEGREEN);
+                    clearSelectionHighlight();
+                    updatePredictionButtons(null);
                 } else {
-                    currentCell = null;
                     selectedCellLabel.setText("Select a detection cell in the viewer");
                     statusDot.setFill(Color.WHITE);
                     clearSelectionHighlight();
@@ -222,7 +234,8 @@ public class ManualLabelToolbar {
 
     private void updateSelectionHighlight(PathObject cell) {
         var imageData = qupath.getImageData();
-        if (imageData == null || cell == null || cell.getROI() == null) {
+        if (imageData == null || cell == null || cell.getROI() == null
+                || selectedCells.size() > 1) {
             clearSelectionHighlight();
             return;
         }
@@ -320,21 +333,24 @@ public class ManualLabelToolbar {
     // ── Label assignment ────────────────────────────────────────────────────
 
     private void assignLabel(String className) {
-        if (currentCell == null) {
+        if (selectedCells.isEmpty()) {
             return;
         }
 
-        // Set PathClass on the cell
-        currentCell.setPathClass(PathClass.fromString(className));
+        PathClass pc = PathClass.fromString(className);
+        for (PathObject cell : selectedCells) {
+            cell.setPathClass(pc);
+            labelStore.setLabel(cell.getID().toString(), className);
+        }
 
-        // Record in ground-truth label store
-        String cellId = currentCell.getID().toString();
-        labelStore.setLabel(cellId, className);
-
-        logger.info("Manual label: cell {} → {}", cellId, className);
+        logger.info("Manual label: {} cell(s) → {}", selectedCells.size(), className);
 
         // Update status
-        selectedCellLabel.setText("Selected: " + shortId(currentCell) + " (" + className + ")");
+        if (selectedCells.size() == 1) {
+            selectedCellLabel.setText("Selected: " + shortId(selectedCells.get(0)) + " (" + className + ")");
+        } else {
+            selectedCellLabel.setText(selectedCells.size() + " cells labelled → " + className);
+        }
         statusDot.setFill(Color.LIMEGREEN);
         updateLabelCount();
 
@@ -342,18 +358,19 @@ public class ManualLabelToolbar {
         var imageData = qupath.getImageData();
         if (imageData != null) {
             imageData.getHierarchy().fireObjectClassificationsChangedEvent(this,
-                    Collections.singleton(currentCell));
+                    new ArrayList<>(selectedCells));
         }
 
-        // Auto-advance: select next detection in the hierarchy
-        if (autoAdvance.isSelected()) {
+        // Auto-advance: only meaningful for single-cell labelling
+        if (autoAdvance.isSelected() && selectedCells.size() == 1) {
             advanceToNextDetection();
         }
     }
 
     private void advanceToNextDetection() {
         var imageData = qupath.getImageData();
-        if (imageData == null || currentCell == null) return;
+        if (imageData == null || selectedCells.isEmpty()) return;
+        PathObject currentCell = selectedCells.get(0);
 
         var detections = new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
         int idx = detections.indexOf(currentCell);

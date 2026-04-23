@@ -854,7 +854,8 @@ public class CellTuneExtension implements QuPathExtension {
         progressStage.setScene(new javafx.scene.Scene(progressBox));
         progressStage.show();
 
-        // Bind progress bar and status label to classifier properties
+        // Reset and bind progress bar and status label to classifier properties
+        classifier.resetProgress();
         progressBar.progressProperty().bind(classifier.progressProperty());
         statusLabel.textProperty().bind(classifier.statusProperty());
 
@@ -1179,18 +1180,16 @@ public class CellTuneExtension implements QuPathExtension {
             qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
         for (PathObject anno : hierarchy.getAnnotationObjects()) {
             if (anno.getPathClass() == null || anno.getROI() == null) continue;
+            // Only point annotations count as ground truth — area/region annotations
+            // describe tissue regions, not individual cell labels.
+            if (!anno.getROI().isPoint()) continue;
             String cls = anno.getPathClass().toString();
 
-            List<PathObject> hits;
-            if (anno.getROI().isPoint()) {
-                hits = new java.util.ArrayList<>();
-                for (var pt : anno.getROI().getAllPoints()) {
-                    hits.addAll(PathObjectTools.getObjectsForLocation(
-                            hierarchy, pt.getX(), pt.getY(),
-                            anno.getROI().getZ(), anno.getROI().getT(), -1));
-                }
-            } else {
-                hits = new java.util.ArrayList<>(hierarchy.getAllDetectionsForROI(anno.getROI()));
+            List<PathObject> hits = new java.util.ArrayList<>();
+            for (var pt : anno.getROI().getAllPoints()) {
+                hits.addAll(PathObjectTools.getObjectsForLocation(
+                        hierarchy, pt.getX(), pt.getY(),
+                        anno.getROI().getZ(), anno.getROI().getT(), -1));
             }
 
             for (PathObject det : hits) {
