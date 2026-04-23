@@ -9,6 +9,7 @@ import qupath.ext.celltune.classifier.DualModelClassifier;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
+import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.*;
 import qupath.ext.celltune.model.FeatureNormalizer;
@@ -48,6 +49,8 @@ public class ClassificationPanel extends VBox {
     private double[] lastAgreementRates;
     private List<String> lastSampledCellIds;
     private FeatureNormalizer featureNormalizer;
+    private List<GroundTruthIO.TrainingRow> importedTrainingRows;
+    private List<String> importedTrainingFeatureNames;
 
     // ── Callbacks ──
     private Consumer<LabelStore> onLabelStoreChanged;
@@ -68,6 +71,7 @@ public class ClassificationPanel extends VBox {
             new CheckBox("Show top 10 feature importance after training");
     private final Label labelCountLabel = new Label("Labels: 0");
     private final Label predCountLabel = new Label("Predictions: 0");
+    private final Label importedCountLabel = new Label("Imported rows: 0");
     private final Spinner<Integer> roundsSpinner;
     private final Spinner<Integer> depthSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
@@ -142,7 +146,7 @@ public class ClassificationPanel extends VBox {
                 "After training, compute and display top 10 features by mean |SHAP| value per class"));
 
         // ── Status row ──
-        HBox statsRow = new HBox(12, labelCountLabel, predCountLabel);
+        HBox statsRow = new HBox(12, labelCountLabel, predCountLabel, importedCountLabel);
         statsRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Progress ──
@@ -220,6 +224,11 @@ public class ClassificationPanel extends VBox {
     public void setLastSampledCellIds(List<String> ids) {
         this.lastSampledCellIds = ids;
         reviewButton.setDisable(ids == null || ids.isEmpty());
+    }
+    public void setImportedTrainingData(List<GroundTruthIO.TrainingRow> rows, List<String> featureNames) {
+        this.importedTrainingRows = rows == null ? null : List.copyOf(rows);
+        this.importedTrainingFeatureNames = featureNames == null ? null : List.copyOf(featureNames);
+        refreshStats();
     }
 
     // ── Callbacks ──
@@ -351,6 +360,10 @@ public class ClassificationPanel extends VBox {
         final boolean earlyStopSelected = earlyStopCheckBox.isSelected();
         final List<String> finalFeatureNames = featureNames;
         final var projectRef = project;
+        final List<GroundTruthIO.TrainingRow> importedRowsSnapshot =
+            importedTrainingRows == null ? null : List.copyOf(importedTrainingRows);
+        final List<String> importedFeatureNamesSnapshot =
+            importedTrainingFeatureNames == null ? null : List.copyOf(importedTrainingFeatureNames);
         Thread trainThread = new Thread(() -> {
             try {
                 // Auto-backup labels
@@ -418,6 +431,44 @@ public class ClassificationPanel extends VBox {
                     }
                 }
 
+                // Always include explicitly imported training rows (if any).
+                if (importedRowsSnapshot != null && !importedRowsSnapshot.isEmpty()
+                        && importedFeatureNamesSnapshot != null && !importedFeatureNamesSnapshot.isEmpty()) {
+
+                    if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
+                    if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
+
+                    int[] featureMap = buildFeatureIndexMap(importedFeatureNamesSnapshot, finalFeatureNames);
+                    int mappedFeatureCount = 0;
+                    for (int idx : featureMap) {
+                        if (idx >= 0) mappedFeatureCount++;
+                    }
+
+                    if (mappedFeatureCount > 0) {
+                        int added = 0;
+                        for (var row : importedRowsSnapshot) {
+                            if (row == null || row.label() == null || row.label().isBlank()) continue;
+                            float[] src = row.features();
+                            if (src == null) continue;
+
+                            float[] aligned = new float[finalFeatureNames.size()];
+                            for (int f = 0; f < aligned.length; f++) {
+                                int srcIdx = featureMap[f];
+                                if (srcIdx >= 0 && srcIdx < src.length) {
+                                    float val = src[srcIdx];
+                                    aligned[f] = Float.isFinite(val) ? val : 0f;
+                                }
+                            }
+
+                            supplementaryRows.add(aligned);
+                            supplementaryLabels.add(row.label());
+                            added++;
+                        }
+                    }
+
+                    // Imported rows are now available as supplementary training data.
+                }
+
                 classifier.trainAndPredict(detections, storeCopy, extractor,
                         supplementaryRows, supplementaryLabels,
                         resamplingStrategy,
@@ -434,7 +485,8 @@ public class ClassificationPanel extends VBox {
                             storeCopy, state.getFeatureNames(), state.getClassNames(),
                             state.getXgboostBytes(), state.getLightgbmBytes(),
                             state.getRfModel1Bytes(), state.getRfModel2Bytes(),
-                            state.getModel1Type(), state.getModel2Type());
+                            state.getModel1Type(), state.getModel2Type(),
+                            importedFeatureNamesSnapshot, importedRowsSnapshot);
 
                     // Save per-image labels for cross-image pooling
                     var imgEntry = projectRef.getEntry(imageData);
@@ -732,8 +784,10 @@ public class ClassificationPanel extends VBox {
     private void refreshStats() {
         int labelCount = (labelStore != null) ? labelStore.size() : 0;
         int predCount = (predAll != null) ? predAll.size() : 0;
+        int importedCount = (importedTrainingRows != null) ? importedTrainingRows.size() : 0;
         labelCountLabel.setText("Labels: " + labelCount);
         predCountLabel.setText("Predictions: " + predCount);
+        importedCountLabel.setText("Imported rows: " + importedCount);
     }
 
     private void collectLabelsFromAnnotations(LabelStore store) {
@@ -787,5 +841,20 @@ public class ClassificationPanel extends VBox {
             }
         }
         return filtered;
+    }
+
+    private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
+                                              List<String> targetFeatureNames) {
+        Map<String, Integer> sourceByName = new HashMap<>();
+        for (int i = 0; i < sourceFeatureNames.size(); i++) {
+            sourceByName.put(sourceFeatureNames.get(i).strip().toLowerCase(Locale.ROOT), i);
+        }
+
+        int[] map = new int[targetFeatureNames.size()];
+        for (int i = 0; i < targetFeatureNames.size(); i++) {
+            String key = targetFeatureNames.get(i).strip().toLowerCase(Locale.ROOT);
+            map[i] = sourceByName.getOrDefault(key, -1);
+        }
+        return map;
     }
 }

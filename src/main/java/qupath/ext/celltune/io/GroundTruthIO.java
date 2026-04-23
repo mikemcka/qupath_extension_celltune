@@ -28,7 +28,7 @@ import java.util.stream.IntStream;
  * Two formats are supported:
  * <ul>
  *   <li><b>CSV</b> — human-readable, one row per labelled cell.
- *       Columns: {@code Label, CentroidX, CentroidY, Feature1, Feature2, …}</li>
+ *       Columns: {@code Image, Label, CentroidX, CentroidY, Feature1, Feature2, …}</li>
  *   <li><b>JSON</b> — machine-readable, includes metadata (source project,
  *       image name, feature names, class names, timestamp)</li>
  * </ul>
@@ -39,6 +39,40 @@ public class GroundTruthIO {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private GroundTruthIO() {} // utility class
+
+    /** Parsed CSV layout supporting both Image-first and Label-first exports. */
+    private record CsvLayout(int labelCol, int centroidXCol, int centroidYCol, int firstFeatureCol) {}
+
+    private static CsvLayout parseCsvLayout(String headerLine) {
+        String[] cols = headerLine.split(",", -1);
+        int labelIdx = -1;
+        int xIdx = -1;
+        int yIdx = -1;
+
+        for (int i = 0; i < cols.length; i++) {
+            String col = cols[i].strip();
+            if (col.equalsIgnoreCase("Label")) labelIdx = i;
+            else if (col.equalsIgnoreCase("CentroidX")) xIdx = i;
+            else if (col.equalsIgnoreCase("CentroidY")) yIdx = i;
+        }
+
+        // Fast-path known schemas
+        if (cols.length >= 4 && cols[0].strip().equalsIgnoreCase("Image")
+                && cols[1].strip().equalsIgnoreCase("Label")) {
+            return new CsvLayout(1, 2, 3, 4);
+        }
+        if (cols.length >= 3 && cols[0].strip().equalsIgnoreCase("Label")) {
+            return new CsvLayout(0, 1, 2, 3);
+        }
+
+        // Generic fallback by header names
+        if (labelIdx >= 0 && xIdx >= 0 && yIdx >= 0) {
+            int firstFeature = Math.max(labelIdx, Math.max(xIdx, yIdx)) + 1;
+            return new CsvLayout(labelIdx, xIdx, yIdx, firstFeature);
+        }
+
+        return null;
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  CSV export/import  — simple, human-editable
@@ -218,23 +252,34 @@ public class GroundTruthIO {
 
         try (BufferedReader reader = Files.newBufferedReader(csvPath, StandardCharsets.UTF_8)) {
             String line;
-            boolean headerSeen = false;
+            CsvLayout layout = null;
 
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("#") || line.isBlank()) continue;
-                if (!headerSeen) {
-                    headerSeen = true; // skip column header
+                if (layout == null) {
+                    layout = parseCsvLayout(line);
+                    if (layout == null) {
+                        throw new IOException("Unsupported ground-truth CSV header format");
+                    }
                     continue;
                 }
 
-                String[] parts = line.split(",", 4);
-                if (parts.length < 3) continue;
+                String[] parts = line.split(",", -1);
+                int requiredCol = Math.max(layout.labelCol(), Math.max(layout.centroidXCol(), layout.centroidYCol()));
+                if (parts.length <= requiredCol) {
+                    skipped++;
+                    continue;
+                }
 
-                String label = parts[0].strip();
+                String label = parts[layout.labelCol()].strip();
+                if (label.isEmpty()) {
+                    skipped++;
+                    continue;
+                }
                 double importX, importY;
                 try {
-                    importX = Double.parseDouble(parts[1].strip());
-                    importY = Double.parseDouble(parts[2].strip());
+                    importX = Double.parseDouble(parts[layout.centroidXCol()].strip());
+                    importY = Double.parseDouble(parts[layout.centroidYCol()].strip());
                 } catch (NumberFormatException e) {
                     skipped++;
                     continue;
@@ -292,27 +337,31 @@ public class GroundTruthIO {
 
         try (BufferedReader reader = Files.newBufferedReader(csvPath, StandardCharsets.UTF_8)) {
             String line;
-            boolean headerSeen = false;
+            CsvLayout layout = null;
             int nFeatures = -1;
 
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("#") || line.isBlank()) continue;
-                if (!headerSeen) {
-                    headerSeen = true;
-                    // Count features from header (Label + CentroidX + CentroidY + features)
-                    nFeatures = line.split(",").length - 3;
+                if (layout == null) {
+                    layout = parseCsvLayout(line);
+                    if (layout == null) {
+                        throw new IOException("Unsupported ground-truth CSV header format");
+                    }
+                    nFeatures = Math.max(0, line.split(",", -1).length - layout.firstFeatureCol());
                     continue;
                 }
 
-                String[] parts = line.split(",");
-                if (parts.length < 4) continue;
+                String[] parts = line.split(",", -1);
+                if (parts.length <= layout.labelCol()) continue;
 
-                String label = parts[0].strip();
-                // Skip centroidX (1) and centroidY (2), read features from index 3 onward
+                String label = parts[layout.labelCol()].strip();
+                if (label.isEmpty()) continue;
+
+                // Read features from first feature column onward
                 float[] features = new float[nFeatures];
-                for (int i = 0; i < nFeatures && (i + 3) < parts.length; i++) {
+                for (int i = 0; i < nFeatures && (layout.firstFeatureCol() + i) < parts.length; i++) {
                     try {
-                        features[i] = Float.parseFloat(parts[i + 3].strip());
+                        features[i] = Float.parseFloat(parts[layout.firstFeatureCol() + i].strip());
                     } catch (NumberFormatException e) {
                         features[i] = 0f;
                     }
@@ -339,10 +388,13 @@ public class GroundTruthIO {
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("#") || line.isBlank()) continue;
                 // First non-comment line is the header
-                String[] parts = line.split(",");
-                // Skip Label, CentroidX, CentroidY
+                String[] parts = line.split(",", -1);
+                CsvLayout layout = parseCsvLayout(line);
+                if (layout == null) return List.of();
+
+                // Skip fixed metadata columns before features
                 List<String> names = new ArrayList<>();
-                for (int i = 3; i < parts.length; i++) {
+                for (int i = layout.firstFeatureCol(); i < parts.length; i++) {
                     names.add(parts[i].strip());
                 }
                 return names;

@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.ModelType;
+import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.lib.projects.Project;
 
@@ -14,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +47,11 @@ public class ProjectStateManager {
      * Internal JSON-serialisable structure for the full classifier state.
      */
     public static class SavedState {
+        public static class SavedTrainingRow {
+            public String label;
+            public float[] features;
+        }
+
         public String name;
         public String timestamp;
         public List<String> featureNames;
@@ -60,6 +67,8 @@ public class ProjectStateManager {
         public List<String> selectedFeatures;
         public Map<String, String> featureTransforms; // feature name → transform name
         public Double arcsinhCofactor;
+        public List<String> importedTrainingFeatureNames;
+        public List<SavedTrainingRow> importedTrainingRows;
     }
 
     /**
@@ -99,8 +108,22 @@ public class ProjectStateManager {
                                  byte[] rfModel1Bytes,
                                  byte[] rfModel2Bytes,
                                  ModelType model1Type,
-                                 ModelType model2Type) throws IOException {
+                                 ModelType model2Type,
+                                 List<String> importedTrainingFeatureNames,
+                                 List<GroundTruthIO.TrainingRow> importedTrainingRows) throws IOException {
         Path dir = getCellTuneDir(project);
+        Path outPath = dir.resolve(STATE_FILENAME);
+
+        SavedState existing = null;
+        if (Files.exists(outPath)) {
+            try {
+                String existingJson = Files.readString(outPath, StandardCharsets.UTF_8);
+                existing = GSON.fromJson(existingJson, SavedState.class);
+            } catch (Exception ex) {
+                logger.warn("Failed to read existing state for imported training preservation: {}",
+                        ex.getMessage());
+            }
+        }
 
         SavedState state = new SavedState();
         state.name = classifierName;
@@ -127,12 +150,41 @@ public class ProjectStateManager {
         state.featureTransforms = null; // to be set by caller
         state.arcsinhCofactor = null; // to be set by caller
 
-        Path outPath = dir.resolve(STATE_FILENAME);
-        String json = GSON.toJson(state);
-        Files.writeString(outPath, json, StandardCharsets.UTF_8);
+        if (importedTrainingFeatureNames != null || importedTrainingRows != null) {
+            state.importedTrainingFeatureNames =
+                    importedTrainingFeatureNames == null || importedTrainingFeatureNames.isEmpty()
+                            ? null
+                            : List.copyOf(importedTrainingFeatureNames);
+            state.importedTrainingRows = toSavedTrainingRows(importedTrainingRows);
+        } else if (existing != null) {
+            // Preserve previously saved imported training data if caller didn't provide it.
+            state.importedTrainingFeatureNames = existing.importedTrainingFeatureNames;
+            state.importedTrainingRows = existing.importedTrainingRows;
+        }
+
+        writeState(outPath, state);
         logger.info("Saved classifier state to {} ({} labels, {} features)",
                 outPath, labelStore.size(), featureNames.size());
         return outPath;
+    }
+
+    /**
+     * Backward-compatible overload without imported training data.
+     */
+    public static Path saveState(Project<?> project,
+                                 String classifierName,
+                                 LabelStore labelStore,
+                                 List<String> featureNames,
+                                 List<String> classNames,
+                                 byte[] xgboostBytes,
+                                 byte[] lightgbmBytes,
+                                 byte[] rfModel1Bytes,
+                                 byte[] rfModel2Bytes,
+                                 ModelType model1Type,
+                                 ModelType model2Type) throws IOException {
+        return saveState(project, classifierName, labelStore, featureNames, classNames,
+                xgboostBytes, lightgbmBytes, rfModel1Bytes, rfModel2Bytes,
+                model1Type, model2Type, null, null);
     }
 
     /**
@@ -157,6 +209,36 @@ public class ProjectStateManager {
                 state.name, statePath,
                 state.labels != null ? state.labels.size() : 0);
         return state;
+    }
+
+    /**
+     * Persist imported training vectors/labels immediately, even before model training.
+     */
+    public static Path saveImportedTrainingData(Project<?> project,
+                                                List<String> featureNames,
+                                                List<GroundTruthIO.TrainingRow> rows) throws IOException {
+        Path dir = getCellTuneDir(project);
+        Path statePath = dir.resolve(STATE_FILENAME);
+
+        SavedState state;
+        if (Files.exists(statePath)) {
+            String json = Files.readString(statePath, StandardCharsets.UTF_8);
+            state = GSON.fromJson(json, SavedState.class);
+            if (state == null) state = new SavedState();
+        } else {
+            state = new SavedState();
+        }
+
+        if (state.name == null || state.name.isBlank()) state.name = "CellTune";
+        state.timestamp = LocalDateTime.now().format(TIMESTAMP_FMT);
+        state.importedTrainingFeatureNames =
+                featureNames == null || featureNames.isEmpty() ? null : List.copyOf(featureNames);
+        state.importedTrainingRows = toSavedTrainingRows(rows);
+
+        writeState(statePath, state);
+        logger.info("Saved imported training data to {} ({} rows)",
+                statePath, rows == null ? 0 : rows.size());
+        return statePath;
     }
 
     /**
@@ -209,6 +291,35 @@ public class ProjectStateManager {
     }
 
     /**
+     * Get imported training feature names from a saved state.
+     */
+    public static List<String> getImportedTrainingFeatureNames(SavedState state) {
+        if (state == null || state.importedTrainingFeatureNames == null
+                || state.importedTrainingFeatureNames.isEmpty()) {
+            return null;
+        }
+        return new ArrayList<>(state.importedTrainingFeatureNames);
+    }
+
+    /**
+     * Decode imported training rows from a saved state.
+     */
+    public static List<GroundTruthIO.TrainingRow> decodeImportedTrainingRows(SavedState state) {
+        if (state == null || state.importedTrainingRows == null || state.importedTrainingRows.isEmpty()) {
+            return null;
+        }
+
+        List<GroundTruthIO.TrainingRow> rows = new ArrayList<>();
+        for (var saved : state.importedTrainingRows) {
+            if (saved == null || saved.label == null || saved.label.isBlank() || saved.features == null) {
+                continue;
+            }
+            rows.add(new GroundTruthIO.TrainingRow(saved.label, saved.features.clone()));
+        }
+        return rows.isEmpty() ? null : rows;
+    }
+
+    /**
      * Get the model 1 type from a saved state, defaulting to XGBOOST.
      */
     public static ModelType getModel1Type(SavedState state) {
@@ -238,7 +349,28 @@ public class ProjectStateManager {
                                  byte[] lightgbmBytes) throws IOException {
         return saveState(project, classifierName, labelStore, featureNames, classNames,
                 xgboostBytes, lightgbmBytes, null, null,
-                ModelType.XGBOOST, ModelType.LIGHTGBM);
+                ModelType.XGBOOST, ModelType.LIGHTGBM,
+                null, null);
+    }
+
+    private static List<SavedState.SavedTrainingRow> toSavedTrainingRows(List<GroundTruthIO.TrainingRow> rows) {
+        if (rows == null || rows.isEmpty()) return null;
+        List<SavedState.SavedTrainingRow> out = new ArrayList<>(rows.size());
+        for (var row : rows) {
+            if (row == null || row.label() == null || row.label().isBlank() || row.features() == null) {
+                continue;
+            }
+            SavedState.SavedTrainingRow saved = new SavedState.SavedTrainingRow();
+            saved.label = row.label();
+            saved.features = row.features().clone();
+            out.add(saved);
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    private static void writeState(Path statePath, SavedState state) throws IOException {
+        String json = GSON.toJson(state);
+        Files.writeString(statePath, json, StandardCharsets.UTF_8);
     }
 
     /**

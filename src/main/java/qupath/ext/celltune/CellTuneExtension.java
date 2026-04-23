@@ -96,6 +96,10 @@ public class CellTuneExtension implements QuPathExtension {
     private double[] lastAgreementRates;
     /** Cell IDs sampled for review. */
     private List<String> lastSampledCellIds;
+    /** Training rows imported from CSV (feature vectors + labels). */
+    private List<GroundTruthIO.TrainingRow> importedTrainingRows;
+    /** Feature names associated with importedTrainingRows. */
+    private List<String> importedTrainingFeatureNames;
     /** Docked classification panel (Phase 7). */
     private ClassificationPanel classificationPanel;
 
@@ -131,6 +135,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setSelectedFeatures(selectedFeatures);
         classificationPanel.setCellTypeTable(cellTypeTable);
         classificationPanel.setPredAll(predAll);
+        classificationPanel.setImportedTrainingData(importedTrainingRows, importedTrainingFeatureNames);
 
         // Sync state back from panel to extension
         classificationPanel.setOnLabelStoreChanged(ls -> this.labelStore = ls);
@@ -238,6 +243,8 @@ public class CellTuneExtension implements QuPathExtension {
                 var state = ProjectStateManager.loadState(project);
                 if (state != null) {
                     if (state.selectedFeatures != null) this.selectedFeatures = new ArrayList<>(state.selectedFeatures);
+                    this.importedTrainingFeatureNames = ProjectStateManager.getImportedTrainingFeatureNames(state);
+                    this.importedTrainingRows = ProjectStateManager.decodeImportedTrainingRows(state);
                     if (state.featureTransforms != null || state.arcsinhCofactor != null) {
                         FeatureNormalizer norm = new FeatureNormalizer();
                         if (state.featureTransforms != null) norm.fromTransformMap(state.featureTransforms);
@@ -284,6 +291,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setPredAll(predAll);
         classificationPanel.setLastAgreementRates(lastAgreementRates);
         classificationPanel.setLastSampledCellIds(lastSampledCellIds);
+        classificationPanel.setImportedTrainingData(importedTrainingRows, importedTrainingFeatureNames);
     }
 
     /**
@@ -555,10 +563,17 @@ public class CellTuneExtension implements QuPathExtension {
             }
         }
 
-        if (labelStore.size() < 10) {
+        var currentImageLabelStore = filterLabelStoreToImage(labelStore, imageData);
+        int currentImageLabelCount = currentImageLabelStore.size();
+        int importedRowCount = importedTrainingRows != null ? importedTrainingRows.size() : 0;
+
+        if (currentImageLabelCount < 10 && importedRowCount == 0) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "Need at least 10 labelled cells to train. Found: " + labelStore.size()
-                    + "\nUse point annotations placed on detections to label cells.");
+                "Need at least 10 labelled cells to train, or imported training rows. Found "
+                + currentImageLabelCount + " labelled cells in current image and "
+                + importedRowCount + " imported rows."
+                + "\nUse point annotations placed on detections to label cells, "
+                + "or import training data.");
             return;
         }
 
@@ -677,7 +692,10 @@ public class CellTuneExtension implements QuPathExtension {
         confirmAlert.setTitle(EXTENSION_NAME);
         confirmAlert.setHeaderText("Ready to Train");
         String confirmMsg = featureNames.size() + " features, "
-                + labelStore.size() + " labelled cells in current image.";
+            + currentImageLabelCount + " labelled cells in current image.";
+        if (importedRowCount > 0) {
+            confirmMsg += "\nImported training rows available: " + importedRowCount + ".";
+        }
         if (hasMultipleImages) {
             confirmMsg += "\n\nThis project has " + allImageNames.size()
                     + " images. Check the box below to include labelled\n"
@@ -739,6 +757,11 @@ public class CellTuneExtension implements QuPathExtension {
         final List<String> imagesToClassify = selectedImages;
         final List<String> finalFeatureNames = featureNames;
         final String currentImageNameFinal = currentImageName;
+        final LabelStore currentImageLabelStoreFinal = currentImageLabelStore;
+        final List<GroundTruthIO.TrainingRow> importedRowsSnapshot =
+            importedTrainingRows == null ? null : List.copyOf(importedTrainingRows);
+        final List<String> importedFeatureNamesSnapshot =
+            importedTrainingFeatureNames == null ? null : List.copyOf(importedTrainingFeatureNames);
 
         // ── Progress dialog ─────────────────────────────────────────────────
         var progressStage = new javafx.stage.Stage();
@@ -773,17 +796,54 @@ public class CellTuneExtension implements QuPathExtension {
             try {
                 // Auto-backup labels before training
                 if (project != null) {
-                    ProjectStateManager.backupLabels(project, labelStore);
+                    ProjectStateManager.backupLabels(project, currentImageLabelStoreFinal);
                 }
 
                 // Collect supplementary training data from other project images
-                List<float[]> supplementaryRows = null;
-                List<String> supplementaryLabels = null;
+                List<float[]> supplementaryRows = new java.util.ArrayList<>();
+                List<String> supplementaryLabels = new java.util.ArrayList<>();
+
+                // Include imported training rows (feature-name aligned).
+                if (importedRowsSnapshot != null && !importedRowsSnapshot.isEmpty()
+                        && importedFeatureNamesSnapshot != null && !importedFeatureNamesSnapshot.isEmpty()) {
+                    int[] featureMap = buildFeatureIndexMap(importedFeatureNamesSnapshot, finalFeatureNames);
+                    int mappedFeatureCount = 0;
+                    for (int idx : featureMap) {
+                        if (idx >= 0) mappedFeatureCount++;
+                    }
+
+                    if (mappedFeatureCount > 0) {
+                        int added = 0;
+                        for (var row : importedRowsSnapshot) {
+                            if (row == null || row.label() == null || row.label().isBlank()) continue;
+                            float[] src = row.features();
+                            if (src == null) continue;
+
+                            float[] aligned = new float[finalFeatureNames.size()];
+                            for (int f = 0; f < aligned.length; f++) {
+                                int srcIdx = featureMap[f];
+                                if (srcIdx >= 0 && srcIdx < src.length) {
+                                    float val = src[srcIdx];
+                                    aligned[f] = Float.isFinite(val) ? val : 0f;
+                                }
+                            }
+                            supplementaryRows.add(aligned);
+                            supplementaryLabels.add(row.label());
+                            added++;
+                        }
+
+                        if (added > 0) {
+                            int addedFinal = added;
+                            int mapped = mappedFeatureCount;
+                            javafx.application.Platform.runLater(() ->
+                                logArea.appendText("Merged " + addedFinal + " imported training rows ("
+                                            + mapped + "/" + finalFeatureNames.size()
+                                            + " features aligned).\n"));
+                        }
+                    }
+                }
 
                 if (poolAllImages && project != null) {
-                    supplementaryRows = new java.util.ArrayList<>();
-                    supplementaryLabels = new java.util.ArrayList<>();
-
                     @SuppressWarnings("unchecked")
                     var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
                     var currentEntry = project.getEntry(imageData);
@@ -851,8 +911,11 @@ public class CellTuneExtension implements QuPathExtension {
                     }
                 }
 
-                classifier.trainAndPredict(detections, labelStore, extractor,
-                        supplementaryRows, supplementaryLabels,
+                List<float[]> supplementaryRowsArg = supplementaryRows.isEmpty() ? null : supplementaryRows;
+                List<String> supplementaryLabelsArg = supplementaryLabels.isEmpty() ? null : supplementaryLabels;
+
+                classifier.trainAndPredict(detections, currentImageLabelStoreFinal, extractor,
+                    supplementaryRowsArg, supplementaryLabelsArg,
                         resamplingStrategy,
                         autoTuneHyperparams,
                         earlyStopEnabled,
@@ -868,15 +931,16 @@ public class CellTuneExtension implements QuPathExtension {
                 if (project != null) {
                     var state = classifier.toClassifierState("CellTune");
                     ProjectStateManager.saveState(project, state.getName(),
-                            labelStore, state.getFeatureNames(), state.getClassNames(),
+                            currentImageLabelStoreFinal, state.getFeatureNames(), state.getClassNames(),
                             state.getXgboostBytes(), state.getLightgbmBytes(),
                             state.getRfModel1Bytes(), state.getRfModel2Bytes(),
-                            state.getModel1Type(), state.getModel2Type());
+                            state.getModel1Type(), state.getModel2Type(),
+                            importedTrainingFeatureNames, importedTrainingRows);
 
                     // Save per-image labels for cross-image pooling
                     if (currentImageNameFinal != null) {
                         ProjectStateManager.saveImageLabels(
-                                project, currentImageNameFinal, labelStore);
+                                project, currentImageNameFinal, currentImageLabelStoreFinal);
                     }
                 }
 
@@ -1022,6 +1086,21 @@ public class CellTuneExtension implements QuPathExtension {
             }
         }
         return filtered;
+    }
+
+    private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
+                                              List<String> targetFeatureNames) {
+        var sourceByName = new java.util.HashMap<String, Integer>();
+        for (int i = 0; i < sourceFeatureNames.size(); i++) {
+            sourceByName.put(sourceFeatureNames.get(i).strip().toLowerCase(java.util.Locale.ROOT), i);
+        }
+
+        int[] map = new int[targetFeatureNames.size()];
+        for (int i = 0; i < targetFeatureNames.size(); i++) {
+            String key = targetFeatureNames.get(i).strip().toLowerCase(java.util.Locale.ROOT);
+            map[i] = sourceByName.getOrDefault(key, -1);
+        }
+        return map;
     }
 
     /**
@@ -1785,13 +1864,46 @@ public class CellTuneExtension implements QuPathExtension {
                         "Imported " + imported.size() + " labels via spatial matching. "
                         + "Total labels: " + labelStore.size());
             } else {
-                // Training data import — just load and report
                 var rows = GroundTruthIO.importCSVAsTrainingData(chosen.toPath());
+                var featureNames = GroundTruthIO.readFeatureNames(chosen.toPath());
+
+                if (featureNames.isEmpty()) {
+                    Dialogs.showErrorMessage(EXTENSION_NAME,
+                            "Imported file has no readable feature columns.");
+                    return;
+                }
+
+                int loaded = rows.size();
+                int total;
+                String schemaNote = "";
+
+                if (importedTrainingRows == null || importedTrainingRows.isEmpty()) {
+                    importedTrainingRows = new ArrayList<>(rows);
+                    importedTrainingFeatureNames = new ArrayList<>(featureNames);
+                } else if (importedTrainingFeatureNames != null
+                        && importedTrainingFeatureNames.equals(featureNames)) {
+                    importedTrainingRows.addAll(rows);
+                } else {
+                    // Replace if schema differs; mixed schemas cannot be safely merged.
+                    importedTrainingRows = new ArrayList<>(rows);
+                    importedTrainingFeatureNames = new ArrayList<>(featureNames);
+                    schemaNote = " Feature schema changed, so previous imported rows were replaced.";
+                }
+
+                total = importedTrainingRows.size();
+
+                if (project != null) {
+                    ProjectStateManager.saveImportedTrainingData(
+                            project, importedTrainingFeatureNames, importedTrainingRows);
+                }
+
+                syncPanelState();
+
                 Dialogs.showInfoNotification(EXTENSION_NAME,
-                        "Loaded " + rows.size() + " training rows. "
-                        + "These will be available for the next training run.");
-                // Store for future training use — could be wired to DualModelClassifier
-                // as supplementary training data in a later phase
+                        "Loaded " + loaded + " training rows ("
+                        + featureNames.size() + " features). "
+                        + "Imported rows available for training: " + total + "."
+                        + schemaNote);
             }
         } catch (IOException ex) {
             logger.error("Failed to import ground truth", ex);
