@@ -925,18 +925,13 @@ public class CellTuneExtension implements QuPathExtension {
                     for (var entry : allEntries) {
                         if (currentEntry != null && entry.equals(currentEntry)) continue;
 
+                        // Fast check: skip images with no saved label file to avoid
+                        // the expensive readImageData() call for unlabelled images.
+                        if (!ProjectStateManager.hasImageLabels(project, entry.getImageName())) continue;
+
                         try {
-                            var otherImageData = entry.readImageData();
-                            var otherHierarchy = otherImageData.getHierarchy();
-                            var otherDetections = otherHierarchy.getDetectionObjects();
-                            if (otherDetections.isEmpty()) continue;
-
-                            // Collect labels from annotations (landmarks)
+                            // Load saved labels first (no image I/O required)
                             LabelStore otherLabels = new LabelStore("temp");
-                            collectLabelsFromHierarchy(otherHierarchy, otherLabels);
-
-                            // Also load per-image saved labels which include
-                            // reviewed cells and manually labelled cells
                             try {
                                 var savedLabels = ProjectStateManager.loadImageLabels(
                                         project, entry.getImageName());
@@ -948,6 +943,12 @@ public class CellTuneExtension implements QuPathExtension {
                             }
 
                             if (otherLabels.size() == 0) continue;
+
+                            // Only now open the image to extract features
+                            var otherImageData = entry.readImageData();
+                            var otherHierarchy = otherImageData.getHierarchy();
+                            var otherDetections = otherHierarchy.getDetectionObjects();
+                            if (otherDetections.isEmpty()) continue;
 
                             var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
                             otherExtractor.setNormalizer(featureNormalizer);

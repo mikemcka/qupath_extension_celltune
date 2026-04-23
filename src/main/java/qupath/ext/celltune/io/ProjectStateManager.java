@@ -455,6 +455,23 @@ public class ProjectStateManager {
     }
 
     /**
+     * Return true if a saved label file exists for the given image.
+     * This is a cheap file-existence check — no JSON parsing.
+     *
+     * @param project   the QuPath project
+     * @param imageName the image name (from ProjectImageEntry.getImageName())
+     */
+    public static boolean hasImageLabels(Project<?> project, String imageName) {
+        try {
+            Path dir = getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
+            Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
+            return Files.exists(filePath);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
      * Replace characters that are unsafe in file names with underscores.
      */
     private static String sanitiseFileName(String name) {
