@@ -166,6 +166,10 @@ public class BinaryClassifierPanel extends VBox {
             return;
         }
         if (onOpenMarker != null) onOpenMarker.accept(selected);
+        // Close the dialog so the user can see the panel switch into binary mode
+        if (getScene() != null && getScene().getWindow() != null) {
+            getScene().getWindow().hide();
+        }
     }
 
     private void handleDelete() {
