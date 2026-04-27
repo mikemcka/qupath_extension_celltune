@@ -82,6 +82,11 @@ public class ClassificationPanel extends VBox {
     private final CheckBox earlyStopCheckBox = new CheckBox("Early stopping");
     private final PopulationPanel populationPanel = new PopulationPanel();
 
+    // ── Binary mode banner (hidden by default) ──
+    private final Label binaryBannerLabel = new Label();
+    private final Button exitBinaryButton = new Button("Exit Binary Mode");
+    private Runnable onExitBinaryMode;
+
     public ClassificationPanel(QuPathGUI qupath) {
         super(10);
         this.qupath = qupath;
@@ -90,6 +95,14 @@ public class ClassificationPanel extends VBox {
         // ── Title ──
         Label title = new Label(STRINGS.getString("name"));
         title.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
+
+        // ── Binary mode banner ──
+        binaryBannerLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #1976D2;");
+        binaryBannerLabel.setVisible(false);
+        binaryBannerLabel.setManaged(false);
+        exitBinaryButton.setVisible(false);
+        exitBinaryButton.setManaged(false);
+        exitBinaryButton.setOnAction(e -> { if (onExitBinaryMode != null) onExitBinaryMode.run(); });
 
         // ── Hyperparameter controls ──
         roundsSpinner = new Spinner<>(50, 1000, 200, 50);
@@ -186,6 +199,8 @@ public class ClassificationPanel extends VBox {
         // ── Layout ──
         getChildren().addAll(
                 title,
+                binaryBannerLabel,
+                exitBinaryButton,
                 paramRow,
                 modelRow,
                 poolImagesCheckBox,
@@ -204,6 +219,22 @@ public class ClassificationPanel extends VBox {
                 sep,
                 populationPanel
         );
+    }
+
+    // ── Binary mode indicator ──
+
+    /** Show or hide the binary mode banner in the docked panel. */
+    public void setActiveBinaryMarker(String markerName) {
+        boolean active = (markerName != null && !markerName.isBlank());
+        binaryBannerLabel.setText(active ? "Active binary mode: " + markerName : "");
+        binaryBannerLabel.setVisible(active);
+        binaryBannerLabel.setManaged(active);
+        exitBinaryButton.setVisible(active);
+        exitBinaryButton.setManaged(active);
+    }
+
+    public void setOnExitBinaryMode(Runnable cb) {
+        this.onExitBinaryMode = cb;
     }
 
     // ── State setters (called by CellTuneExtension to share state) ──

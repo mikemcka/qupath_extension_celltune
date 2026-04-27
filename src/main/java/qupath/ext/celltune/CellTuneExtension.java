@@ -185,6 +185,7 @@ public class CellTuneExtension implements QuPathExtension {
             }
         });
         classificationPanel.setAutoClassifyCallback(() -> autoClassifyCurrentImage(qupath));
+        classificationPanel.setOnExitBinaryMode(() -> exitBinaryMode(qupath));
 
         // Listen for image changes so we can save/reset/load state per image.
         // Store the listener reference so it can be removed if the extension is ever reloaded.
@@ -355,6 +356,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setLastAgreementRates(lastAgreementRates);
         classificationPanel.setLastSampledCellIds(lastSampledCellIds);
         classificationPanel.setImportedTrainingData(importedTrainingRows, importedTrainingFeatureNames);
+        classificationPanel.setActiveBinaryMarker(activeBinaryMarker);
     }
 
     /** Persist Pred_ALL for the current image so manual mode can show confidence after reload. */
