@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.io.BinaryClassifierRegistry;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.CellFeatureExtractor;
+import java.awt.image.BufferedImage;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
@@ -160,7 +161,7 @@ public class CompositeClassifier {
             // No trained markers contributed — D-09/D-10: set all to Unclassified
             for (PathObject det : detectionList) {
                 classifyObjects.add(det);
-                classifyClasses.add(PathClass.NULL);
+                classifyClasses.add(null); // null = Unclassified in QuPath
             }
         } else {
             for (int i = 0; i < nCells; i++) {
@@ -199,6 +200,7 @@ public class CompositeClassifier {
      * @return map of imageName → result string
      * @throws Exception if a fatal error occurs; per-image errors are caught and reported
      */
+    @SuppressWarnings("unchecked")
     public Map<String, String> batch(Project<?> project,
                                      List<String> imageNames,
                                      List<String> markerNames,
@@ -212,7 +214,8 @@ public class CompositeClassifier {
             String imageName = imageNames.get(idx);
             updateStatus("Processing " + imageName + "...", (double) idx / total);
 
-            var entryOpt = project.getImageList().stream()
+            var typedProject = (Project<BufferedImage>)(Project<?>)project;
+            var entryOpt = typedProject.getImageList().stream()
                     .filter(e -> e.getImageName().equals(imageName))
                     .findFirst();
 

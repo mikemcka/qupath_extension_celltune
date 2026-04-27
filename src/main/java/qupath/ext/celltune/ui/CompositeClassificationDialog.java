@@ -225,8 +225,8 @@ public class CompositeClassificationDialog {
 
             ImageSelectionPane selectionPane = new ImageSelectionPane(
                     stage, allImageNames, currentImageName);
-            selectionPane.showAndWait();
-            List<String> imageNames = selectionPane.getResult();
+            
+            List<String> imageNames = selectionPane.showAndWait();
             if (imageNames == null || imageNames.isEmpty()) return;
 
             applyButton.setDisable(true);

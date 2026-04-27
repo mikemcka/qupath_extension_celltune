@@ -47,6 +47,7 @@ import qupath.lib.projects.ProjectImageEntry;
 import java.awt.image.BufferedImage;
 import qupath.ext.celltune.io.BinaryClassifierRegistry;
 import qupath.ext.celltune.ui.BinaryClassifierPanel;
+import qupath.ext.celltune.ui.CompositeClassificationDialog;
 
 import java.io.File;
 import java.io.IOException;
@@ -553,9 +554,18 @@ public class CellTuneExtension implements QuPathExtension {
         binaryItem.setOnAction(e -> showBinaryClassifiers(qupath));
         binaryItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem compositeItem = new MenuItem("Composite Classification...");
+        compositeItem.setOnAction(e -> showCompositeClassification(qupath));
+        compositeItem.disableProperty().bind(enableExtensionProperty.not());
+
+        MenuItem compositeExportItem = new MenuItem("Composite Classification...");
+        compositeExportItem.setOnAction(e -> showCompositeClassification(qupath));
+        compositeExportItem.disableProperty().bind(enableExtensionProperty.not());
+
         menu.getItems().addAll(
                 classifyItem,
                 binaryItem,
+                compositeItem,
                 featuresItem,
                 normalizeItem,
                 new SeparatorMenuItem(),
@@ -568,6 +578,7 @@ public class CellTuneExtension implements QuPathExtension {
                 autoLandmarkItem,
                 exportItem,
                 exportAnnDataItem,
+                compositeExportItem,
                 new SeparatorMenuItem(),
                 exportGtItem,
                 importGtItem
@@ -2170,6 +2181,10 @@ public class CellTuneExtension implements QuPathExtension {
         stage.setTitle("Binary Classifiers \u2014 " + EXTENSION_NAME);
         stage.setScene(new javafx.scene.Scene(panel, 420, 340));
         stage.showAndWait();
+    }
+
+    private void showCompositeClassification(QuPathGUI qupath) {
+        new CompositeClassificationDialog(qupath).showAndWait();
     }
 
     /**

@@ -771,14 +771,14 @@ public class ProjectStateManager {
      * Save the composite classifier selection (which markers are checked) to
      * {@code <project>/celltune/composite-config.json}.
      *
-     * @param project         the QuPath project (null-safe — logs warning and returns)
+     * @param project         the QuPath project (null-safe - logs warning and returns)
      * @param selectedMarkers the marker names to persist
      * @throws IOException if writing fails
      */
     public static void saveCompositeConfig(Project<?> project,
                                            List<String> selectedMarkers) throws IOException {
         if (project == null) {
-            logger.warn("saveCompositeConfig: project is null — skipping save");
+            logger.warn("saveCompositeConfig: project is null - skipping save");
             return;
         }
         Path dir  = getCellTuneDir(project);
@@ -794,7 +794,7 @@ public class ProjectStateManager {
      * Load the composite classifier selection from
      * {@code <project>/celltune/composite-config.json}.
      *
-     * @param project the QuPath project (null-safe — returns empty list)
+     * @param project the QuPath project (null-safe - returns empty list)
      * @return mutable list of selected marker names, never null
      * @throws IOException if reading or parsing fails
      */
