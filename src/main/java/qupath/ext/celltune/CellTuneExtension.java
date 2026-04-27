@@ -107,6 +107,10 @@ public class CellTuneExtension implements QuPathExtension {
     private List<String> importedTrainingFeatureNames;
     /** Docked classification panel (Phase 7). */
     private ClassificationPanel classificationPanel;
+    /** TitledPane wrapping the docked panel — stored so binary mode can expand it. */
+    private javafx.scene.control.TitledPane dockPane;
+    /** Tab holding the docked panel — stored so binary mode can select it. */
+    private javafx.scene.control.Tab dockTab;
 
     // ── Binary classifier state ────────────────────────────────────────────────
     /** Registry of named binary classifiers: sanitizedMarkerName → relativeStatePath. */
@@ -188,11 +192,12 @@ public class CellTuneExtension implements QuPathExtension {
         qupath.imageDataProperty().addListener(imageDataListener);
 
         // Dock into QuPath's analysis pane
-        var titledPane = new javafx.scene.control.TitledPane(EXTENSION_NAME, classificationPanel);
-        titledPane.setCollapsible(true);
-        titledPane.setExpanded(false);
-        qupath.getAnalysisTabPane().getTabs().add(
-                new javafx.scene.control.Tab(EXTENSION_NAME, titledPane));
+        dockPane = new javafx.scene.control.TitledPane(EXTENSION_NAME, classificationPanel);
+        dockPane.setCollapsible(true);
+        dockPane.setExpanded(false);
+        dockTab = new javafx.scene.control.Tab(EXTENSION_NAME, dockPane);
+        dockTab.setClosable(false);
+        qupath.getAnalysisTabPane().getTabs().add(dockTab);
     }
 
     /**
@@ -2218,11 +2223,13 @@ public class CellTuneExtension implements QuPathExtension {
         syncPanelState();
         logger.info("[CellTune] Entered binary mode for marker '{}'", markerName);
 
-        // Expand the docked classification panel for immediate use
+        // Select and expand the docked classification panel for immediate use
         javafx.application.Platform.runLater(() -> {
-            if (classificationPanel != null) {
-                var parent = classificationPanel.getParent();
-                if (parent instanceof javafx.scene.control.TitledPane tp) tp.setExpanded(true);
+            if (dockTab != null) {
+                qupath.getAnalysisTabPane().getSelectionModel().select(dockTab);
+            }
+            if (dockPane != null) {
+                dockPane.setExpanded(true);
             }
         });
     }
