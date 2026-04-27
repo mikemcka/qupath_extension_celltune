@@ -45,13 +45,18 @@ import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.ProjectImageEntry;
 
 import java.awt.image.BufferedImage;
+import qupath.ext.celltune.io.BinaryClassifierRegistry;
+import qupath.ext.celltune.ui.BinaryClassifierPanel;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.ResourceBundle;
 import java.util.Set;
 
@@ -103,6 +108,15 @@ public class CellTuneExtension implements QuPathExtension {
     /** Docked classification panel (Phase 7). */
     private ClassificationPanel classificationPanel;
 
+    // ── Binary classifier state ────────────────────────────────────────────────
+    /** Registry of named binary classifiers: sanitizedMarkerName → relativeStatePath. */
+    private Map<String, String> binaryRegistry = new LinkedHashMap<>();
+    /** Name of the currently active binary classifier, or null if in multi-class mode. */
+    private String activeBinaryMarker = null;
+    /** Multi-class state saved before entering binary mode, restored on exit. */
+    private LabelStore preBinaryLabelStore = null;
+    private DualModelClassifier preBinaryClassifier = null;
+
     // ── QuPathExtension API ────────────────────────────────────────────────────
 
     @Override
@@ -145,7 +159,27 @@ public class CellTuneExtension implements QuPathExtension {
         });
         classificationPanel.setOnAgreementRatesChanged(ar -> this.lastAgreementRates = ar);
         classificationPanel.setOnSampledCellsChanged(ids -> this.lastSampledCellIds = ids);
-        classificationPanel.setOnClassifierChanged(cls -> this.classifier = cls);
+        classificationPanel.setOnClassifierChanged(cls -> {
+            this.classifier = cls;
+            // Auto-save binary classifier state after training completes in binary mode
+            if (activeBinaryMarker != null && cls != null && cls.isTrained()) {
+                var proj = qupath.getProject();
+                if (proj != null) {
+                    try {
+                        ClassifierState state = cls.toClassifierState(activeBinaryMarker);
+                        ProjectStateManager.saveBinaryState(proj, activeBinaryMarker,
+                                labelStore != null ? labelStore : new LabelStore(activeBinaryMarker),
+                                state.getFeatureNames(), state.getClassNames(),
+                                state.getXgboostBytes(), state.getLightgbmBytes(),
+                                state.getRfModel1Bytes(), state.getRfModel2Bytes(),
+                                state.getModel1Type(), state.getModel2Type());
+                        logger.info("[CellTune] Auto-saved binary classifier state for '{}'", activeBinaryMarker);
+                    } catch (Exception ex) {
+                        logger.warn("Failed to auto-save binary state for '{}': {}", activeBinaryMarker, ex.getMessage());
+                    }
+                }
+            }
+        });
         classificationPanel.setAutoClassifyCallback(() -> autoClassifyCurrentImage(qupath));
 
         // Listen for image changes so we can save/reset/load state per image.
@@ -508,8 +542,13 @@ public class CellTuneExtension implements QuPathExtension {
         normalizeItem.setOnAction(e -> showNormalization(qupath));
         normalizeItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem binaryItem = new MenuItem("Binary Classifiers...");
+        binaryItem.setOnAction(e -> showBinaryClassifiers(qupath));
+        binaryItem.disableProperty().bind(enableExtensionProperty.not());
+
         menu.getItems().addAll(
                 classifyItem,
+                binaryItem,
                 featuresItem,
                 normalizeItem,
                 new SeparatorMenuItem(),
@@ -2074,5 +2113,147 @@ public class CellTuneExtension implements QuPathExtension {
                         "Feature normalization cleared.");
             }
         }
+    }
+
+    // ── Binary classifier management ───────────────────────────────────────────
+
+    /**
+     * Show the Binary Classifiers management dialog.
+     * Loads the registry from disk, wires callbacks, and shows the panel in a modal stage.
+     */
+    private void showBinaryClassifiers(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "Open a QuPath project first.");
+            return;
+        }
+        try {
+            binaryRegistry = BinaryClassifierRegistry.load(project);
+        } catch (IOException ex) {
+            logger.warn("Failed to load binary classifier registry: {}", ex.getMessage());
+            binaryRegistry = new LinkedHashMap<>();
+        }
+
+        var panel = new BinaryClassifierPanel();
+        panel.setMarkerNames(new ArrayList<>(binaryRegistry.keySet()));
+        panel.setActiveBinaryMarker(activeBinaryMarker);
+
+        panel.setOnRegisterMarker(markerName -> {
+            try {
+                BinaryClassifierRegistry.register(project, binaryRegistry, markerName);
+            } catch (IOException ex) {
+                logger.warn("Failed to register binary classifier '{}': {}", markerName, ex.getMessage());
+            }
+        });
+
+        panel.setOnDeleteMarker(markerName -> {
+            try {
+                BinaryClassifierRegistry.remove(project, binaryRegistry, markerName);
+                if (markerName.equals(activeBinaryMarker)) exitBinaryMode(qupath);
+            } catch (IOException ex) {
+                logger.warn("Failed to remove binary classifier '{}': {}", markerName, ex.getMessage());
+            }
+        });
+
+        panel.setOnOpenMarker(markerName -> enterBinaryMode(qupath, markerName));
+        panel.setOnExitBinaryMode(() -> exitBinaryMode(qupath));
+
+        var stage = new javafx.stage.Stage();
+        stage.initModality(javafx.stage.Modality.APPLICATION_MODAL);
+        stage.setTitle("Binary Classifiers \u2014 " + EXTENSION_NAME);
+        stage.setScene(new javafx.scene.Scene(panel, 420, 340));
+        stage.showAndWait();
+    }
+
+    /**
+     * Enter binary mode for the given marker.
+     * Saves the current multi-class state, loads the binary marker's labels and classifier,
+     * swaps the panel state, and expands the docked panel.
+     *
+     * @param qupath     the QuPath GUI
+     * @param markerName the sanitized marker name to activate
+     */
+    private void enterBinaryMode(QuPathGUI qupath, String markerName) {
+        var project = qupath.getProject();
+        if (project == null) return;
+
+        // Preserve current multi-class state
+        preBinaryLabelStore = labelStore;
+        preBinaryClassifier = classifier;
+
+        // Load binary marker's labels
+        try {
+            this.labelStore = ProjectStateManager.loadBinaryLabels(project, markerName);
+        } catch (IOException ex) {
+            logger.warn("Failed to load binary labels for '{}': {}", markerName, ex.getMessage());
+            this.labelStore = new LabelStore(markerName);
+        }
+
+        // Load trained binary classifier if one exists
+        this.classifier = null;
+        try {
+            ProjectStateManager.SavedState savedState = ProjectStateManager.loadBinaryState(project, markerName);
+            if (savedState != null && (savedState.xgboostModelBase64 != null
+                    || savedState.lightgbmModelBase64 != null
+                    || savedState.rfModel1Base64 != null)) {
+                var cs = new ClassifierState(
+                        savedState.name,
+                        savedState.featureNames,
+                        savedState.classNames,
+                        ProjectStateManager.decodeXGBoostModel(savedState),
+                        ProjectStateManager.decodeLightGBMModel(savedState),
+                        ProjectStateManager.decodeRFModel1(savedState),
+                        ProjectStateManager.decodeRFModel2(savedState),
+                        ProjectStateManager.getModel1Type(savedState),
+                        ProjectStateManager.getModel2Type(savedState));
+                this.classifier = new DualModelClassifier();
+                this.classifier.loadFromState(cs);
+            }
+        } catch (Exception ex) {
+            logger.warn("Failed to load binary classifier state for '{}': {}", markerName, ex.getMessage());
+            this.classifier = null;
+        }
+
+        this.activeBinaryMarker = markerName;
+        syncPanelState();
+        logger.info("[CellTune] Entered binary mode for marker '{}'", markerName);
+
+        // Expand the docked classification panel for immediate use
+        javafx.application.Platform.runLater(() -> {
+            if (classificationPanel != null) {
+                var parent = classificationPanel.getParent();
+                if (parent instanceof javafx.scene.control.TitledPane tp) tp.setExpanded(true);
+            }
+        });
+    }
+
+    /**
+     * Exit binary mode and restore the multi-class classifier state.
+     * Saves the binary marker's current labels before restoring.
+     *
+     * @param qupath the QuPath GUI
+     */
+    private void exitBinaryMode(QuPathGUI qupath) {
+        if (activeBinaryMarker == null) return;
+        var project = qupath.getProject();
+
+        // Save binary labels before exiting
+        if (project != null && labelStore != null) {
+            try {
+                ProjectStateManager.saveBinaryLabels(project, activeBinaryMarker, labelStore);
+            } catch (IOException ex) {
+                logger.warn("Failed to save binary labels for '{}' on exit: {}", activeBinaryMarker, ex.getMessage());
+            }
+        }
+
+        // Restore multi-class state
+        this.labelStore = (preBinaryLabelStore != null) ? preBinaryLabelStore : new LabelStore("CellTune");
+        this.classifier = preBinaryClassifier;
+        this.activeBinaryMarker = null;
+        this.preBinaryLabelStore = null;
+        this.preBinaryClassifier = null;
+
+        syncPanelState();
+        logger.info("[CellTune] Exited binary mode \u2014 restored multi-class state");
     }
 }
