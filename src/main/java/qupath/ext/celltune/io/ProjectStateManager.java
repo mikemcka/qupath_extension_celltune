@@ -764,4 +764,61 @@ public class ProjectStateManager {
         if (state == null || state.labels == null) return new LabelStore(sanitizedMarkerName);
         return toLabelStore(state);
     }
+
+    // -- Composite classifier config persistence --------------------------------
+
+    /**
+     * Save the composite classifier selection (which markers are checked) to
+     * {@code <project>/celltune/composite-config.json}.
+     *
+     * @param project         the QuPath project (null-safe — logs warning and returns)
+     * @param selectedMarkers the marker names to persist
+     * @throws IOException if writing fails
+     */
+    public static void saveCompositeConfig(Project<?> project,
+                                           List<String> selectedMarkers) throws IOException {
+        if (project == null) {
+            logger.warn("saveCompositeConfig: project is null — skipping save");
+            return;
+        }
+        Path dir  = getCellTuneDir(project);
+        Path path = dir.resolve("composite-config.json");
+        String json = GSON.toJson(Map.of("selectedMarkers",
+                selectedMarkers != null ? selectedMarkers : List.of()));
+        Files.writeString(path, json, StandardCharsets.UTF_8);
+        int count = selectedMarkers != null ? selectedMarkers.size() : 0;
+        logger.info("Saved composite config ({} markers) to {}", count, path);
+    }
+
+    /**
+     * Load the composite classifier selection from
+     * {@code <project>/celltune/composite-config.json}.
+     *
+     * @param project the QuPath project (null-safe — returns empty list)
+     * @return mutable list of selected marker names, never null
+     * @throws IOException if reading or parsing fails
+     */
+    public static List<String> loadCompositeConfig(Project<?> project) throws IOException {
+        if (project == null) {
+            return new ArrayList<>();
+        }
+        Path dir  = getCellTuneDir(project);
+        Path path = dir.resolve("composite-config.json");
+        if (!Files.exists(path)) return new ArrayList<>();
+        String json = Files.readString(path, StandardCharsets.UTF_8);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> map = GSON.fromJson(json, Map.class);
+        if (map == null) return new ArrayList<>();
+        Object raw = map.get("selectedMarkers");
+        if (raw instanceof List<?> rawList) {
+            List<String> result = new ArrayList<>();
+            for (Object item : rawList) {
+                if (item instanceof String s) result.add(s);
+            }
+            int count = result.size();
+            logger.info("Loaded composite config: {} markers from {}", count, path);
+            return result;
+        }
+        return new ArrayList<>();
+    }
 }
