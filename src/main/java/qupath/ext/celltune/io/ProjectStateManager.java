@@ -631,4 +631,137 @@ public class ProjectStateManager {
                 predAll.size(), imageName, filePath);
         return predAll;
     }
+
+    // ── Binary classifier persistence ──────────────────────────────────────────
+
+    /**
+     * Resolve the binary/ subdirectory inside the celltune dir, creating it if needed.
+     */
+    private static Path getBinaryDir(Project<?> project) throws IOException {
+        Path ctDir = getCellTuneDir(project);
+        Path binaryDir = ctDir.resolve("binary");
+        Files.createDirectories(binaryDir);
+        return binaryDir;
+    }
+
+    /**
+     * Save a binary classifier's trained state to
+     * {@code <project>/celltune/binary/<sanitizedMarker>.json}.
+     * <p>
+     * Reuses the existing {@link SavedState} structure. The classNames list must
+     * have exactly 2 entries (e.g. {@code ["CD4_pos", "CD4_neg"]}).
+     *
+     * @param project              the QuPath project
+     * @param sanitizedMarkerName  the sanitized marker name (from {@code BinaryClassifierRegistry.sanitizeMarkerName})
+     * @param labelStore           current ground-truth labels for this marker
+     * @param featureNames         feature column ordering used during training
+     * @param classNames           class name ordering (exactly 2 classes)
+     * @param xgboostBytes         serialised XGBoost model bytes (may be null)
+     * @param lightgbmBytes        serialised LightGBM model bytes (may be null)
+     * @param rfModel1Bytes        serialised RF model 1 bytes (may be null)
+     * @param rfModel2Bytes        serialised RF model 2 bytes (may be null)
+     * @param model1Type           type of model 1
+     * @param model2Type           type of model 2
+     * @return path to the saved JSON file
+     * @throws IOException if writing fails
+     */
+    public static Path saveBinaryState(Project<?> project,
+                                       String sanitizedMarkerName,
+                                       LabelStore labelStore,
+                                       List<String> featureNames,
+                                       List<String> classNames,
+                                       byte[] xgboostBytes,
+                                       byte[] lightgbmBytes,
+                                       byte[] rfModel1Bytes,
+                                       byte[] rfModel2Bytes,
+                                       ModelType model1Type,
+                                       ModelType model2Type) throws IOException {
+        Path binaryDir = getBinaryDir(project);
+        Path outPath = binaryDir.resolve(sanitizedMarkerName + ".json");
+
+        SavedState state = new SavedState();
+        state.name = sanitizedMarkerName;
+        state.timestamp = LocalDateTime.now().format(TIMESTAMP_FMT);
+        state.featureNames = List.copyOf(featureNames);
+        state.classNames = List.copyOf(classNames);
+        state.labels = labelStore.getAllLabels();
+        if (xgboostBytes != null)  state.xgboostModelBase64  = Base64.getEncoder().encodeToString(xgboostBytes);
+        if (lightgbmBytes != null) state.lightgbmModelBase64 = Base64.getEncoder().encodeToString(lightgbmBytes);
+        if (rfModel1Bytes != null) state.rfModel1Base64       = Base64.getEncoder().encodeToString(rfModel1Bytes);
+        if (rfModel2Bytes != null) state.rfModel2Base64       = Base64.getEncoder().encodeToString(rfModel2Bytes);
+        state.model1Type = model1Type != null ? model1Type.name() : ModelType.XGBOOST.name();
+        state.model2Type = model2Type != null ? model2Type.name() : ModelType.LIGHTGBM.name();
+
+        writeState(outPath, state);
+        logger.info("Saved binary classifier state for '{}' to {}", sanitizedMarkerName, outPath);
+        return outPath;
+    }
+
+    /**
+     * Load a binary classifier's state from
+     * {@code <project>/celltune/binary/<sanitizedMarker>.json}.
+     *
+     * @param project             the QuPath project
+     * @param sanitizedMarkerName the sanitized marker name
+     * @return the loaded state, or null if no state file exists for this marker
+     * @throws IOException if reading or parsing fails
+     */
+    public static SavedState loadBinaryState(Project<?> project,
+                                             String sanitizedMarkerName) throws IOException {
+        Path binaryDir = getBinaryDir(project);
+        Path statePath = binaryDir.resolve(sanitizedMarkerName + ".json");
+        if (!Files.exists(statePath)) return null;
+        String json = Files.readString(statePath, StandardCharsets.UTF_8);
+        return GSON.fromJson(json, SavedState.class);
+    }
+
+    /**
+     * Save only the labels for a binary classifier without touching model bytes.
+     * <p>
+     * Used during active labelling before a model has been trained. If a state file
+     * already exists, model bytes and other fields are preserved.
+     *
+     * @param project             the QuPath project
+     * @param sanitizedMarkerName the sanitized marker name
+     * @param labelStore          labels to persist
+     * @throws IOException if reading or writing fails
+     */
+    public static void saveBinaryLabels(Project<?> project,
+                                        String sanitizedMarkerName,
+                                        LabelStore labelStore) throws IOException {
+        Path binaryDir = getBinaryDir(project);
+        Path statePath = binaryDir.resolve(sanitizedMarkerName + ".json");
+
+        SavedState state;
+        if (Files.exists(statePath)) {
+            String existing = Files.readString(statePath, StandardCharsets.UTF_8);
+            state = GSON.fromJson(existing, SavedState.class);
+            if (state == null) state = new SavedState();
+        } else {
+            state = new SavedState();
+        }
+        state.name = sanitizedMarkerName;
+        state.timestamp = LocalDateTime.now().format(TIMESTAMP_FMT);
+        state.labels = labelStore.getAllLabels();
+
+        writeState(statePath, state);
+        logger.info("Saved binary labels for '{}' ({} labels)", sanitizedMarkerName, labelStore.size());
+    }
+
+    /**
+     * Load only the LabelStore for a binary classifier.
+     * <p>
+     * Returns an empty LabelStore named after the marker if no state file exists.
+     *
+     * @param project             the QuPath project
+     * @param sanitizedMarkerName the sanitized marker name
+     * @return a populated LabelStore, never null
+     * @throws IOException if reading fails
+     */
+    public static LabelStore loadBinaryLabels(Project<?> project,
+                                              String sanitizedMarkerName) throws IOException {
+        SavedState state = loadBinaryState(project, sanitizedMarkerName);
+        if (state == null || state.labels == null) return new LabelStore(sanitizedMarkerName);
+        return toLabelStore(state);
+    }
 }
