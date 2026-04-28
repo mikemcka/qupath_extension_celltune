@@ -563,10 +563,6 @@ public class CellTuneExtension implements QuPathExtension {
         compositeItem.setOnAction(e -> showCompositeClassification(qupath));
         compositeItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem compositeExportItem = new MenuItem("Composite Classification...");
-        compositeExportItem.setOnAction(e -> showCompositeClassification(qupath));
-        compositeExportItem.disableProperty().bind(enableExtensionProperty.not());
-
         menu.getItems().addAll(
                 classifyItem,
                 binaryItem,
@@ -583,7 +579,6 @@ public class CellTuneExtension implements QuPathExtension {
                 autoLandmarkItem,
                 exportItem,
                 exportAnnDataItem,
-                compositeExportItem,
                 new SeparatorMenuItem(),
                 exportGtItem,
                 importGtItem
