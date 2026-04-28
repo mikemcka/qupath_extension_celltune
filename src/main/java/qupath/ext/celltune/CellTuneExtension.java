@@ -1110,6 +1110,12 @@ public class CellTuneExtension implements QuPathExtension {
                                                 logArea.appendText("  " + msg + "\n"));
                                     });
 
+                            // predictOnly queues setPathClass via Platform.runLater.
+                            // Block until the FX thread has applied all classes before saving.
+                            var saveLatch = new java.util.concurrent.CountDownLatch(1);
+                            javafx.application.Platform.runLater(saveLatch::countDown);
+                            try { saveLatch.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+
                             entry.saveImageData(otherImageData);
                             applied++;
                         } catch (Exception imgEx) {
