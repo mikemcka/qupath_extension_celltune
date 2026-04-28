@@ -86,7 +86,7 @@ public class ClassificationPanel extends VBox {
     private final Label binaryBannerLabel = new Label();
     private final Button exitBinaryButton = new Button("Exit Binary Mode");
     private Runnable onExitBinaryMode;
-    private final Button applyToImagesButton = new Button("Apply to Images\u2026");
+    private final Button applyToImagesButton = new Button("Apply to which images...");
     private Runnable onApplyToImages;
 
     public ClassificationPanel(QuPathGUI qupath) {
@@ -252,7 +252,7 @@ public class ClassificationPanel extends VBox {
     }
 
     public void setApplyToImagesCount(int count) {
-        applyToImagesButton.setText(count > 0 ? "Apply to Images... (" + count + ")" : "Apply to Images...");
+        applyToImagesButton.setText(count > 0 ? "Apply to which images... (" + count + ")" : "Apply to which images...");
     }
 
     // ── State setters (called by CellTuneExtension to share state) ──

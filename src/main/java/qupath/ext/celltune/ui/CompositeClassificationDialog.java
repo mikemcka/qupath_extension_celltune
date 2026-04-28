@@ -121,7 +121,7 @@ public class CompositeClassificationDialog {
         resultLabel.setStyle("-fx-text-fill: #2a7a2a;");
 
         Button applyButton = new Button("Apply");
-        Button batchButton = new Button("Batch...");
+        Button batchButton = new Button("Apply to which images...");
         Button closeButton = new Button("Close");
 
         applyButton.setDisable(!anyTrained);
@@ -147,7 +147,7 @@ public class CompositeClassificationDialog {
         stage.setResizable(true);
 
 
-        // batchImageNames: images pre-selected via "Batch..." button for next Apply
+        // batchImageNames: images pre-selected via "Apply to which images..." button for next Apply
         final List<String>[] batchHolder = new List[]{new ArrayList<>()};
 
         // ── Button actions ───────────────────────────────────────────────────
@@ -230,7 +230,7 @@ public class CompositeClassificationDialog {
             new Thread(task, "composite-classify").start();
         });
 
-        // "Batch..." only stores the image selection — Apply runs the actual classification
+        // "Apply to which images..." only stores the image selection — Apply runs the actual classification
         batchButton.setOnAction(e -> {
             List<String> allImageNames = new ArrayList<>();
             for (var entry : project.getImageList()) allImageNames.add(entry.getImageName());
@@ -248,7 +248,7 @@ public class CompositeClassificationDialog {
             if (picked == null) return; // cancelled
 
             batchHolder[0] = new ArrayList<>(picked);
-            batchButton.setText(picked.isEmpty() ? "Batch..." : "Batch (" + picked.size() + ")...");
+            batchButton.setText(picked.isEmpty() ? "Apply to which images..." : "Apply to which images... (" + picked.size() + ")");
         });
 
         stage.showAndWait();
