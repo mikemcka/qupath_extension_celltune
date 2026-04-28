@@ -206,11 +206,7 @@ public class CompositeClassificationDialog {
                         if (otherData == null) continue;
                         total += cc.apply(otherData, finalSelected, project,
                                 msg -> Platform.runLater(() -> {}));
-                        // cc.apply queues setPathClass via Platform.runLater.
-                        // Block until the FX thread has applied all classes before saving.
-                        var ccLatch = new java.util.concurrent.CountDownLatch(1);
-                        Platform.runLater(ccLatch::countDown);
-                        try { ccLatch.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+
                         imgEntry.saveImageData(otherData);
                     }
                     return total;

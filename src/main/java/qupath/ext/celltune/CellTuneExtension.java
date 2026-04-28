@@ -1075,19 +1075,22 @@ public class CellTuneExtension implements QuPathExtension {
                     }
                 }
 
-                // Apply predictions to other selected images
-                if (project != null && imagesToClassify.size() > 1) {
+                // Apply predictions to other selected images (same batch flow as composite)
+                int applied = 0;
+                if (project != null) {
                     @SuppressWarnings("unchecked")
-                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-                    var currentEntry = project.getEntry(imageData);
+                    var typedProject = (qupath.lib.projects.Project<java.awt.image.BufferedImage>)
+                            (qupath.lib.projects.Project<?>) project;
+                    for (String imgName : imagesToClassify) {
+                        if (currentImageNameFinal != null && imgName.equals(currentImageNameFinal)) continue;
 
-                    int applied = 0;
-                    for (var entry : allEntries) {
-                        if (currentEntry != null && entry.equals(currentEntry)) continue;
-                        if (!imagesToClassify.contains(entry.getImageName())) continue;
+                        var entryOpt = typedProject.getImageList().stream()
+                                .filter(en -> en.getImageName().equals(imgName))
+                                .findFirst();
+                        if (entryOpt.isEmpty()) continue;
 
+                        var entry = entryOpt.get();
                         try {
-                            String imgName = entry.getImageName();
                             logger.info("[CellTune] Applying predictions to: {}", imgName);
                             javafx.application.Platform.runLater(() ->
                                     logArea.appendText("Classifying: " + imgName + "\n"));
@@ -1110,48 +1113,33 @@ public class CellTuneExtension implements QuPathExtension {
                                                 logArea.appendText("  " + msg + "\n"));
                                     });
 
-                            // predictOnly queues setPathClass via Platform.runLater.
-                            // Block until the FX thread has applied all classes before saving.
-                            var saveLatch = new java.util.concurrent.CountDownLatch(1);
-                            javafx.application.Platform.runLater(saveLatch::countDown);
-                            try { saveLatch.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
 
                             entry.saveImageData(otherImageData);
                             applied++;
                         } catch (Exception imgEx) {
                             logger.error("[CellTune] Failed to classify {}: {}",
-                                    entry.getImageName(), imgEx.getMessage());
+                                    imgName, imgEx.getMessage());
                             javafx.application.Platform.runLater(() ->
                                     logArea.appendText("  ERROR: " + imgEx.getMessage() + "\n"));
                         }
                     }
-
-                    final int totalApplied = applied;
-                    javafx.application.Platform.runLater(() -> {
-                        imageData.getHierarchy().fireHierarchyChangedEvent(this);
-                        syncPanelState();
-                        logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
-                                + predAll.getDisagreementCount() + " disagreements.\n"
-                                + "Applied to " + totalApplied + " additional image(s).\n");
-                        statusLabel.textProperty().unbind();
-                        statusLabel.setText("Complete — close this window when ready.");
-                        progressBar.progressProperty().unbind();
-                        progressBar.setProgress(1.0);
-                        if (showFeatureImportance) showFeatureImportance(qupath);
-                    });
-                } else {
-                    javafx.application.Platform.runLater(() -> {
-                        imageData.getHierarchy().fireHierarchyChangedEvent(this);
-                        syncPanelState();
-                        logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
-                                + predAll.getDisagreementCount() + " disagreements.\n");
-                        statusLabel.textProperty().unbind();
-                        statusLabel.setText("Complete — close this window when ready.");
-                        progressBar.progressProperty().unbind();
-                        progressBar.setProgress(1.0);
-                        if (showFeatureImportance) showFeatureImportance(qupath);
-                    });
                 }
+
+                final int totalApplied = applied;
+                javafx.application.Platform.runLater(() -> {
+                    imageData.getHierarchy().fireHierarchyChangedEvent(this);
+                    syncPanelState();
+                    logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
+                            + predAll.getDisagreementCount() + " disagreements.\n"
+                            + (totalApplied > 0
+                            ? "Applied to " + totalApplied + " additional image(s).\n"
+                            : ""));
+                    statusLabel.textProperty().unbind();
+                    statusLabel.setText("Complete — close this window when ready.");
+                    progressBar.progressProperty().unbind();
+                    progressBar.setProgress(1.0);
+                    if (showFeatureImportance) showFeatureImportance(qupath);
+                });
             } catch (Exception ex) {
                 logger.error("Training failed", ex);
                 javafx.application.Platform.runLater(() -> {

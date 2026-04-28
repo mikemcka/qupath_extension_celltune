@@ -525,12 +525,10 @@ public class DualModelClassifier {
             out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
         }
 
-        // Apply PathClass assignments on the FX thread.
-        Platform.runLater(() -> {
-            for (int i = 0; i < classifyObjects.size(); i++) {
-                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-            }
-        });
+        // Apply PathClass assignments synchronously so callers can safely persist immediately.
+        for (int i = 0; i < classifyObjects.size(); i++) {
+            classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+        }
 
         if (populateSets) {
             this.predMDL1 = localMDL1;
