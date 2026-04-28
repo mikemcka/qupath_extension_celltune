@@ -190,6 +190,8 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setAutoClassifyCallback(() -> autoClassifyCurrentImage(qupath));
         classificationPanel.setOnExitBinaryMode(() -> exitBinaryMode(qupath));
         classificationPanel.setOnApplyToImages(() -> applyBinaryClassifierToImages(qupath));
+        classificationPanel.setBinaryTargetImagesSupplier(() ->
+                binaryTargetImages == null ? List.of() : new ArrayList<>(binaryTargetImages));
 
         // Listen for image changes so we can save/reset/load state per image.
         // Store the listener reference so it can be removed if the extension is ever reloaded.

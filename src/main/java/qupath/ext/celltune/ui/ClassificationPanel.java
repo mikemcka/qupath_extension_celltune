@@ -59,6 +59,7 @@ public class ClassificationPanel extends VBox {
     private Consumer<List<String>> onSampledCellsChanged;
     private Consumer<DualModelClassifier> onClassifierChanged;
     private Supplier<Boolean> autoClassifyCallback;
+    private Supplier<List<String>> binaryTargetImagesSupplier;
 
     // ── UI widgets ──
     private final Label statusLabel = new Label("Ready");
@@ -288,6 +289,7 @@ public class ClassificationPanel extends VBox {
     public void setOnSampledCellsChanged(Consumer<List<String>> cb) { this.onSampledCellsChanged = cb; }
     public void setOnClassifierChanged(Consumer<DualModelClassifier> cb) { this.onClassifierChanged = cb; }
     public void setAutoClassifyCallback(Supplier<Boolean> cb) { this.autoClassifyCallback = cb; }
+    public void setBinaryTargetImagesSupplier(Supplier<List<String>> cb) { this.binaryTargetImagesSupplier = cb; }
 
     // ── Actions ──
 
@@ -416,6 +418,11 @@ public class ClassificationPanel extends VBox {
             importedTrainingRows == null ? null : List.copyOf(importedTrainingRows);
         final List<String> importedFeatureNamesSnapshot =
             importedTrainingFeatureNames == null ? null : List.copyOf(importedTrainingFeatureNames);
+        final boolean binaryModeActive = binaryBannerLabel.isVisible();
+        List<String> suppliedTargets = binaryTargetImagesSupplier != null
+                ? binaryTargetImagesSupplier.get() : null;
+        final List<String> batchTargetImages = suppliedTargets == null
+                ? List.of() : List.copyOf(suppliedTargets);
         Thread trainThread = new Thread(() -> {
             try {
                 // Auto-backup labels
@@ -550,6 +557,53 @@ public class ClassificationPanel extends VBox {
                     }
                 }
 
+                int batchApplied = 0;
+                if (binaryModeActive && projectRef != null && !batchTargetImages.isEmpty()) {
+                    @SuppressWarnings("unchecked")
+                    var typedProject = (qupath.lib.projects.Project<BufferedImage>)
+                            (qupath.lib.projects.Project<?>) projectRef;
+                    var currentEntry = projectRef.getEntry(imageData);
+                    String currentImageName = currentEntry != null ? currentEntry.getImageName() : null;
+
+                    for (String imgName : batchTargetImages) {
+                        if (currentImageName != null && currentImageName.equals(imgName)) continue;
+
+                        var entryOpt = typedProject.getImageList().stream()
+                                .filter(en -> en.getImageName().equals(imgName))
+                                .findFirst();
+                        if (entryOpt.isEmpty()) continue;
+
+                        var entry = entryOpt.get();
+                        try {
+                            var otherImageData = entry.readImageData();
+                            if (otherImageData == null) continue;
+                            var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
+                            if (otherDetections.isEmpty()) continue;
+
+                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                            otherExtractor.setNormalizer(featureNormalizer);
+                            classifier.predictOnly(otherDetections, otherExtractor, msg -> {});
+
+                            var saveReady = new java.util.concurrent.CountDownLatch(1);
+                            Platform.runLater(() -> {
+                                otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
+                                saveReady.countDown();
+                            });
+                            try {
+                                saveReady.await();
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                            }
+
+                            entry.saveImageData(otherImageData);
+                            batchApplied++;
+                        } catch (Exception ex) {
+                            // Skip unreadable or unsaveable images and continue the batch.
+                        }
+                    }
+                }
+
+                final int totalBatchApplied = batchApplied;
                 Platform.runLater(() -> {
                     progressBar.progressProperty().unbind();
                     statusLabel.textProperty().unbind();
@@ -580,9 +634,13 @@ public class ClassificationPanel extends VBox {
                     if (onPredAllChanged != null) onPredAllChanged.accept(predAll);
                     if (onClassifierChanged != null) onClassifierChanged.accept(classifier);
 
-                    Dialogs.showInfoNotification(STRINGS.getString("name"),
-                            "Training complete. " + predAll.size() + " cells classified, "
-                            + predAll.getDisagreementCount() + " disagreements.");
+                    String completionMessage = "Training complete. " + predAll.size()
+                            + " cells classified, " + predAll.getDisagreementCount() + " disagreements.";
+                    if (totalBatchApplied > 0) {
+                        completionMessage += " Applied to " + totalBatchApplied
+                                + " additional image(s).";
+                    }
+                    Dialogs.showInfoNotification(STRINGS.getString("name"), completionMessage);
                 });
             } catch (Exception ex) {
                 Platform.runLater(() -> {
