@@ -2204,11 +2204,12 @@ public class CellTuneExtension implements QuPathExtension {
                 .collect(java.util.stream.Collectors.toList());
         if (allImageNames.isEmpty()) return;
 
+        // Capture live imageData and current image name before showing dialog
+        var liveImageData = qupath.getImageData();
         String currentImageName = null;
-        var imageData = qupath.getImageData();
-        if (imageData != null) {
-            var entry = project.getEntry(imageData);
-            if (entry != null) currentImageName = entry.getImageName();
+        if (liveImageData != null) {
+            var curEntry = project.getEntry(liveImageData);
+            if (curEntry != null) currentImageName = curEntry.getImageName();
         }
 
         var imageSelector = new ImageSelectionPane(
@@ -2229,10 +2230,9 @@ public class CellTuneExtension implements QuPathExtension {
         progressStage.initOwner(qupath.getStage());
         progressStage.initModality(javafx.stage.Modality.NONE);
         progressStage.setResizable(false);
-        progressStage.setAlwaysOnTop(true);
         var progressBar = new javafx.scene.control.ProgressBar(0);
         progressBar.setPrefWidth(440);
-        var statusLabel = new javafx.scene.control.Label("Starting\u2026");
+        var statusLabel = new javafx.scene.control.Label("Starting...");
         statusLabel.setWrapText(true);
         statusLabel.setMaxWidth(440);
         var logArea = new javafx.scene.control.TextArea();
@@ -2249,6 +2249,8 @@ public class CellTuneExtension implements QuPathExtension {
         final java.util.List<String> finalFeatureNames = featureNames;
         final DualModelClassifier finalClassifier = classifier;
         final FeatureNormalizer finalNormalizer = featureNormalizer;
+        final String finalCurrentImageName = currentImageName;
+        final var finalLiveImageData = liveImageData;
 
         Thread applyThread = new Thread(() -> {
             int total = finalSelected.size();
@@ -2262,44 +2264,77 @@ public class CellTuneExtension implements QuPathExtension {
                     logArea.appendText("Classifying: " + imgNameFinal + "\n");
                 });
                 try {
-                    @SuppressWarnings("unchecked")
-                    var typedEntries = (java.util.List<ProjectImageEntry<java.awt.image.BufferedImage>>)
-                            (java.util.List<?>) project.getImageList();
-                    var entryOpt = typedEntries.stream()
-                            .filter(e -> e.getImageName().equals(imgNameFinal))
-                            .findFirst();
-                    if (entryOpt.isEmpty()) {
-                        javafx.application.Platform.runLater(() -> logArea.appendText("  Skipped: not found\n"));
-                        done++; continue;
+                    boolean isCurrentImage = imgNameFinal.equals(finalCurrentImageName)
+                            && finalLiveImageData != null;
+                    if (isCurrentImage) {
+                        // Use live imageData so QuPath viewer updates immediately
+                        var detections = finalLiveImageData.getHierarchy().getDetectionObjects();
+                        if (detections.isEmpty()) {
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("  Skipped: no detections\n"));
+                            done++; continue;
+                        }
+                        var extractor = new CellFeatureExtractor(finalFeatureNames);
+                        if (finalNormalizer != null) extractor.setNormalizer(finalNormalizer);
+                        finalClassifier.predictOnly(detections, extractor, true,
+                                msg -> javafx.application.Platform.runLater(() ->
+                                        logArea.appendText("  " + msg + "\n")));
+                        final int count = detections.size();
+                        javafx.application.Platform.runLater(() -> {
+                            predAll = finalClassifier.getPredALL();
+                            finalLiveImageData.getHierarchy()
+                                    .fireHierarchyChangedEvent(CellTuneExtension.this);
+                            syncPanelState();
+                            logArea.appendText("  Done: " + count + " cells classified\n");
+                        });
+                    } else {
+                        // Other images: read from disk, classify, save back
+                        @SuppressWarnings("unchecked")
+                        var typedEntries = (java.util.List<ProjectImageEntry<java.awt.image.BufferedImage>>)
+                                (java.util.List<?>) project.getImageList();
+                        var entryOpt = typedEntries.stream()
+                                .filter(e -> e.getImageName().equals(imgNameFinal))
+                                .findFirst();
+                        if (entryOpt.isEmpty()) {
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("  Skipped: not found\n"));
+                            done++; continue;
+                        }
+                        var imgEntry = entryOpt.get();
+                        var imgData = imgEntry.readImageData();
+                        if (imgData == null) {
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("  Skipped: could not read image\n"));
+                            done++; continue;
+                        }
+                        var detections = imgData.getHierarchy().getDetectionObjects();
+                        if (detections.isEmpty()) {
+                            javafx.application.Platform.runLater(() ->
+                                    logArea.appendText("  Skipped: no detections\n"));
+                            done++; continue;
+                        }
+                        var extractor = new CellFeatureExtractor(finalFeatureNames);
+                        if (finalNormalizer != null) extractor.setNormalizer(finalNormalizer);
+                        finalClassifier.predictOnly(detections, extractor, true,
+                                msg -> javafx.application.Platform.runLater(() ->
+                                        logArea.appendText("  " + msg + "\n")));
+                        imgEntry.saveImageData(imgData);
+                        final int count = detections.size();
+                        javafx.application.Platform.runLater(() ->
+                                logArea.appendText("  Done: " + count + " cells classified\n"));
                     }
-                    var imgEntry = entryOpt.get();
-                    var imgData = imgEntry.readImageData();
-                    if (imgData == null) {
-                        javafx.application.Platform.runLater(() -> logArea.appendText("  Skipped: could not read image\n"));
-                        done++; continue;
-                    }
-                    var detections = imgData.getHierarchy().getDetectionObjects();
-                    if (detections.isEmpty()) {
-                        javafx.application.Platform.runLater(() -> logArea.appendText("  Skipped: no detections\n"));
-                        done++; continue;
-                    }
-                    var extractor = new CellFeatureExtractor(finalFeatureNames);
-                    if (finalNormalizer != null) extractor.setNormalizer(finalNormalizer);
-                    finalClassifier.predictOnly(detections, extractor, true,
-                            msg -> javafx.application.Platform.runLater(() -> logArea.appendText("  " + msg + "\n")));
-                    imgEntry.saveImageData(imgData);
-                    final int count = detections.size();
-                    javafx.application.Platform.runLater(() -> logArea.appendText("  Done: " + count + " cells classified\n"));
                 } catch (Exception ex) {
                     final String err = ex.getMessage();
-                    javafx.application.Platform.runLater(() -> logArea.appendText("  ERROR: " + err + "\n"));
-                    logger.warn("[CellTune] applyBinaryClassifierToImages error for {}: {}", imgNameFinal, ex.getMessage(), ex);
+                    javafx.application.Platform.runLater(() ->
+                            logArea.appendText("  ERROR: " + err + "\n"));
+                    logger.warn("[CellTune] applyBinaryClassifierToImages error for {}: {}",
+                            imgNameFinal, ex.getMessage(), ex);
                 }
                 done++;
             }
             javafx.application.Platform.runLater(() -> {
                 progressBar.setProgress(1.0);
-                statusLabel.setText("Complete — " + total + " image(s) processed.");
+                statusLabel.setText("Complete -- " + total + " image(s) processed.");
                 logArea.appendText("Done.\n");
             });
         });
