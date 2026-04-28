@@ -183,14 +183,16 @@ public class CompositeClassifier {
             }
         }
 
-        // Batch PathClass assignment on the FX thread (per UI thread-safety convention)
-        Platform.runLater(() -> {
-            for (int i = 0; i < classifyObjects.size(); i++) {
-                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-            }
+        // Assign classes synchronously — must complete before batch() calls saveImageData()
+        for (int i = 0; i < classifyObjects.size(); i++) {
+            classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+        }
+
+        // Fire the UI notification on the FX thread (safe to be async — data is already written)
+        Platform.runLater(() ->
             imageData.getHierarchy().fireObjectClassificationsChangedEvent(
-                    CompositeClassifier.this, classifyObjects);
-        });
+                    CompositeClassifier.this, classifyObjects)
+        );  
 
         updateStatus("Complete", 1.0);
         out.accept("Composite classification complete: " + nCells + " cells.");
