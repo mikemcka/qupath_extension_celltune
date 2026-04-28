@@ -251,6 +251,10 @@ public class ClassificationPanel extends VBox {
         this.onApplyToImages = cb;
     }
 
+    public void setApplyToImagesCount(int count) {
+        applyToImagesButton.setText(count > 0 ? "Apply to Images... (" + count + ")" : "Apply to Images...");
+    }
+
     // ── State setters (called by CellTuneExtension to share state) ──
 
     public void setLabelStore(LabelStore store) {

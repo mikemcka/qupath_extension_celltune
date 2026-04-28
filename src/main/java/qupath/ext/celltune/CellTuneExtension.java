@@ -121,6 +121,8 @@ public class CellTuneExtension implements QuPathExtension {
     /** Multi-class state saved before entering binary mode, restored on exit. */
     private LabelStore preBinaryLabelStore = null;
     private DualModelClassifier preBinaryClassifier = null;
+    /** Images pre-selected via "Apply to Images..." button; used in next training run. */
+    private List<String> binaryTargetImages = new ArrayList<>();
 
     // ── QuPathExtension API ────────────────────────────────────────────────────
 
@@ -868,9 +870,11 @@ public class CellTuneExtension implements QuPathExtension {
         classifier.setModel1Type(model1Type);
         classifier.setModel2Type(model2Type);
 
-        // Show image selection dialog (current image is always included)
+        // Use pre-selected images (from "Apply to Images...") if set; otherwise prompt
         List<String> selectedImages;
-        if (allImageNames.size() > 1) {
+        if (!binaryTargetImages.isEmpty()) {
+            selectedImages = binaryTargetImages;
+        } else if (allImageNames.size() > 1) {
             var imageSelector = new ImageSelectionPane(
                     qupath.getStage(), allImageNames, currentImageName);
             selectedImages = imageSelector.showAndWait();
@@ -2190,11 +2194,6 @@ public class CellTuneExtension implements QuPathExtension {
             Dialogs.showErrorMessage(EXTENSION_NAME, "Open a QuPath project first.");
             return;
         }
-        if (classifier == null || !classifier.isTrained()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No trained classifier. Train the binary classifier first.");
-            return;
-        }
 
         @SuppressWarnings("unchecked")
         var entries = (java.util.List<ProjectImageEntry<java.awt.image.BufferedImage>>)
@@ -2204,142 +2203,22 @@ public class CellTuneExtension implements QuPathExtension {
                 .collect(java.util.stream.Collectors.toList());
         if (allImageNames.isEmpty()) return;
 
-        // Capture live imageData and current image name before showing dialog
-        var liveImageData = qupath.getImageData();
         String currentImageName = null;
+        var liveImageData = qupath.getImageData();
         if (liveImageData != null) {
             var curEntry = project.getEntry(liveImageData);
             if (curEntry != null) currentImageName = curEntry.getImageName();
         }
 
+        // Pre-populate picker with any previously stored selection
         var imageSelector = new ImageSelectionPane(
                 qupath.getStage(), allImageNames, currentImageName);
         java.util.List<String> selected = imageSelector.showAndWait();
-        if (selected == null || selected.isEmpty()) return;
+        if (selected == null) return; // cancelled
 
-        java.util.List<String> featureNames = classifier.getFeatureNames();
-        if (featureNames == null || featureNames.isEmpty()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "Classifier has no feature names. Retrain the classifier.");
-            return;
-        }
-
-        // Progress dialog
-        var progressStage = new javafx.stage.Stage();
-        progressStage.setTitle("CellTune \u2014 Apply to Images");
-        progressStage.initOwner(qupath.getStage());
-        progressStage.initModality(javafx.stage.Modality.NONE);
-        progressStage.setResizable(false);
-        var progressBar = new javafx.scene.control.ProgressBar(0);
-        progressBar.setPrefWidth(440);
-        var statusLabel = new javafx.scene.control.Label("Starting...");
-        statusLabel.setWrapText(true);
-        statusLabel.setMaxWidth(440);
-        var logArea = new javafx.scene.control.TextArea();
-        logArea.setEditable(false);
-        logArea.setPrefHeight(140);
-        logArea.setPrefWidth(440);
-        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
-        var progressBox = new javafx.scene.layout.VBox(8, statusLabel, progressBar, logArea);
-        progressBox.setPadding(new javafx.geometry.Insets(15));
-        progressStage.setScene(new javafx.scene.Scene(progressBox));
-        progressStage.show();
-
-        final java.util.List<String> finalSelected = selected;
-        final java.util.List<String> finalFeatureNames = featureNames;
-        final DualModelClassifier finalClassifier = classifier;
-        final FeatureNormalizer finalNormalizer = featureNormalizer;
-        final String finalCurrentImageName = currentImageName;
-        final var finalLiveImageData = liveImageData;
-
-        Thread applyThread = new Thread(() -> {
-            int total = finalSelected.size();
-            int done = 0;
-            for (String imgName : finalSelected) {
-                final String imgNameFinal = imgName;
-                final double pct = (double) done / total;
-                javafx.application.Platform.runLater(() -> {
-                    statusLabel.setText("Applying to: " + imgNameFinal + " (" + (int)(pct*100) + "%)");
-                    progressBar.setProgress(pct);
-                    logArea.appendText("Classifying: " + imgNameFinal + "\n");
-                });
-                try {
-                    boolean isCurrentImage = imgNameFinal.equals(finalCurrentImageName)
-                            && finalLiveImageData != null;
-                    if (isCurrentImage) {
-                        // Use live imageData so QuPath viewer updates immediately
-                        var detections = finalLiveImageData.getHierarchy().getDetectionObjects();
-                        if (detections.isEmpty()) {
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText("  Skipped: no detections\n"));
-                            done++; continue;
-                        }
-                        var extractor = new CellFeatureExtractor(finalFeatureNames);
-                        if (finalNormalizer != null) extractor.setNormalizer(finalNormalizer);
-                        finalClassifier.predictOnly(detections, extractor, true,
-                                msg -> javafx.application.Platform.runLater(() ->
-                                        logArea.appendText("  " + msg + "\n")));
-                        final int count = detections.size();
-                        javafx.application.Platform.runLater(() -> {
-                            predAll = finalClassifier.getPredALL();
-                            finalLiveImageData.getHierarchy()
-                                    .fireHierarchyChangedEvent(CellTuneExtension.this);
-                            syncPanelState();
-                            logArea.appendText("  Done: " + count + " cells classified\n");
-                        });
-                    } else {
-                        // Other images: read from disk, classify, save back
-                        @SuppressWarnings("unchecked")
-                        var typedEntries = (java.util.List<ProjectImageEntry<java.awt.image.BufferedImage>>)
-                                (java.util.List<?>) project.getImageList();
-                        var entryOpt = typedEntries.stream()
-                                .filter(e -> e.getImageName().equals(imgNameFinal))
-                                .findFirst();
-                        if (entryOpt.isEmpty()) {
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText("  Skipped: not found\n"));
-                            done++; continue;
-                        }
-                        var imgEntry = entryOpt.get();
-                        var imgData = imgEntry.readImageData();
-                        if (imgData == null) {
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText("  Skipped: could not read image\n"));
-                            done++; continue;
-                        }
-                        var detections = imgData.getHierarchy().getDetectionObjects();
-                        if (detections.isEmpty()) {
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText("  Skipped: no detections\n"));
-                            done++; continue;
-                        }
-                        var extractor = new CellFeatureExtractor(finalFeatureNames);
-                        if (finalNormalizer != null) extractor.setNormalizer(finalNormalizer);
-                        finalClassifier.predictOnly(detections, extractor, true,
-                                msg -> javafx.application.Platform.runLater(() ->
-                                        logArea.appendText("  " + msg + "\n")));
-                        imgEntry.saveImageData(imgData);
-                        final int count = detections.size();
-                        javafx.application.Platform.runLater(() ->
-                                logArea.appendText("  Done: " + count + " cells classified\n"));
-                    }
-                } catch (Exception ex) {
-                    final String err = ex.getMessage();
-                    javafx.application.Platform.runLater(() ->
-                            logArea.appendText("  ERROR: " + err + "\n"));
-                    logger.warn("[CellTune] applyBinaryClassifierToImages error for {}: {}",
-                            imgNameFinal, ex.getMessage(), ex);
-                }
-                done++;
-            }
-            javafx.application.Platform.runLater(() -> {
-                progressBar.setProgress(1.0);
-                statusLabel.setText("Complete -- " + total + " image(s) processed.");
-                logArea.appendText("Done.\n");
-            });
-        });
-        applyThread.setDaemon(true);
-        applyThread.start();
+        // Store selection — applied on next training run, no classification now
+        binaryTargetImages = new java.util.ArrayList<>(selected);
+        classificationPanel.setApplyToImagesCount(binaryTargetImages.size());
     }
 
     private void showCompositeClassification(QuPathGUI qupath) {

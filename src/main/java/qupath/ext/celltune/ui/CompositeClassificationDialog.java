@@ -146,6 +146,10 @@ public class CompositeClassificationDialog {
         stage.setScene(new Scene(root, 420, 380));
         stage.setResizable(true);
 
+
+        // batchImageNames: images pre-selected via "Batch..." button for next Apply
+        final List<String>[] batchHolder = new List[]{new ArrayList<>()};
+
         // ── Button actions ───────────────────────────────────────────────────
         closeButton.setOnAction(e -> stage.close());
 
@@ -162,6 +166,16 @@ public class CompositeClassificationDialog {
                 return;
             }
             saveConfig(project, selected);
+
+            // Determine current image name for live-update handling
+            String currentImgName = null;
+            var curEntry = project.getEntry(imageData);
+            if (curEntry != null) currentImgName = curEntry.getImageName();
+            final String finalCurrentImgName = currentImgName;
+            final var finalImageData = imageData;
+            final List<String> finalSelected = selected;
+            final List<String> batchImages = new ArrayList<>(batchHolder[0]);
+
             resultLabel.setText("Classifying...");
             applyButton.setDisable(true);
             batchButton.setDisable(true);
@@ -173,13 +187,34 @@ public class CompositeClassificationDialog {
             Task<Integer> task = new Task<>() {
                 @Override
                 protected Integer call() throws Exception {
-                    return cc.apply(imageData, selected, project,
-                            msg -> Platform.runLater(() -> {})); // progress handled via properties
+                    int total = 0;
+                    // Always apply to the current live image
+                    total += cc.apply(finalImageData, finalSelected, project,
+                            msg -> Platform.runLater(() -> {}));
+                    // Apply to batch images (skip current — already done above)
+                    @SuppressWarnings("unchecked")
+                    var typedProject = (qupath.lib.projects.Project<java.awt.image.BufferedImage>)
+                            (qupath.lib.projects.Project<?>) project;
+                    for (String imgName : batchImages) {
+                        if (imgName.equals(finalCurrentImgName)) continue;
+                        var entryOpt = typedProject.getImageList().stream()
+                                .filter(en -> en.getImageName().equals(imgName))
+                                .findFirst();
+                        if (entryOpt.isEmpty()) continue;
+                        var imgEntry = entryOpt.get();
+                        var otherData = imgEntry.readImageData();
+                        if (otherData == null) continue;
+                        total += cc.apply(otherData, finalSelected, project,
+                                msg -> Platform.runLater(() -> {}));
+                        imgEntry.saveImageData(otherData);
+                    }
+                    return total;
                 }
             };
             task.setOnSucceeded(ev -> Platform.runLater(() -> {
                 progressStage.close();
-                resultLabel.setText("Classified " + task.getValue() + " cells.");
+                resultLabel.setText("Classified " + task.getValue() + " cells"
+                        + (batchImages.size() > 1 ? " across " + batchImages.size() + " images" : "") + ".");
                 applyButton.setDisable(false);
                 batchButton.setDisable(false);
             }));
@@ -195,70 +230,25 @@ public class CompositeClassificationDialog {
             new Thread(task, "composite-classify").start();
         });
 
+        // "Batch..." only stores the image selection — Apply runs the actual classification
         batchButton.setOnAction(e -> {
-            if (qupath.getProject() == null) {
-                Dialogs.showErrorMessage("Composite Classification", "No project is open.");
-                return;
-            }
-            List<String> selected = getSelectedMarkers(checkBoxes);
-            if (selected.isEmpty()) {
-                Dialogs.showErrorMessage("Composite Classification",
-                        "No classifiers selected. Check at least one checkbox.");
-                return;
-            }
-            saveConfig(project, selected);
-
-            // Collect all image names and current image name
             List<String> allImageNames = new ArrayList<>();
-            for (var entry : project.getImageList()) {
-                allImageNames.add(entry.getImageName());
-            }
-            String currentImageName = qupath.getImageData() != null
-                    ? qupath.getImageData().getServer().getMetadata().getName()
-                    : null;
-            // If current name not found by server metadata, use a fallback
-            if (currentImageName == null || !allImageNames.contains(currentImageName)) {
-                var currentEntry = qupath.getProject() != null && qupath.getImageData() != null
-                        ? qupath.getProject().getEntry(qupath.getImageData()) : null;
-                currentImageName = currentEntry != null ? currentEntry.getImageName() : null;
+            for (var entry : project.getImageList()) allImageNames.add(entry.getImageName());
+            if (allImageNames.isEmpty()) return;
+
+            String currentImgName = null;
+            if (qupath.getImageData() != null) {
+                var curEntry2 = project.getEntry(qupath.getImageData());
+                if (curEntry2 != null) currentImgName = curEntry2.getImageName();
             }
 
             ImageSelectionPane selectionPane = new ImageSelectionPane(
-                    stage, allImageNames, currentImageName);
-            
-            List<String> imageNames = selectionPane.showAndWait();
-            if (imageNames == null || imageNames.isEmpty()) return;
+                    stage, allImageNames, currentImgName);
+            List<String> picked = selectionPane.showAndWait();
+            if (picked == null) return; // cancelled
 
-            applyButton.setDisable(true);
-            batchButton.setDisable(true);
-
-            CompositeClassifier cc = new CompositeClassifier();
-            Stage progressStage = buildProgressStage(stage, cc);
-            progressStage.show();
-
-            final List<String> finalSelected = selected;
-            Task<java.util.Map<String, String>> task = new Task<>() {
-                @Override
-                protected java.util.Map<String, String> call() throws Exception {
-                    return cc.batch(project, imageNames, finalSelected,
-                            msg -> Platform.runLater(() -> {}));
-                }
-            };
-            task.setOnSucceeded(ev -> Platform.runLater(() -> {
-                progressStage.close();
-                applyButton.setDisable(false);
-                batchButton.setDisable(false);
-                showBatchResults(stage, task.getValue());
-            }));
-            task.setOnFailed(ev -> Platform.runLater(() -> {
-                progressStage.close();
-                applyButton.setDisable(false);
-                batchButton.setDisable(false);
-                String msg = task.getException() != null
-                        ? task.getException().getMessage() : "Unknown error";
-                Dialogs.showErrorMessage("Composite Classification (Batch)", msg);
-            }));
-            new Thread(task, "composite-classify-batch").start();
+            batchHolder[0] = new ArrayList<>(picked);
+            batchButton.setText(picked.isEmpty() ? "Batch..." : "Batch (" + picked.size() + ")...");
         });
 
         stage.showAndWait();
