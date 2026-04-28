@@ -86,6 +86,8 @@ public class ClassificationPanel extends VBox {
     private final Label binaryBannerLabel = new Label();
     private final Button exitBinaryButton = new Button("Exit Binary Mode");
     private Runnable onExitBinaryMode;
+    private final Button applyToImagesButton = new Button("Apply to Images\u2026");
+    private Runnable onApplyToImages;
 
     public ClassificationPanel(QuPathGUI qupath) {
         super(10);
@@ -103,6 +105,10 @@ public class ClassificationPanel extends VBox {
         exitBinaryButton.setVisible(false);
         exitBinaryButton.setManaged(false);
         exitBinaryButton.setOnAction(e -> { if (onExitBinaryMode != null) onExitBinaryMode.run(); });
+        applyToImagesButton.setVisible(false);
+        applyToImagesButton.setManaged(false);
+        applyToImagesButton.setDisable(true);
+        applyToImagesButton.setOnAction(e -> { if (onApplyToImages != null) onApplyToImages.run(); });
 
         // ── Hyperparameter controls ──
         roundsSpinner = new Spinner<>(50, 1000, 200, 50);
@@ -201,6 +207,7 @@ public class ClassificationPanel extends VBox {
                 title,
                 binaryBannerLabel,
                 exitBinaryButton,
+                applyToImagesButton,
                 paramRow,
                 modelRow,
                 poolImagesCheckBox,
@@ -231,10 +238,17 @@ public class ClassificationPanel extends VBox {
         binaryBannerLabel.setManaged(active);
         exitBinaryButton.setVisible(active);
         exitBinaryButton.setManaged(active);
+        applyToImagesButton.setVisible(active);
+        applyToImagesButton.setManaged(active);
+        applyToImagesButton.setDisable(!active || classifier == null || !classifier.isTrained());
     }
 
     public void setOnExitBinaryMode(Runnable cb) {
         this.onExitBinaryMode = cb;
+    }
+
+    public void setOnApplyToImages(Runnable cb) {
+        this.onApplyToImages = cb;
     }
 
     // ── State setters (called by CellTuneExtension to share state) ──
