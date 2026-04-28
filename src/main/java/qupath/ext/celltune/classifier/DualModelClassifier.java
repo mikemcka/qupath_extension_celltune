@@ -525,9 +525,37 @@ public class DualModelClassifier {
             out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
         }
 
-        // Apply PathClass assignments synchronously so callers can safely persist immediately.
-        for (int i = 0; i < classifyObjects.size(); i++) {
-            classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+        // Apply PathClass assignments on the FX thread and wait for completion
+        // so callers can safely persist immediately after predictOnly returns.
+        if (Platform.isFxApplicationThread()) {
+            for (int i = 0; i < classifyObjects.size(); i++) {
+                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+            }
+        } else {
+            var done = new java.util.concurrent.CountDownLatch(1);
+            final RuntimeException[] fxError = new RuntimeException[1];
+            Platform.runLater(() -> {
+                try {
+                    for (int i = 0; i < classifyObjects.size(); i++) {
+                        classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+                    }
+                } catch (RuntimeException ex) {
+                    fxError[0] = ex;
+                } finally {
+                    done.countDown();
+                }
+            });
+
+            try {
+                done.await();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while applying predictions.", ie);
+            }
+
+            if (fxError[0] != null) {
+                throw fxError[0];
+            }
         }
 
         if (populateSets) {
