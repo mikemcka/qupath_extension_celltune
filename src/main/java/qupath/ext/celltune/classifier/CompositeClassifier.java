@@ -128,14 +128,21 @@ public class CompositeClassifier {
                     lgbProbs = lgbModel.predictProba(flatData, nCells, nFeatures);
                 }
 
-                // Class index 1 = positive class.
-                // classNames are sorted alphabetically at training time; for typical
-                // marker names (e.g. CD4_neg/CD4_pos) "neg" < "pos" → index 1 = positive.
+                // Locate the positive class index by finding the class name ending with "+".
+                // classNames are sorted alphabetically; for names like "CD4+" / "CD4-",
+                // "+" (ASCII 43) < "-" (ASCII 45), so index 0 = positive -- NOT index 1.
+                // Hardcoding index 1 inverts all predictions for such class names.
+                int posIdx = 0; // fallback: first class
+                for (int ci = 0; ci < classNames.size(); ci++) {
+                    if (classNames.get(ci).endsWith("+")) { posIdx = ci; break; }
+                }
+                final int posClassIdx = posIdx;
                 float[] posProbs = new float[nCells];
                 for (int i = 0; i < nCells; i++) {
-                    float xgbPos = (xgbProbs[i].length > 1) ? xgbProbs[i][1] : xgbProbs[i][0];
-                    float lgbPos = (lgbProbs != null && lgbProbs[i].length > 1)
-                            ? lgbProbs[i][1] : xgbPos;
+                    float xgbPos = xgbProbs[i][Math.min(posClassIdx, xgbProbs[i].length - 1)];
+                    float lgbPos = (lgbProbs != null)
+                            ? lgbProbs[i][Math.min(posClassIdx, lgbProbs[i].length - 1)]
+                            : xgbPos;
                     posProbs[i] = (lgbProbs != null) ? (xgbPos + lgbPos) / 2.0f : xgbPos;
                 }
 
