@@ -1113,6 +1113,13 @@ public class CellTuneExtension implements QuPathExtension {
                                                 logArea.appendText("  " + msg + "\n"));
                                     });
 
+                            // Mark the off-screen hierarchy changed on FX thread before saving.
+                            var saveReady = new java.util.concurrent.CountDownLatch(1);
+                            javafx.application.Platform.runLater(() -> {
+                                otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
+                                saveReady.countDown();
+                            });
+                            try { saveReady.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
 
                             entry.saveImageData(otherImageData);
                             applied++;
