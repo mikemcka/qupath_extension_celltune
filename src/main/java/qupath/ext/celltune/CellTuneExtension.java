@@ -32,6 +32,7 @@ import qupath.ext.celltune.ui.ImageSelectionPane;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
+import qupath.ext.celltune.ui.ProjectPredictionSummaryView;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
 import qupath.lib.common.Version;
@@ -523,6 +524,10 @@ public class CellTuneExtension implements QuPathExtension {
         featureImportanceItem.setOnAction(e -> showFeatureImportance(qupath));
         featureImportanceItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem projectSummaryItem = new MenuItem(resources.getString("menu.prediction.summary"));
+        projectSummaryItem.setOnAction(e -> showProjectPredictionSummary(qupath));
+        projectSummaryItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem exportItem = new MenuItem(resources.getString("menu.export"));
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
@@ -574,6 +579,7 @@ public class CellTuneExtension implements QuPathExtension {
                 manualLabelItem,
                 confusionsItem,
                 featureImportanceItem,
+                projectSummaryItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,
                 autoLandmarkItem,
@@ -586,6 +592,98 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     // ── Placeholder actions (wired in later phases) ────────────────────────────
+
+    private void showProjectPredictionSummary(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
+            return;
+        }
+
+        // Ensure latest in-memory predictions for current image are included in the summary.
+        persistCurrentImagePredictions(qupath);
+
+        String currentImageName = null;
+        var currentImageData = qupath.getImageData();
+        if (currentImageData != null) {
+            var currentEntry = project.getEntry(currentImageData);
+            if (currentEntry != null) {
+                currentImageName = currentEntry.getImageName();
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        var rows = new ArrayList<ProjectPredictionSummaryView.Row>(entries.size());
+
+        for (var entry : entries) {
+            if (entry == null || entry.getImageName() == null) {
+                continue;
+            }
+
+            String imageName = entry.getImageName();
+            PopulationSet predictions = null;
+            if (currentImageName != null && currentImageName.equals(imageName)
+                    && predAll != null && predAll.size() > 0) {
+                predictions = predAll;
+            } else {
+                try {
+                    predictions = ProjectStateManager.loadImagePredictions(project, imageName);
+                } catch (IOException ex) {
+                    logger.warn("Failed to load predictions for {} in project summary: {}", imageName, ex.getMessage());
+                }
+            }
+
+            rows.add(buildPredictionSummaryRow(imageName, predictions));
+        }
+
+        if (rows.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
+            return;
+        }
+
+        new ProjectPredictionSummaryView(qupath, qupath.getStage(), rows).show();
+    }
+
+    private ProjectPredictionSummaryView.Row buildPredictionSummaryRow(String imageName, PopulationSet predictions) {
+        if (predictions == null || predictions.size() == 0) {
+            return new ProjectPredictionSummaryView.Row(
+                    imageName,
+                    0L,
+                    0L,
+                    0L,
+                    "-",
+                    "No saved predictions for this image.");
+        }
+
+        long predicted = predictions.size();
+        long disagreements = predictions.getDisagreementCount();
+        long agreements = Math.max(0L, predicted - disagreements);
+        double agreementPct = predicted > 0 ? (100.0 * agreements) / predicted : 0.0;
+        String agreementText = String.format("%.1f%%", agreementPct);
+
+        return new ProjectPredictionSummaryView.Row(
+                imageName,
+                predicted,
+                agreements,
+                disagreements,
+                agreementText,
+                formatClassCounts(predictions.getAvgCounts()));
+    }
+
+    private String formatClassCounts(Map<String, Long> counts) {
+        if (counts == null || counts.isEmpty()) {
+            return "No predicted classes.";
+        }
+
+        var parts = new ArrayList<String>(counts.size());
+        for (var entry : counts.entrySet()) {
+            String className = entry.getKey() == null ? "(unknown)" : entry.getKey();
+            long count = entry.getValue() == null ? 0L : entry.getValue();
+            parts.add(className + ": " + count);
+        }
+        return String.join(", ", parts);
+    }
 
     private void showFeatureImportance(QuPathGUI qupath) {
         var imageData = qupath.getImageData();
@@ -2317,3 +2415,4 @@ public class CellTuneExtension implements QuPathExtension {
         logger.info("[CellTune] Exited binary mode \u2014 restored multi-class state");
     }
 }
+
