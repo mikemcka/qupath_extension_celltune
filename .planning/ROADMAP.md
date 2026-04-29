@@ -19,7 +19,11 @@ Success Criteria:
 2. Phase 2 has VERIFICATION artifact covering single-image and batch composite flows.
 3. Phase 3 has VERIFICATION artifact for named-rule persistence and apply flows.
 4. Milestone audit no longer flags orphaned requirements caused by missing phase verification files.
-Plans: To be planned
+Plans: 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md - Create formal verification artifacts for phases 1 and 2
+- [ ] 05-02-PLAN.md - Create phase 3 verification artifact and refresh v1.0 audit evidence
 
 ### Phase 6 - Nyquist Validation Coverage
 
@@ -67,7 +71,7 @@ Plans: To be planned
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
 |-------|-----------|--------------|----------------|--------|
-| 5. Verification Artifact Backfill | v1.1 | EVID-01,EVID-02,EVID-03 | 0/0 | Not started |
+| 5. Verification Artifact Backfill | v1.1 | EVID-01,EVID-02,EVID-03 | 0/2 | Not started |
 | 6. Nyquist Validation Coverage | v1.1 | NYQ-01,NYQ-02,NYQ-03,NYQ-04 | 0/0 | Not started |
 | 7. Reliability Core Hardening | v1.1 | REL-01,REL-02,REL-03 | 0/0 | Not started |
 | 8. UX Safety and Explainability Polish | v1.1 | UX-01,UX-02 | 0/0 | Not started |
