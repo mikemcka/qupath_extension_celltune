@@ -35,6 +35,12 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 
 - [ ] TST-01: Automated tests cover new reliability and validation paths introduced in this milestone.
 
+### Documentation and Governance
+
+- [x] GOV-01: Phase 10 has a formal code review artifact for project prediction summary implementation.
+- [x] DOC-01: README documents Project Prediction Summary workflow including open-image and CSV export actions.
+- [x] DOC-02: Standalone build documentation exists with JDK 25 prerequisites and compile/test/shadowJar commands.
+
 ## v2 Requirements
 
 ### Composite Evolution
@@ -67,12 +73,15 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | UX-01 | Phase 8 | Pending |
 | UX-02 | Phase 8 | Pending |
 | TST-01 | Phase 9 | Pending |
+| GOV-01 | Phase 10 | Complete |
+| DOC-01 | Phase 10 | Complete |
+| DOC-02 | Phase 10 | Complete |
 
 Coverage:
-- v1 requirements: 13 total
-- Mapped to phases: 13
+- v1 requirements: 16 total
+- Mapped to phases: 16
 - Unmapped: 0
 
 ---
 Requirements defined: 2026-04-29
-Last updated: 2026-04-29 after phase 5 execution
+Last updated: 2026-04-29 after phase 10 documentation and governance refresh

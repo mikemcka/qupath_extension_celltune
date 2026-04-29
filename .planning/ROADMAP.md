@@ -67,6 +67,20 @@ Success Criteria:
 2. CI or local test command demonstrates stable pass for new hardening tests.
 Plans: To be planned
 
+### Phase 10 - Documentation and Governance Refresh
+
+Goal: Review recent summary-dialog delivery and align planning plus user/build documentation.
+Depends on: Phase 5 baseline artifacts and current summary feature implementation.
+Requirements: GOV-01, DOC-01, DOC-02
+Success Criteria:
+1. Code review artifact records findings and residual risk for summary feature changes.
+2. README documents Project Prediction Summary usage including open-image and CSV export.
+3. Dedicated build documentation provides reproducible JDK 25 and Gradle wrapper commands.
+Plans: 1 plan
+
+Plans:
+- [x] 10-01-PLAN.md - Review summary code and align planning, README, and build docs (completed 2026-04-29)
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -76,3 +90,4 @@ Plans: To be planned
 | 7. Reliability Core Hardening | v1.1 | REL-01,REL-02,REL-03 | 0/0 | Not started |
 | 8. UX Safety and Explainability Polish | v1.1 | UX-01,UX-02 | 0/0 | Not started |
 | 9. Regression Tests for Hardening | v1.1 | TST-01 | 0/0 | Not started |
+| 10. Documentation and Governance Refresh | v1.1 | GOV-01,DOC-01,DOC-02 | 1/1 | Complete (2026-04-29) |

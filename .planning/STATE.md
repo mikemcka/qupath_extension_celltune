@@ -3,15 +3,16 @@
 ## Current Position
 
 - Milestone: v1.1 Reliability and Verification Hardening
-- Phase: 5 complete, preparing Phase 6
-- Plan: all phase 5 plans complete (05-01, 05-02)
-- Status: Phase 5 executed and verified (passed)
-- Last activity: 2026-04-29 - executed phase 5 plans and refreshed v1.0 audit evidence
+- Phase: 5 complete, 10 complete, preparing Phase 6
+- Plan: phase 5 plans complete (05-01, 05-02) and phase 10 plan complete (10-01)
+- Status: documentation/governance refresh executed; reliability and validation hardening remains pending
+- Last activity: 2026-04-29 - completed phase 10 code review and planning/docs alignment
 
 ## Carry-Forward Context
 
 - Previous milestone archived: v1.0 Binary Composite Classification.
-- Verification evidence debt for phases 1-3 is now normalized via formal VERIFICATION artifacts.
+- Verification evidence debt for phases 1-3 is normalized via formal VERIFICATION artifacts.
+- Documentation and build guidance now include project prediction summary workflow and reproducible build steps.
 - Remaining milestone scope: Nyquist validation coverage and reliability hardening phases 6-9.
 
 ## Deferred Items (Carried)

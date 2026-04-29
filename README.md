@@ -26,6 +26,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **AnnData export** — export cell data as AnnData-compatible CSV with a companion Python script for H5AD conversion. The CSV includes unique cell IDs, FOV assignments, feature values, population predictions, and ground truth labels. Run the generated `convert_to_h5ad.py` script to produce a standard `.h5ad` file for downstream analysis in scanpy or other Python tools.
 - **Random Forest classifier** — a pure-Java Random Forest implementation (no external dependencies) is available as an alternative to XGBoost or LightGBM. Uses CART decision trees with cross-entropy split criterion, bootstrap sampling, and random feature subsets (mtry = √features). Both model slots (Model 1 and Model 2) can be independently set to XGBoost, LightGBM, or Random Forest.
 - **Feature importance (XGBoost TreeSHAP)** — after training, compute per-class feature importance using native XGBoost TreeSHAP values (`predictContrib`). Results are shown as a horizontal bar chart of the top 10 features sorted by mean |SHAP| value, with a class selector to switch between cell types. Accessible via *Extensions > CellTune Classifier > Feature Importance…* at any time after training, or automatically after training by ticking **"Show top 10 feature importance after training"** in the training dialog. For Random Forest models, normalised split counts are shown instead.
+- **Project Prediction Summary** — open *Extensions > CellTune Classifier > Project Prediction Summary...* to view per-image predicted cell totals, agreement/disagreement counts, and agreement percentages across the entire project. The dialog includes **Open Selected Image** (jump directly to the selected row's image) and **Export CSV** for external reporting.
 - **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling. On restart or image switch, the trained classifier is automatically restored from saved state — no retraining needed to continue reviewing or classifying new images.
 
 ## The Active Learning Loop
@@ -82,6 +83,8 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 10. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
 11. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
 
+After running predictions, use *Extensions > CellTune Classifier > Project Prediction Summary...* to compare per-image agreement/disagreement counts, jump to a selected image, or export the summary as CSV.
+
 ### Marker Table Format
 
 A simple CSV with up to 3 marker columns:
@@ -94,6 +97,8 @@ Macrophage,CD68,CD163,CD11b
 ```
 
 ## Building from Source
+
+For a concise reproducible build workflow, see [BUILD.md](BUILD.md).
 
 ### Prerequisites
 
@@ -259,7 +264,9 @@ GPU acceleration depends on platform and the native libraries shipped in the Mav
 | Build system | Gradle 9.2.1 (Kotlin DSL) + QuPath conventions plugin |
 | Extension host | QuPath 0.7 |
 | ML model 1 | XGBoost4J 3.2.0 |
-| ML model 2 | LightGBM4J 4.6.0-2 || ML model 3 | Random Forest (pure Java, no external dependency) || UI framework | JavaFX (bundled with QuPath) |
+| ML model 2 | LightGBM4J 4.6.0-2 |
+| ML model 3 | Random Forest (pure Java, no external dependency) |
+| UI framework | JavaFX (bundled with QuPath) |
 | Serialisation | JSON (Gson, bundled with QuPath) |
 
 ## Default Hyperparameters
