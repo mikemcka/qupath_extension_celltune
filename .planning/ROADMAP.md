@@ -77,6 +77,12 @@ Plans:
 - Dialog/service wiring that applies a selected named rule using rule polarity values, not marker-only defaults
 - Summary and verification evidence for rule create/save/load/apply workflow
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md - Composite rule contract + composite-rules persistence APIs
+- [ ] 03-02-PLAN.md - Rule-driven dialog/classifier wiring + human verify checkpoint
+
 ---
 
 ### Phase 4 - Composite Rule Builder UX and Verification Hardening (Gap Closure)
@@ -96,6 +102,7 @@ Plans:
 - Milestone audit evidence update showing closed flow and integration gaps
 
 ---
+
 
 
 
