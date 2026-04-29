@@ -1,4 +1,4 @@
-﻿# Requirements: CellTune QuPath Extension
+# Requirements: CellTune QuPath Extension
 
 **Defined:** 2026-04-29
 **Core Value:** Bioimaging researchers can iteratively improve cell classifiers by reviewing model disagreements without leaving QuPath.
@@ -16,10 +16,10 @@ Requirements for Milestone 1 (Binary Composite Classification). These map to Pha
 
 ### Composite Classification Builder
 
-- [ ] **COMP-01**: User can define a composite rule as marker-polarity pairs, for example CD4+:CD3+:CD20-.
+- [x] **COMP-01**: User can define a composite rule as marker-polarity pairs, for example CD4+:CD3+:CD20-.
 - [ ] **COMP-02**: Composite builder UI supports per-marker + / - / ignore selection and user-specified composite naming.
 - [x] **COMP-03**: Applying composite classification writes PathClass labels on detections and those labels flow to export outputs.
-- [ ] **COMP-04**: Named composite rules persist in project storage and can be reused across sessions.
+- [x] **COMP-04**: Named composite rules persist in project storage and can be reused across sessions.
 - [x] **COMP-05**: Composite classification can run across selected batch images in a project.
 
 ## v2 Requirements
@@ -45,10 +45,10 @@ Requirements for Milestone 1 (Binary Composite Classification). These map to Pha
 | BIN-02 | Phase 1 | Complete |
 | BIN-03 | Phase 1 | Complete |
 | BIN-04 | Phase 1 | Complete |
-| COMP-01 | Phase 3 | Pending |
+| COMP-01 | Phase 3 | Complete |
 | COMP-02 | Phase 4 | Pending |
 | COMP-03 | Phase 2 | Complete |
-| COMP-04 | Phase 3 | Pending |
+| COMP-04 | Phase 3 | Complete |
 | COMP-05 | Phase 2 | Complete |
 
 **Coverage:**
@@ -58,6 +58,6 @@ Requirements for Milestone 1 (Binary Composite Classification). These map to Pha
 
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-04-29 after gap-closure phase creation from milestone audit*
+*Last updated: 2026-04-29 after Phase 3 plan execution*
 
 

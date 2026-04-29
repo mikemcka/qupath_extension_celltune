@@ -1,4 +1,4 @@
-﻿# Roadmap â€” CellTune QuPath Extension
+# Roadmap â€” CellTune QuPath Extension
 
 ## Milestone 1 â€” Binary Composite Classification
 
@@ -81,7 +81,7 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md - Composite rule contract + composite-rules persistence APIs
-- [ ] 03-02-PLAN.md - Rule-driven dialog/classifier wiring + human verify checkpoint
+- [x] 03-02-PLAN.md - Rule-driven dialog/classifier wiring + human verify checkpoint
 
 ---
 
