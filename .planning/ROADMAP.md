@@ -1,6 +1,6 @@
-# Roadmap Ã¢â‚¬â€ CellTune QuPath Extension
+# Roadmap ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â CellTune QuPath Extension
 
-## Milestone 1 Ã¢â‚¬â€ Binary Composite Classification
+## Milestone 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Binary Composite Classification
 
 Add per-marker binary classification with composite population assembly.
 Users train independent `pos/neg` classifiers per marker and combine them
@@ -10,39 +10,39 @@ into composite populations (e.g. `CD4+:CD3+:CD20-`) written as QuPath PathClasse
 
 ---
 
-### Phase 1 Ã¢â‚¬â€ Binary Classifier Infrastructure
+### Phase 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Binary Classifier Infrastructure
 
 **Goal:** Enable users to create, train, review, and persist independent binary (pos/neg) classifiers per marker, fully reusing the existing dual-model active learning loop.
 
 **Depends on:** Existing system (all phases complete)
 
 **Deliverables:**
-- `BinaryClassifierRegistry` Ã¢â‚¬â€ tracks all named binary classifiers in the project; persists marker name Ã¢â€ â€™ state file mapping in `<project>/celltune/binary-registry.json`
-- Named binary classifier sessions Ã¢â‚¬â€ each marker gets its own `LabelStore` (2 classes: `<Marker>_pos` / `<Marker>_neg`), `ClassifierState` saved at `<project>/celltune/binary/<MarkerName>.json`
-- Binary marker management panel Ã¢â‚¬â€ create new binary classifier (name it by marker), open existing, delete
+- `BinaryClassifierRegistry` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â tracks all named binary classifiers in the project; persists marker name ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ state file mapping in `<project>/celltune/binary-registry.json`
+- Named binary classifier sessions ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â each marker gets its own `LabelStore` (2 classes: `<Marker>_pos` / `<Marker>_neg`), `ClassifierState` saved at `<project>/celltune/binary/<MarkerName>.json`
+- Binary marker management panel ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â create new binary classifier (name it by marker), open existing, delete
 - Launch existing training/review loop for a selected binary classifier (reuses `DualModelClassifier`, `ReviewController`, `UncertaintySampler` unchanged)
 - Menu item: *Extensions > CellTune > Binary Classifiers...*
 
 **UAT:**
 - User can create a binary classifier named "CD4", seed `CD4_pos` and `CD4_neg` labels, train, review, and save
-- State persists across QuPath restart Ã¢â‚¬â€ classifier reloads from `binary/CD4.json`
+- State persists across QuPath restart ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â classifier reloads from `binary/CD4.json`
 - Multiple binary classifiers can exist in same project simultaneously (CD4, CD3, CD20)
 - Existing multi-class classification workflow is unaffected
 
 ---
 
-### Phase 2 Ã¢â‚¬â€ Composite Classification Builder
+### Phase 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Composite Classification Builder
 
 **Goal:** Allow users to define composite population rules from trained binary classifiers (e.g. `CD4+:CD3+:CD20-`) and apply them to write QuPath PathClasses on cells.
 
 **Depends on:** Phase 1 (Binary Classifier Infrastructure)
 
 **Deliverables:**
-- `CompositeClassificationRule` Ã¢â‚¬â€ stores a list of `(markerName, polarity)` pairs; serialisable to JSON; named by user (e.g. "CD4 T cell")
-- `CompositeClassifier` Ã¢â‚¬â€ loads N binary `ClassifierState`s, applies 50% hard threshold per classifier, ANDs results, writes composite `PathClass` (e.g. `CD4+:CD3+:CD20-`) to each `PathDetectionObject` via `Platform.runLater()`
-- Composite builder dialog Ã¢â‚¬â€ shows all trained binary classifiers as rows with `+` / `-` / `ignore` toggles; user names the composite; apply button runs `CompositeClassifier`
-- Composite rule persistence Ã¢â‚¬â€ named rules saved to `<project>/celltune/composite-rules.json`
-- Batch composite classification Ã¢â‚¬â€ apply a composite rule across multiple project images (reuses `ImageSelectionPane`)
+- `CompositeClassificationRule` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â stores a list of `(markerName, polarity)` pairs; serialisable to JSON; named by user (e.g. "CD4 T cell")
+- `CompositeClassifier` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â loads N binary `ClassifierState`s, applies 50% hard threshold per classifier, ANDs results, writes composite `PathClass` (e.g. `CD4+:CD3+:CD20-`) to each `PathDetectionObject` via `Platform.runLater()`
+- Composite builder dialog ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â shows all trained binary classifiers as rows with `+` / `-` / `ignore` toggles; user names the composite; apply button runs `CompositeClassifier`
+- Composite rule persistence ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â named rules saved to `<project>/celltune/composite-rules.json`
+- Batch composite classification ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â apply a composite rule across multiple project images (reuses `ImageSelectionPane`)
 - Menu item: *Extensions > CellTune > Build Composite Classification...*
 
 **UAT:**
@@ -55,9 +55,9 @@ into composite populations (e.g. `CD4+:CD3+:CD20-`) written as QuPath PathClasse
 **Plans:** 3 plans
 
 Plans:
-- [x] 02-01-PLAN.md â€” CompositeClassifier (inference engine) + ProjectStateManager composite config methods
-- [x] 02-02-PLAN.md â€” CompositeClassificationDialog (modal UI: checkbox list, Apply, Batch, progress)
-- [x] 02-03-PLAN.md â€” CellTuneExtension wiring (menu item + export shortcut + human verify checkpoint)
+- [x] 02-01-PLAN.md Ã¢â‚¬â€ CompositeClassifier (inference engine) + ProjectStateManager composite config methods
+- [x] 02-02-PLAN.md Ã¢â‚¬â€ CompositeClassificationDialog (modal UI: checkbox list, Apply, Batch, progress)
+- [x] 02-03-PLAN.md Ã¢â‚¬â€ CellTuneExtension wiring (menu item + export shortcut + human verify checkpoint)
 
 ---
 
@@ -104,7 +104,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 04-01-PLAN.md - Row-based + / - / ignore controls and naming workflow in composite dialog
+- [x] 04-01-PLAN.md - Row-based + / - / ignore controls and naming workflow in composite dialog
 - [ ] 04-02-PLAN.md - Phase 4 verification artifact and human verify checkpoint results
 
 ---
