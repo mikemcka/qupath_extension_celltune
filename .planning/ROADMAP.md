@@ -80,7 +80,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md - Composite rule contract + composite-rules persistence APIs
+- [x] 03-01-PLAN.md - Composite rule contract + composite-rules persistence APIs
 - [ ] 03-02-PLAN.md - Rule-driven dialog/classifier wiring + human verify checkpoint
 
 ---
@@ -102,6 +102,7 @@ Plans:
 - Milestone audit evidence update showing closed flow and integration gaps
 
 ---
+
 
 
 
