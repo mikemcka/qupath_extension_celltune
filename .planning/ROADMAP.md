@@ -55,8 +55,48 @@ into composite populations (e.g. `CD4+:CD3+:CD20-`) written as QuPath PathClasse
 **Plans:** 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — CompositeClassifier (inference engine) + ProjectStateManager composite config methods
-- [ ] 02-02-PLAN.md — CompositeClassificationDialog (modal UI: checkbox list, Apply, Batch, progress)
-- [ ] 02-03-PLAN.md — CellTuneExtension wiring (menu item + export shortcut + human verify checkpoint)
+- [x] 02-01-PLAN.md — CompositeClassifier (inference engine) + ProjectStateManager composite config methods
+- [x] 02-02-PLAN.md — CompositeClassificationDialog (modal UI: checkbox list, Apply, Batch, progress)
+- [x] 02-03-PLAN.md — CellTuneExtension wiring (menu item + export shortcut + human verify checkpoint)
 
 ---
+
+### Phase 3 - Composite Rule Contract and Persistence (Gap Closure)
+
+**Goal:** Close milestone gaps for structured composite rules by adding explicit marker polarity contracts and named rule persistence.
+
+**Depends on:** Phase 2 (Composite Classification Builder)
+
+**Requirements:** COMP-01, COMP-04
+
+**Gap Closure:** Closes audit gaps for missing marker-polarity rule model, missing named rule persistence, and broken save/reload composite flow.
+
+**Deliverables:**
+- Composite rule domain model (marker plus polarity tuple list, named rule metadata)
+- Project persistence for named composite rules at <project>/celltune/composite-rules.json
+- Dialog/service wiring that applies a selected named rule using rule polarity values, not marker-only defaults
+- Summary and verification evidence for rule create/save/load/apply workflow
+
+---
+
+### Phase 4 - Composite Rule Builder UX and Verification Hardening (Gap Closure)
+
+**Goal:** Close milestone UX and evidence gaps by adding + / - / ignore controls, user naming flow, and complete verification artifacts for composite functionality.
+
+**Depends on:** Phase 3 (Composite Rule Contract and Persistence)
+
+**Requirements:** COMP-02
+
+**Gap Closure:** Closes audit gaps for missing polarity UI controls and missing phase-level verification artifacts for composite flows.
+
+**Deliverables:**
+- Composite builder UI rows with explicit + / - / ignore controls per marker
+- User-entered composite rule name input and validation
+- End-to-end verification artifact for Phase 2-4 composite flows (single image, batch image, reload rule)
+- Milestone audit evidence update showing closed flow and integration gaps
+
+---
+
+
+
+
