@@ -2,8 +2,14 @@ package qupath.ext.celltune.io;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.classifier.CompositeClassificationRule;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.model.CellPrediction;
@@ -19,6 +25,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -39,6 +47,8 @@ public class ProjectStateManager {
     private static final Logger logger = LoggerFactory.getLogger(ProjectStateManager.class);
     private static final String CELLTUNE_DIR = "celltune";
     private static final String STATE_FILENAME = "classifier-state.json";
+    private static final String COMPOSITE_RULES_FILENAME = "composite-rules.json";
+    private static final int COMPOSITE_RULES_SCHEMA_VERSION = 1;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final DateTimeFormatter TIMESTAMP_FMT =
             DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
@@ -58,7 +68,7 @@ public class ProjectStateManager {
         public String timestamp;
         public List<String> featureNames;
         public List<String> classNames;
-        public Map<String, String> labels; // cellId → class name
+        public Map<String, String> labels; // cellId â†’ class name
         public String xgboostModelBase64;  // null if not yet trained
         public String lightgbmModelBase64; // null if not yet trained
         public String rfModel1Base64;      // null if not yet trained
@@ -67,7 +77,7 @@ public class ProjectStateManager {
         public String model2Type;          // ModelType name, null defaults to LIGHTGBM
         // New fields for feature selection and normalization
         public List<String> selectedFeatures;
-        public Map<String, String> featureTransforms; // feature name → transform name
+        public Map<String, String> featureTransforms; // feature name â†’ transform name
         public Double arcsinhCofactor;
         public List<String> importedTrainingFeatureNames;
         public List<SavedTrainingRow> importedTrainingRows;
@@ -395,7 +405,7 @@ public class ProjectStateManager {
         return outPath;
     }
 
-    // ── Per-image label persistence ─────────────────────────────────────────────
+    // â”€â”€ Per-image label persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static final String IMAGE_LABELS_DIR = "image-labels";
 
@@ -456,7 +466,7 @@ public class ProjectStateManager {
 
     /**
      * Return true if a saved label file exists for the given image.
-     * This is a cheap file-existence check — no JSON parsing.
+     * This is a cheap file-existence check â€” no JSON parsing.
      *
      * @param project   the QuPath project
      * @param imageName the image name (from ProjectImageEntry.getImageName())
@@ -478,7 +488,7 @@ public class ProjectStateManager {
         return name.replaceAll("[^a-zA-Z0-9._\\-]", "_");
     }
 
-    // ── Per-image sampled cell state ──────────────────────────────────────────
+    // â”€â”€ Per-image sampled cell state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static final String IMAGE_SAMPLED_DIR = "image-sampled";
     private static final String IMAGE_PREDICTIONS_DIR = "image-predictions";
@@ -533,7 +543,7 @@ public class ProjectStateManager {
         return ids;
     }
 
-    // ── Per-image prediction persistence ─────────────────────────────────────
+    // â”€â”€ Per-image prediction persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Save Pred_ALL predictions for a specific image.
@@ -632,7 +642,7 @@ public class ProjectStateManager {
         return predAll;
     }
 
-    // ── Binary classifier persistence ──────────────────────────────────────────
+    // â”€â”€ Binary classifier persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Resolve the binary/ subdirectory inside the celltune dir, creating it if needed.
@@ -765,6 +775,191 @@ public class ProjectStateManager {
         return toLabelStore(state);
     }
 
+    // -- Composite rule persistence ---------------------------------------------
+
+    /**
+     * Save named composite rules to {@code <project>/celltune/composite-rules.json}.
+     *
+     * @param project the QuPath project (null-safe - logs warning and returns)
+     * @param rules named rules to persist
+     * @throws IOException if writing fails
+     */
+    public static void saveCompositeRules(Project<?> project,
+                                          List<CompositeClassificationRule> rules) throws IOException {
+        if (project == null) {
+            logger.warn("saveCompositeRules: project is null - skipping save");
+            return;
+        }
+
+        Path dir = getCellTuneDir(project);
+        Path path = dir.resolve(COMPOSITE_RULES_FILENAME);
+
+        JsonObject root = new JsonObject();
+        root.addProperty("version", COMPOSITE_RULES_SCHEMA_VERSION);
+
+        JsonArray rawRules = new JsonArray();
+        LinkedHashSet<String> seenNames = new LinkedHashSet<>();
+
+        List<CompositeClassificationRule> safeRules = rules != null ? rules : List.of();
+        for (CompositeClassificationRule rule : safeRules) {
+            if (rule == null) {
+                logger.warn("saveCompositeRules: skipping null rule entry");
+                continue;
+            }
+
+            String dedupeKey = rule.name().toLowerCase();
+            if (!seenNames.add(dedupeKey)) {
+                logger.warn("saveCompositeRules: duplicate rule name '{}' skipped", rule.name());
+                continue;
+            }
+
+            JsonObject rawRule = new JsonObject();
+            rawRule.addProperty("name", rule.name());
+            rawRule.addProperty("expression", rule.expression());
+
+            JsonArray rawConditions = new JsonArray();
+            for (CompositeClassificationRule.MarkerCondition condition : rule.conditions()) {
+                JsonObject rawCondition = new JsonObject();
+                rawCondition.addProperty("marker", condition.markerName());
+                rawCondition.addProperty("polarity", String.valueOf(condition.polarity().symbol()));
+                rawConditions.add(rawCondition);
+            }
+            rawRule.add("conditions", rawConditions);
+            rawRules.add(rawRule);
+        }
+
+        root.add("rules", rawRules);
+        Files.writeString(path, GSON.toJson(root), StandardCharsets.UTF_8);
+        logger.info("Saved {} composite rule(s) to {}", rawRules.size(), path);
+    }
+
+    /**
+     * Load named composite rules from {@code <project>/celltune/composite-rules.json}.
+     * Invalid rule rows are skipped with warnings; valid rows continue loading.
+     *
+     * @param project the QuPath project (null-safe - returns empty list)
+     * @return mutable list of valid composite rules
+     * @throws IOException if file reading fails
+     */
+    public static List<CompositeClassificationRule> loadCompositeRules(Project<?> project) throws IOException {
+        if (project == null) {
+            return new ArrayList<>();
+        }
+
+        Path dir = getCellTuneDir(project);
+        Path path = dir.resolve(COMPOSITE_RULES_FILENAME);
+        if (!Files.exists(path)) {
+            return new ArrayList<>();
+        }
+
+        String json = Files.readString(path, StandardCharsets.UTF_8);
+        JsonElement root;
+        try {
+            root = JsonParser.parseString(json);
+        } catch (JsonSyntaxException ex) {
+            logger.warn("loadCompositeRules: invalid JSON in {}: {}", path, ex.getMessage());
+            return new ArrayList<>();
+        }
+
+        JsonArray rawRules = null;
+        if (root.isJsonObject()) {
+            JsonObject rootObj = root.getAsJsonObject();
+            JsonElement rawVersion = rootObj.get("version");
+            if (rawVersion != null && rawVersion.isJsonPrimitive() && rawVersion.getAsJsonPrimitive().isNumber()) {
+                int version = rawVersion.getAsInt();
+                if (version != COMPOSITE_RULES_SCHEMA_VERSION) {
+                    logger.warn("loadCompositeRules: schema version {} in {} (expected {})", version, path,
+                            COMPOSITE_RULES_SCHEMA_VERSION);
+                }
+            }
+            JsonElement rulesElement = rootObj.get("rules");
+            if (rulesElement != null && rulesElement.isJsonArray()) {
+                rawRules = rulesElement.getAsJsonArray();
+            }
+        } else if (root.isJsonArray()) {
+            // Legacy fallback: top-level array of rule objects
+            rawRules = root.getAsJsonArray();
+        }
+
+        if (rawRules == null) {
+            return new ArrayList<>();
+        }
+
+        List<CompositeClassificationRule> loaded = new ArrayList<>();
+        LinkedHashSet<String> seenNames = new LinkedHashSet<>();
+
+        for (JsonElement rawRuleElement : rawRules) {
+            if (!rawRuleElement.isJsonObject()) {
+                logger.warn("loadCompositeRules: skipping non-object rule entry");
+                continue;
+            }
+
+            JsonObject rawRule = rawRuleElement.getAsJsonObject();
+            String name = getOptionalString(rawRule, "name");
+            if (name == null || name.isBlank()) {
+                logger.warn("loadCompositeRules: skipping rule with missing name");
+                continue;
+            }
+
+            try {
+                CompositeClassificationRule parsedRule;
+
+                String expression = getOptionalString(rawRule, "expression");
+                if (expression != null && !expression.isBlank()) {
+                    parsedRule = CompositeClassificationRule.parse(name, expression);
+                } else {
+                    JsonElement rawConditionsElement = rawRule.get("conditions");
+                    if (rawConditionsElement == null || !rawConditionsElement.isJsonArray()) {
+                        logger.warn("loadCompositeRules: rule '{}' missing expression/conditions - skipped", name);
+                        continue;
+                    }
+                    List<CompositeClassificationRule.MarkerCondition> conditions =
+                            parseRuleConditions(rawConditionsElement.getAsJsonArray());
+                    parsedRule = CompositeClassificationRule.of(name, conditions);
+                }
+
+                String dedupeKey = parsedRule.name().toLowerCase();
+                if (!seenNames.add(dedupeKey)) {
+                    logger.warn("loadCompositeRules: duplicate rule name '{}' skipped", parsedRule.name());
+                    continue;
+                }
+                loaded.add(parsedRule);
+            } catch (IllegalArgumentException ex) {
+                logger.warn("loadCompositeRules: skipping malformed rule '{}': {}", name, ex.getMessage());
+            }
+        }
+
+        logger.info("Loaded {} composite rule(s) from {}", loaded.size(), path);
+        return loaded;
+    }
+
+    private static String getOptionalString(JsonObject obj, String key) {
+        JsonElement raw = obj.get(key);
+        if (raw == null || raw.isJsonNull() || !raw.isJsonPrimitive() || !raw.getAsJsonPrimitive().isString()) {
+            return null;
+        }
+        return raw.getAsString();
+    }
+
+    private static List<CompositeClassificationRule.MarkerCondition> parseRuleConditions(JsonArray rawConditions) {
+        List<CompositeClassificationRule.MarkerCondition> conditions = new ArrayList<>();
+        for (JsonElement rawConditionElement : rawConditions) {
+            if (!rawConditionElement.isJsonObject()) {
+                throw new IllegalArgumentException("Rule condition entry is not an object");
+            }
+
+            JsonObject rawCondition = rawConditionElement.getAsJsonObject();
+            String marker = getOptionalString(rawCondition, "marker");
+            String polarityToken = getOptionalString(rawCondition, "polarity");
+            if (marker == null || marker.isBlank() || polarityToken == null || polarityToken.isBlank()) {
+                throw new IllegalArgumentException("Rule condition missing marker or polarity");
+            }
+
+            CompositeClassificationRule.Polarity polarity = CompositeClassificationRule.Polarity.fromToken(polarityToken);
+            conditions.add(CompositeClassificationRule.MarkerCondition.of(marker, polarity));
+        }
+        return conditions;
+    }
     // -- Composite classifier config persistence --------------------------------
 
     /**
@@ -822,3 +1017,4 @@ public class ProjectStateManager {
         return new ArrayList<>();
     }
 }
+
