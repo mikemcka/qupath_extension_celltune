@@ -17,7 +17,7 @@ Requirements for Milestone 1 (Binary Composite Classification). These map to Pha
 ### Composite Classification Builder
 
 - [x] **COMP-01**: User can define a composite rule as marker-polarity pairs, for example CD4+:CD3+:CD20-.
-- [ ] **COMP-02**: Composite builder UI supports per-marker + / - / ignore selection and user-specified composite naming.
+- [x] **COMP-02**: Composite builder UI supports per-marker + / - / ignore selection and user-specified composite naming.
 - [x] **COMP-03**: Applying composite classification writes PathClass labels on detections and those labels flow to export outputs.
 - [x] **COMP-04**: Named composite rules persist in project storage and can be reused across sessions.
 - [x] **COMP-05**: Composite classification can run across selected batch images in a project.
@@ -46,7 +46,7 @@ Requirements for Milestone 1 (Binary Composite Classification). These map to Pha
 | BIN-03 | Phase 1 | Complete |
 | BIN-04 | Phase 1 | Complete |
 | COMP-01 | Phase 3 | Complete |
-| COMP-02 | Phase 4 | Pending |
+| COMP-02 | Phase 4 | Complete |
 | COMP-03 | Phase 2 | Complete |
 | COMP-04 | Phase 3 | Complete |
 | COMP-05 | Phase 2 | Complete |
@@ -58,6 +58,6 @@ Requirements for Milestone 1 (Binary Composite Classification). These map to Pha
 
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-04-29 after Phase 3 plan execution*
+*Last updated: 2026-04-29 after Phase 4 execution*
 
 
