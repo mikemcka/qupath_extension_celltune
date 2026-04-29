@@ -22,8 +22,8 @@ Success Criteria:
 Plans: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md - Create formal verification artifacts for phases 1 and 2
-- [ ] 05-02-PLAN.md - Create phase 3 verification artifact and refresh v1.0 audit evidence
+- [x] 05-01-PLAN.md - Create formal verification artifacts for phases 1 and 2 (completed 2026-04-29)
+- [x] 05-02-PLAN.md - Create phase 3 verification artifact and refresh v1.0 audit evidence (completed 2026-04-29)
 
 ### Phase 6 - Nyquist Validation Coverage
 
@@ -71,7 +71,7 @@ Plans: To be planned
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
 |-------|-----------|--------------|----------------|--------|
-| 5. Verification Artifact Backfill | v1.1 | EVID-01,EVID-02,EVID-03 | 0/2 | Not started |
+| 5. Verification Artifact Backfill | v1.1 | EVID-01,EVID-02,EVID-03 | 2/2 | Complete (2026-04-29) |
 | 6. Nyquist Validation Coverage | v1.1 | NYQ-01,NYQ-02,NYQ-03,NYQ-04 | 0/0 | Not started |
 | 7. Reliability Core Hardening | v1.1 | REL-01,REL-02,REL-03 | 0/0 | Not started |
 | 8. UX Safety and Explainability Polish | v1.1 | UX-01,UX-02 | 0/0 | Not started |

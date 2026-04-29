@@ -9,9 +9,9 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 
 ### Verification Evidence
 
-- [ ] EVID-01: Phase 1 has a formal VERIFICATION artifact migrated from existing UAT evidence.
-- [ ] EVID-02: Phase 2 has a formal VERIFICATION artifact proving composite apply and batch workflows.
-- [ ] EVID-03: Phase 3 has a formal VERIFICATION artifact proving named-rule save, reload, and apply behavior.
+- [x] EVID-01: Phase 1 has a formal VERIFICATION artifact migrated from existing UAT evidence.
+- [x] EVID-02: Phase 2 has a formal VERIFICATION artifact proving composite apply and batch workflows.
+- [x] EVID-03: Phase 3 has a formal VERIFICATION artifact proving named-rule save, reload, and apply behavior.
 
 ### Nyquist Validation
 
@@ -54,9 +54,9 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EVID-01 | Phase 5 | Pending |
-| EVID-02 | Phase 5 | Pending |
-| EVID-03 | Phase 5 | Pending |
+| EVID-01 | Phase 5 | Complete |
+| EVID-02 | Phase 5 | Complete |
+| EVID-03 | Phase 5 | Complete |
 | NYQ-01 | Phase 6 | Pending |
 | NYQ-02 | Phase 6 | Pending |
 | NYQ-03 | Phase 6 | Pending |
@@ -75,4 +75,4 @@ Coverage:
 
 ---
 Requirements defined: 2026-04-29
-Last updated: 2026-04-29 after v1.1 milestone initialization
+Last updated: 2026-04-29 after phase 5 execution
