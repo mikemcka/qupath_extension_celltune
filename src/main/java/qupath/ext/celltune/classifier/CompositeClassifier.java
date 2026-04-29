@@ -10,12 +10,12 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.io.BinaryClassifierRegistry;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.CellFeatureExtractor;
-import java.awt.image.BufferedImage;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
 
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -25,21 +25,22 @@ import java.util.function.Consumer;
 
 /**
  * Applies multiple trained binary classifiers to all cell detections and assigns
- * a composite QuPath PathClass (e.g. {@code CD3+:CD4+:CD45-}) per cell.
- *
- * <p>Scores are averaged across XGBoost and LightGBM models. A cell is considered
- * positive for a marker when the averaged probability for class index 1 is &ge; 0.5.
- * Markers are always written in alphabetical order in the composite PathClass name.
+ * a composite QuPath PathClass per cell.
  */
 public class CompositeClassifier {
 
     private static final Logger logger = LoggerFactory.getLogger(CompositeClassifier.class);
 
     private final DoubleProperty progress = new SimpleDoubleProperty(0.0);
-    private final StringProperty status   = new SimpleStringProperty("");
+    private final StringProperty status = new SimpleStringProperty("");
 
-    public DoubleProperty progressProperty() { return progress; }
-    public StringProperty statusProperty()   { return status; }
+    public DoubleProperty progressProperty() {
+        return progress;
+    }
+
+    public StringProperty statusProperty() {
+        return status;
+    }
 
     private void updateStatus(String msg, double pct) {
         Platform.runLater(() -> {
@@ -48,133 +49,69 @@ public class CompositeClassifier {
         });
     }
 
+    private static final class MarkerPrediction {
+        private final String markerName;
+        private final float[] positiveProbs;
+
+        private MarkerPrediction(String markerName, float[] positiveProbs) {
+            this.markerName = markerName;
+            this.positiveProbs = positiveProbs;
+        }
+    }
+
     /**
-     * Classify all detection objects in {@code imageData} using the given binary markers.
-     *
-     * @param imageData   the image whose detections will be classified
-     * @param markerNames display names of the binary classifiers to include (unsanitized)
-     * @param project     QuPath project (used to load binary states)
-     * @param log         optional log consumer — may be null
-     * @return number of cells classified
-     * @throws Exception if a fatal error occurs; per-marker errors are logged and skipped
+     * Legacy marker-list API retained for backward compatibility.
      */
     public int apply(ImageData<?> imageData,
                      List<String> markerNames,
                      Project<?> project,
                      Consumer<String> log) throws Exception {
 
-        Consumer<String> out = log != null ? log : s -> {};
+        Consumer<String> out = log != null ? log : s -> {
+        };
 
-        List<PathObject> detectionList = new ArrayList<>(
-                imageData.getHierarchy().getDetectionObjects());
-
+        List<PathObject> detectionList = new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
         if (detectionList.isEmpty()) {
             out.accept("No detections found in current image.");
             return 0;
         }
 
-        int nCells = detectionList.size();
-
-        // Alphabetical order for deterministic PathClass naming (D-07)
         List<String> sorted = new ArrayList<>(markerNames);
         Collections.sort(sorted);
 
         updateStatus("Starting composite classification...", 0.0);
-        out.accept("Classifying " + nCells + " cells using " + sorted.size() + " markers...");
+        out.accept("Classifying " + detectionList.size() + " cells using " + sorted.size() + " markers...");
 
-        // Per-marker results accumulated in sorted order
-        List<String>   activeMarkers   = new ArrayList<>();
-        List<float[]>  markerPosProbs  = new ArrayList<>();
+        List<String> activeMarkers = new ArrayList<>();
+        List<float[]> markerPosProbs = new ArrayList<>();
 
         for (int mi = 0; mi < sorted.size(); mi++) {
             String markerName = sorted.get(mi);
-            String sanitized  = BinaryClassifierRegistry.sanitizeMarkerName(markerName);
-            try {
-                ProjectStateManager.SavedState state =
-                        ProjectStateManager.loadBinaryState(project, sanitized);
-
-                if (state == null || state.xgboostModelBase64 == null
-                        || state.featureNames == null || state.featureNames.isEmpty()) {
-                    out.accept("Skipping '" + markerName + "' — not trained or missing state.");
-                    continue;
-                }
-
-                List<String> classNames = state.classNames;
-                if (classNames == null || classNames.size() < 2) {
-                    out.accept("Skipping '" + markerName + "' — invalid class list.");
-                    continue;
-                }
-
-                byte[] xgbBytes = ProjectStateManager.decodeXGBoostModel(state);
-                byte[] lgbBytes = ProjectStateManager.decodeLightGBMModel(state);
-                if (xgbBytes == null) {
-                    out.accept("Skipping '" + markerName + "' — no XGBoost model bytes.");
-                    continue;
-                }
-
-                // Each binary classifier may use its own feature set (D-03)
-                CellFeatureExtractor extractor = new CellFeatureExtractor(state.featureNames);
-                float[] flatData  = extractor.extractMatrix(detectionList);
-                int     nFeatures = extractor.getNumFeatures();
-
-                XGBoostModel xgbModel = new XGBoostModel();
-                xgbModel.loadFromBytes(xgbBytes, classNames, state.featureNames);
-                float[][] xgbProbs = xgbModel.predictProba(flatData, nCells, nFeatures);
-
-                float[][] lgbProbs = null;
-                if (lgbBytes != null) {
-                    LightGBMModel lgbModel = new LightGBMModel();
-                    lgbModel.loadFromBytes(lgbBytes, classNames, state.featureNames);
-                    lgbProbs = lgbModel.predictProba(flatData, nCells, nFeatures);
-                }
-
-                // Locate the positive class index by finding the class name ending with "+".
-                // classNames are sorted alphabetically; for names like "CD4+" / "CD4-",
-                // "+" (ASCII 43) < "-" (ASCII 45), so index 0 = positive -- NOT index 1.
-                // Hardcoding index 1 inverts all predictions for such class names.
-                int posIdx = 0; // fallback: first class
-                for (int ci = 0; ci < classNames.size(); ci++) {
-                    if (classNames.get(ci).endsWith("+")) { posIdx = ci; break; }
-                }
-                final int posClassIdx = posIdx;
-                float[] posProbs = new float[nCells];
-                for (int i = 0; i < nCells; i++) {
-                    float xgbPos = xgbProbs[i][Math.min(posClassIdx, xgbProbs[i].length - 1)];
-                    float lgbPos = (lgbProbs != null)
-                            ? lgbProbs[i][Math.min(posClassIdx, lgbProbs[i].length - 1)]
-                            : xgbPos;
-                    posProbs[i] = (lgbProbs != null) ? (xgbPos + lgbPos) / 2.0f : xgbPos;
-                }
-
-                activeMarkers.add(markerName);
-                markerPosProbs.add(posProbs);
+            MarkerPrediction prediction = predictMarker(detectionList, project, markerName, out, true);
+            if (prediction != null) {
+                activeMarkers.add(prediction.markerName);
+                markerPosProbs.add(prediction.positiveProbs);
                 out.accept("Predicted '" + markerName + "'.");
-
-            } catch (Exception ex) {
-                out.accept("Error processing '" + markerName + "': " + ex.getMessage());
-                logger.warn("CompositeClassifier: error for marker '{}': {}",
-                        markerName, ex.getMessage(), ex);
             }
-
-            double pct = 0.2 + 0.6 * ((double)(mi + 1) / sorted.size());
+            double pct = 0.2 + 0.6 * ((double) (mi + 1) / Math.max(sorted.size(), 1));
             updateStatus("Predicting " + markerName + "...", pct);
         }
 
-        // Build PathClass for every detection
-        List<PathObject> classifyObjects = new ArrayList<>(nCells);
-        List<PathClass>  classifyClasses = new ArrayList<>(nCells);
+        List<PathObject> classifyObjects = new ArrayList<>(detectionList.size());
+        List<PathClass> classifyClasses = new ArrayList<>(detectionList.size());
 
         if (activeMarkers.isEmpty()) {
-            // No trained markers contributed — D-09/D-10: set all to Unclassified
             for (PathObject det : detectionList) {
                 classifyObjects.add(det);
-                classifyClasses.add(null); // null = Unclassified in QuPath
+                classifyClasses.add(null);
             }
         } else {
-            for (int i = 0; i < nCells; i++) {
+            for (int i = 0; i < detectionList.size(); i++) {
                 StringBuilder sb = new StringBuilder();
                 for (int mi = 0; mi < activeMarkers.size(); mi++) {
-                    if (sb.length() > 0) sb.append(':');
+                    if (sb.length() > 0) {
+                        sb.append(':');
+                    }
                     sb.append(activeMarkers.get(mi));
                     sb.append(markerPosProbs.get(mi)[i] >= 0.5f ? '+' : '-');
                 }
@@ -183,31 +120,115 @@ public class CompositeClassifier {
             }
         }
 
-        // Assign classes synchronously — must complete before batch() calls saveImageData()
         for (int i = 0; i < classifyObjects.size(); i++) {
             classifyObjects.get(i).setPathClass(classifyClasses.get(i));
         }
 
-        // Fire the UI notification on the FX thread (safe to be async — data is already written)
-        Platform.runLater(() ->
-            imageData.getHierarchy().fireObjectClassificationsChangedEvent(
-                    CompositeClassifier.this, classifyObjects)
-        );  
+        Platform.runLater(() -> imageData.getHierarchy().fireObjectClassificationsChangedEvent(
+                CompositeClassifier.this, classifyObjects));
 
         updateStatus("Complete", 1.0);
-        out.accept("Composite classification complete: " + nCells + " cells.");
-        return nCells;
+        out.accept("Composite classification complete: " + detectionList.size() + " cells.");
+        return detectionList.size();
     }
 
     /**
-     * Classify cells across multiple project images.
+     * Apply a named marker-polarity rule to the current image.
+     * Only matched cells are updated unless clearUnmatched is true.
+     */
+    public int applyRule(ImageData<?> imageData,
+                         CompositeClassificationRule rule,
+                         Project<?> project,
+                         Consumer<String> log) throws Exception {
+        return applyRule(imageData, rule, project, false, log);
+    }
+
+    /**
+     * Apply a named marker-polarity rule to the current image.
      *
-     * @param project     the QuPath project
-     * @param imageNames  names of images to classify
-     * @param markerNames display names of markers to use
-     * @param log         optional log consumer — may be null
-     * @return map of imageName → result string
-     * @throws Exception if a fatal error occurs; per-image errors are caught and reported
+     * @param clearUnmatched if true, unmatched cells are assigned null PathClass
+     */
+    public int applyRule(ImageData<?> imageData,
+                         CompositeClassificationRule rule,
+                         Project<?> project,
+                         boolean clearUnmatched,
+                         Consumer<String> log) throws Exception {
+
+        if (rule == null) {
+            throw new IllegalArgumentException("Composite rule must not be null");
+        }
+
+        Consumer<String> out = log != null ? log : s -> {
+        };
+        List<PathObject> detectionList = new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
+        if (detectionList.isEmpty()) {
+            out.accept("No detections found in current image.");
+            return 0;
+        }
+
+        List<CompositeClassificationRule.MarkerCondition> conditions = rule.conditions();
+        updateStatus("Starting rule application: " + rule.name(), 0.0);
+        out.accept("Applying rule '" + rule.name() + "' (" + rule.expression() + ") to "
+                + detectionList.size() + " cells...");
+
+        List<MarkerPrediction> predictions = new ArrayList<>(conditions.size());
+        for (int i = 0; i < conditions.size(); i++) {
+            CompositeClassificationRule.MarkerCondition condition = conditions.get(i);
+            MarkerPrediction prediction = predictMarker(detectionList, project, condition.markerName(), out, false);
+            if (prediction == null) {
+                throw new IllegalStateException("Required marker not trained: " + condition.markerName());
+            }
+            predictions.add(prediction);
+
+            double pct = 0.1 + 0.6 * ((double) (i + 1) / Math.max(conditions.size(), 1));
+            updateStatus("Evaluating " + condition.markerName() + "...", pct);
+        }
+
+        PathClass matchClass = PathClass.fromString(rule.expression());
+        List<PathObject> changedObjects = new ArrayList<>();
+        List<PathClass> changedClasses = new ArrayList<>();
+        int matched = 0;
+
+        for (int cellIndex = 0; cellIndex < detectionList.size(); cellIndex++) {
+            boolean isMatch = true;
+
+            for (int ci = 0; ci < conditions.size(); ci++) {
+                CompositeClassificationRule.MarkerCondition condition = conditions.get(ci);
+                float posProb = predictions.get(ci).positiveProbs[cellIndex];
+                boolean isPositive = posProb >= 0.5f;
+                boolean expectsPositive = condition.polarity() == CompositeClassificationRule.Polarity.POSITIVE;
+                if (isPositive != expectsPositive) {
+                    isMatch = false;
+                    break;
+                }
+            }
+
+            if (isMatch) {
+                matched++;
+                changedObjects.add(detectionList.get(cellIndex));
+                changedClasses.add(matchClass);
+            } else if (clearUnmatched) {
+                changedObjects.add(detectionList.get(cellIndex));
+                changedClasses.add(null);
+            }
+        }
+
+        for (int i = 0; i < changedObjects.size(); i++) {
+            changedObjects.get(i).setPathClass(changedClasses.get(i));
+        }
+
+        if (!changedObjects.isEmpty()) {
+            Platform.runLater(() -> imageData.getHierarchy().fireObjectClassificationsChangedEvent(
+                    CompositeClassifier.this, changedObjects));
+        }
+
+        updateStatus("Complete", 1.0);
+        out.accept("Rule application complete: matched " + matched + " of " + detectionList.size() + " cells.");
+        return matched;
+    }
+
+    /**
+     * Legacy marker-list batch API retained for backward compatibility.
      */
     @SuppressWarnings("unchecked")
     public Map<String, String> batch(Project<?> project,
@@ -215,15 +236,16 @@ public class CompositeClassifier {
                                      List<String> markerNames,
                                      Consumer<String> log) throws Exception {
 
-        Consumer<String> out = log != null ? log : s -> {};
+        Consumer<String> out = log != null ? log : s -> {
+        };
         Map<String, String> results = new LinkedHashMap<>();
         int total = imageNames.size();
 
         for (int idx = 0; idx < total; idx++) {
             String imageName = imageNames.get(idx);
-            updateStatus("Processing " + imageName + "...", (double) idx / total);
+            updateStatus("Processing " + imageName + "...", (double) idx / Math.max(total, 1));
 
-            var typedProject = (Project<BufferedImage>)(Project<?>)project;
+            var typedProject = (Project<BufferedImage>) (Project<?>) project;
             var entryOpt = typedProject.getImageList().stream()
                     .filter(e -> e.getImageName().equals(imageName))
                     .findFirst();
@@ -251,12 +273,139 @@ public class CompositeClassifier {
             } catch (Exception ex) {
                 results.put(imageName, "Error: " + ex.getMessage());
                 out.accept("Error processing '" + imageName + "': " + ex.getMessage());
-                logger.warn("CompositeClassifier batch error for '{}': {}",
-                        imageName, ex.getMessage(), ex);
+                logger.warn("CompositeClassifier batch error for '{}': {}", imageName, ex.getMessage(), ex);
             }
         }
 
         updateStatus("Batch complete", 1.0);
         return results;
+    }
+
+    /**
+     * Apply a named rule to multiple project images.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, String> batchApplyRule(Project<?> project,
+                                              List<String> imageNames,
+                                              CompositeClassificationRule rule,
+                                              boolean clearUnmatched,
+                                              Consumer<String> log) throws Exception {
+
+        Consumer<String> out = log != null ? log : s -> {
+        };
+        Map<String, String> results = new LinkedHashMap<>();
+        int total = imageNames.size();
+
+        for (int idx = 0; idx < total; idx++) {
+            String imageName = imageNames.get(idx);
+            updateStatus("Processing " + imageName + "...", (double) idx / Math.max(total, 1));
+
+            var typedProject = (Project<BufferedImage>) (Project<?>) project;
+            var entryOpt = typedProject.getImageList().stream()
+                    .filter(e -> e.getImageName().equals(imageName))
+                    .findFirst();
+
+            if (entryOpt.isEmpty()) {
+                results.put(imageName, "Skipped: image not found in project");
+                out.accept("Skipped '" + imageName + "': not found in project.");
+                continue;
+            }
+
+            var entry = entryOpt.get();
+            try {
+                var imageData = entry.readImageData();
+                if (imageData == null) {
+                    results.put(imageName, "Skipped: could not read image data");
+                    out.accept("Skipped '" + imageName + "': null imageData.");
+                    continue;
+                }
+
+                int matched = applyRule(imageData, rule, project, clearUnmatched, out);
+                entry.saveImageData(imageData);
+                results.put(imageName, "Matched " + matched + " cells");
+                out.accept("'" + imageName + "': Matched " + matched + " cells.");
+
+            } catch (Exception ex) {
+                results.put(imageName, "Error: " + ex.getMessage());
+                out.accept("Error processing '" + imageName + "': " + ex.getMessage());
+                logger.warn("CompositeClassifier batchApplyRule error for '{}': {}", imageName, ex.getMessage(), ex);
+            }
+        }
+
+        updateStatus("Batch complete", 1.0);
+        return results;
+    }
+
+    private MarkerPrediction predictMarker(List<PathObject> detectionList,
+                                           Project<?> project,
+                                           String markerName,
+                                           Consumer<String> out,
+                                           boolean allowSkip) throws Exception {
+
+        String sanitized = BinaryClassifierRegistry.sanitizeMarkerName(markerName);
+        ProjectStateManager.SavedState state = ProjectStateManager.loadBinaryState(project, sanitized);
+
+        if (state == null || state.xgboostModelBase64 == null
+                || state.featureNames == null || state.featureNames.isEmpty()) {
+            if (allowSkip) {
+                out.accept("Skipping '" + markerName + "' - not trained or missing state.");
+                return null;
+            }
+            throw new IllegalStateException("Marker '" + markerName + "' is not trained or missing state.");
+        }
+
+        List<String> classNames = state.classNames;
+        if (classNames == null || classNames.size() < 2) {
+            if (allowSkip) {
+                out.accept("Skipping '" + markerName + "' - invalid class list.");
+                return null;
+            }
+            throw new IllegalStateException("Marker '" + markerName + "' has invalid class list.");
+        }
+
+        byte[] xgbBytes = ProjectStateManager.decodeXGBoostModel(state);
+        byte[] lgbBytes = ProjectStateManager.decodeLightGBMModel(state);
+        if (xgbBytes == null) {
+            if (allowSkip) {
+                out.accept("Skipping '" + markerName + "' - no XGBoost model bytes.");
+                return null;
+            }
+            throw new IllegalStateException("Marker '" + markerName + "' has no XGBoost model bytes.");
+        }
+
+        CellFeatureExtractor extractor = new CellFeatureExtractor(state.featureNames);
+        float[] flatData = extractor.extractMatrix(detectionList);
+        int nSamples = detectionList.size();
+        int nFeatures = extractor.getNumFeatures();
+
+        XGBoostModel xgbModel = new XGBoostModel();
+        xgbModel.loadFromBytes(xgbBytes, classNames, state.featureNames);
+        float[][] xgbProbs = xgbModel.predictProba(flatData, nSamples, nFeatures);
+
+        float[][] lgbProbs = null;
+        if (lgbBytes != null) {
+            LightGBMModel lgbModel = new LightGBMModel();
+            lgbModel.loadFromBytes(lgbBytes, classNames, state.featureNames);
+            lgbProbs = lgbModel.predictProba(flatData, nSamples, nFeatures);
+        }
+
+        int posIdx = 0;
+        for (int ci = 0; ci < classNames.size(); ci++) {
+            if (classNames.get(ci).endsWith("+")) {
+                posIdx = ci;
+                break;
+            }
+        }
+
+        float[] posProbs = new float[nSamples];
+        for (int i = 0; i < nSamples; i++) {
+            float xgbPos = xgbProbs[i][Math.min(posIdx, xgbProbs[i].length - 1)];
+            float lgbPos = (lgbProbs != null)
+                    ? lgbProbs[i][Math.min(posIdx, lgbProbs[i].length - 1)]
+                    : xgbPos;
+            posProbs[i] = (lgbProbs != null) ? (xgbPos + lgbPos) / 2.0f : xgbPos;
+        }
+
+        return new MarkerPrediction(markerName, posProbs);
     }
 }
