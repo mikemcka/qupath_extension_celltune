@@ -5,8 +5,8 @@
 - Milestone: v1.1 Reliability and Verification Hardening
 - Phase: Not started (defining requirements)
 - Plan: -
-- Status: Defining requirements
-- Last activity: 2026-04-29 - started milestone v1.1
+- Status: Roadmap ready for phase planning
+- Last activity: 2026-04-29 - roadmap drafted for milestone v1.1
 
 ## Carry-Forward Context
 
@@ -24,5 +24,5 @@
 
 ## Session Continuity
 
-- Recommended next command: /gsd-plan-phase 5
+- Recommended next command: /gsd-discuss-phase 5
 - Resume target: plan Phase 5 verification artifact backfill
