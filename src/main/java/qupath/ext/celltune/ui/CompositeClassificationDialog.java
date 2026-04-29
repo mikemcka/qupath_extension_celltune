@@ -1,40 +1,37 @@
 package qupath.ext.celltune.ui;
 
 import javafx.application.Platform;
+import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
-import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.classifier.CompositeClassificationRule;
 import qupath.ext.celltune.classifier.CompositeClassifier;
-import qupath.ext.celltune.io.BinaryClassifierRegistry;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Modal dialog for composite cell classification.
- *
- * <p>Shows a checkbox list of binary classifiers from the project registry.
- * Trained classifiers have enabled checkboxes; untrained are shown but disabled.
- * The user can apply classification to the current image or batch-classify multiple images.
- *
- * <p>Checkbox selection is persisted to {@code composite-config.json} and restored on re-open.
+ * Modal dialog for named composite rule management and execution.
  */
 public class CompositeClassificationDialog {
 
@@ -46,9 +43,6 @@ public class CompositeClassificationDialog {
         this.qupath = qupath;
     }
 
-    /**
-     * Build and show the dialog modally. Blocks until the dialog is closed.
-     */
     public void showAndWait() {
         var project = qupath.getProject();
         if (project == null) {
@@ -56,102 +50,124 @@ public class CompositeClassificationDialog {
             return;
         }
 
-        // ── Build marker list ───────────────────────────────────────────────
-        Map<String, String> registry;
+        Map<String, CompositeClassificationRule> rulesByName = new LinkedHashMap<>();
         try {
-            registry = BinaryClassifierRegistry.load(project);
-        } catch (IOException ex) {
-            logger.warn("Failed to load binary classifier registry: {}", ex.getMessage());
-            registry = new java.util.LinkedHashMap<>();
-        }
-
-        List<String> savedSelected;
-        try {
-            savedSelected = ProjectStateManager.loadCompositeConfig(project);
-        } catch (IOException ex) {
-            logger.warn("Failed to load composite config: {}", ex.getMessage());
-            savedSelected = new ArrayList<>();
-        }
-
-        List<CheckBox> checkBoxes = new ArrayList<>();
-        boolean anyTrained = false;
-
-        for (Map.Entry<String, String> entry : registry.entrySet()) {
-            String markerName = entry.getKey();
-            boolean trained = isMarkerTrained(project, markerName);
-            if (trained) anyTrained = true;
-
-            CheckBox cb = new CheckBox(markerName);
-            cb.setDisable(!trained);
-            if (trained) {
-                cb.setSelected(savedSelected.contains(markerName));
-                cb.setStyle("-fx-text-fill: #2a7a2a;");
-            } else {
-                cb.setSelected(false);
-                cb.setStyle("-fx-text-fill: #888888;");
+            for (CompositeClassificationRule rule : ProjectStateManager.loadCompositeRules(project)) {
+                rulesByName.put(rule.name(), rule);
             }
-            checkBoxes.add(cb);
+        } catch (IOException ex) {
+            logger.warn("Failed to load composite rules: {}", ex.getMessage());
         }
 
-        // ── Layout ──────────────────────────────────────────────────────────
-        Label titleLabel = new Label("Composite Classification");
+        Label titleLabel = new Label("Composite Classification Rules");
         titleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
 
-        Label subtitleLabel = new Label(
-                "Select trained binary classifiers to combine into a composite PathClass.");
-        subtitleLabel.setWrapText(true);
+        Label savedLabel = new Label("Saved rules:");
+        ComboBox<String> savedRulesCombo = new ComboBox<>();
+        savedRulesCombo.setPrefWidth(360);
 
-        VBox cbBox = new VBox(4);
-        cbBox.getChildren().addAll(checkBoxes);
-        cbBox.setPadding(new Insets(4));
+        Label nameLabel = new Label("Rule name:");
+        TextField ruleNameField = new TextField();
+        ruleNameField.setPromptText("CD4 T cell");
 
-        ScrollPane scrollPane = new ScrollPane(cbBox);
-        scrollPane.setFitToWidth(true);
-        scrollPane.setMaxHeight(250);
-        scrollPane.setMinHeight(60);
+        Label expressionLabel = new Label("Rule expression (marker+polarity pairs):");
+        TextField expressionField = new TextField();
+        expressionField.setPromptText("CD4+:CD3+:CD20-");
 
-        Label noTrainedLabel = new Label(
-                "No trained classifiers available. Train binary classifiers first.");
-        noTrainedLabel.setStyle("-fx-text-fill: #CC0000;");
-        noTrainedLabel.setWrapText(true);
-        noTrainedLabel.setVisible(!anyTrained);
-        noTrainedLabel.setManaged(!anyTrained);
+        Label helperLabel = new Label("Use ':' between conditions. Each marker must end with '+' or '-'.");
+        helperLabel.setStyle("-fx-text-fill: #666666;");
+        helperLabel.setWrapText(true);
 
-        Label resultLabel = new Label("");
-        resultLabel.setStyle("-fx-text-fill: #2a7a2a;");
-
+        Button saveRuleButton = new Button("Save Rule");
+        Button deleteRuleButton = new Button("Delete Rule");
         Button applyButton = new Button("Apply");
         Button batchButton = new Button("Apply to which images...");
         Button closeButton = new Button("Close");
 
-        applyButton.setDisable(!anyTrained);
-        batchButton.setDisable(!anyTrained);
+        Label resultLabel = new Label("");
+        resultLabel.setWrapText(true);
+        resultLabel.setStyle("-fx-text-fill: #2a7a2a;");
 
-        HBox buttonBar = new HBox(8, applyButton, batchButton, closeButton);
-        buttonBar.setPadding(new Insets(4, 0, 0, 0));
-
-        VBox root = new VBox(8,
-                titleLabel,
-                subtitleLabel,
-                scrollPane,
-                noTrainedLabel,
-                resultLabel,
-                buttonBar);
-        root.setPadding(new Insets(12));
-
-        Stage stage = new Stage();
-        stage.initModality(Modality.APPLICATION_MODAL);
-        stage.initOwner(qupath.getStage());
-        stage.setTitle("Composite Classification");
-        stage.setScene(new Scene(root, 420, 380));
-        stage.setResizable(true);
-
-
-        // batchImageNames: images pre-selected via "Apply to which images..." button for next Apply
         final List<String>[] batchHolder = new List[]{new ArrayList<>()};
 
-        // ── Button actions ───────────────────────────────────────────────────
-        closeButton.setOnAction(e -> stage.close());
+        Runnable refreshRuleCombo = () -> {
+            savedRulesCombo.setItems(FXCollections.observableArrayList(rulesByName.keySet()));
+            deleteRuleButton.setDisable(rulesByName.isEmpty());
+        };
+        refreshRuleCombo.run();
+
+        if (!rulesByName.isEmpty()) {
+            String first = rulesByName.keySet().iterator().next();
+            savedRulesCombo.getSelectionModel().select(first);
+            CompositeClassificationRule rule = rulesByName.get(first);
+            ruleNameField.setText(rule.name());
+            expressionField.setText(rule.expression());
+        }
+
+        savedRulesCombo.setOnAction(e -> {
+            String selectedName = savedRulesCombo.getValue();
+            CompositeClassificationRule selectedRule = selectedName != null ? rulesByName.get(selectedName) : null;
+            if (selectedRule != null) {
+                ruleNameField.setText(selectedRule.name());
+                expressionField.setText(selectedRule.expression());
+                resultLabel.setText("Loaded rule '" + selectedRule.name() + "'.");
+            }
+        });
+
+        saveRuleButton.setOnAction(e -> {
+            CompositeClassificationRule parsedRule = parseRuleFromFields(ruleNameField, expressionField, resultLabel);
+            if (parsedRule == null) {
+                return;
+            }
+
+            rulesByName.put(parsedRule.name(), parsedRule);
+            if (!persistRules(project, rulesByName.values(), resultLabel)) {
+                return;
+            }
+
+            refreshRuleCombo.run();
+            savedRulesCombo.getSelectionModel().select(parsedRule.name());
+            resultLabel.setText("Saved rule '" + parsedRule.name() + "'.");
+        });
+
+        deleteRuleButton.setOnAction(e -> {
+            String selectedName = savedRulesCombo.getValue();
+            if (selectedName == null || selectedName.isBlank()) {
+                Dialogs.showErrorMessage("Composite Classification", "Select a saved rule to delete.");
+                return;
+            }
+
+            rulesByName.remove(selectedName);
+            if (!persistRules(project, rulesByName.values(), resultLabel)) {
+                return;
+            }
+
+            refreshRuleCombo.run();
+            if (rulesByName.isEmpty()) {
+                ruleNameField.clear();
+                expressionField.clear();
+                savedRulesCombo.getSelectionModel().clearSelection();
+            } else {
+                String first = rulesByName.keySet().iterator().next();
+                savedRulesCombo.getSelectionModel().select(first);
+                CompositeClassificationRule remaining = rulesByName.get(first);
+                ruleNameField.setText(remaining.name());
+                expressionField.setText(remaining.expression());
+            }
+            resultLabel.setText("Deleted rule '" + selectedName + "'.");
+        });
+
+        closeButton.setOnAction(e -> {
+            if (ruleNameField.getText() != null && !ruleNameField.getText().isBlank()
+                    && expressionField.getText() != null && !expressionField.getText().isBlank()) {
+                CompositeClassificationRule parsedRule = parseRuleFromFields(ruleNameField, expressionField, null);
+                if (parsedRule != null) {
+                    rulesByName.put(parsedRule.name(), parsedRule);
+                    persistRules(project, rulesByName.values(), null);
+                }
+            }
+            ((Stage) closeButton.getScene().getWindow()).close();
+        });
 
         applyButton.setOnAction(e -> {
             var imageData = qupath.getImageData();
@@ -159,179 +175,219 @@ public class CompositeClassificationDialog {
                 Dialogs.showErrorMessage("Composite Classification", "No image is open.");
                 return;
             }
-            List<String> selected = getSelectedMarkers(checkBoxes);
-            if (selected.isEmpty()) {
-                Dialogs.showErrorMessage("Composite Classification",
-                        "No classifiers selected. Check at least one checkbox.");
+
+            CompositeClassificationRule rule = parseRuleFromFields(ruleNameField, expressionField, resultLabel);
+            if (rule == null) {
                 return;
             }
-            saveConfig(project, selected);
 
-            // Determine current image name for live-update handling
+            rulesByName.put(rule.name(), rule);
+            if (!persistRules(project, rulesByName.values(), resultLabel)) {
+                return;
+            }
+            refreshRuleCombo.run();
+            savedRulesCombo.getSelectionModel().select(rule.name());
+
             String currentImgName = null;
-            var curEntry = project.getEntry(imageData);
-            if (curEntry != null) currentImgName = curEntry.getImageName();
-            final String finalCurrentImgName = currentImgName;
-            final var finalImageData = imageData;
-            final List<String> finalSelected = selected;
-            final List<String> batchImages = new ArrayList<>(batchHolder[0]);
+            var currentEntry = project.getEntry(imageData);
+            if (currentEntry != null) {
+                currentImgName = currentEntry.getImageName();
+            }
 
-            resultLabel.setText("Classifying...");
+            final String finalCurrentImgName = currentImgName;
+            final List<String> selectedBatch = new ArrayList<>(batchHolder[0]);
+
+            resultLabel.setText("Applying rule...");
             applyButton.setDisable(true);
             batchButton.setDisable(true);
 
-            CompositeClassifier cc = new CompositeClassifier();
-            Stage progressStage = buildProgressStage(stage, cc);
+            CompositeClassifier classifier = new CompositeClassifier();
+            Stage progressStage = buildProgressStage((Stage) applyButton.getScene().getWindow(), classifier);
             progressStage.show();
 
-            Task<Integer> task = new Task<>() {
+            Task<String> task = new Task<>() {
                 @Override
-                protected Integer call() throws Exception {
-                    int total = 0;
-                    // Always apply to the current live image
-                    total += cc.apply(finalImageData, finalSelected, project,
-                            msg -> Platform.runLater(() -> {}));
-                    // Apply to batch images (skip current — already done above)
-                    @SuppressWarnings("unchecked")
-                    var typedProject = (qupath.lib.projects.Project<java.awt.image.BufferedImage>)
-                            (qupath.lib.projects.Project<?>) project;
-                    for (String imgName : batchImages) {
-                        if (imgName.equals(finalCurrentImgName)) continue;
-                        var entryOpt = typedProject.getImageList().stream()
-                                .filter(en -> en.getImageName().equals(imgName))
-                                .findFirst();
-                        if (entryOpt.isEmpty()) continue;
-                        var imgEntry = entryOpt.get();
-                        var otherData = imgEntry.readImageData();
-                        if (otherData == null) continue;
-                        total += cc.apply(otherData, finalSelected, project,
-                                msg -> Platform.runLater(() -> {}));
+                protected String call() throws Exception {
+                    int matchedCurrent = classifier.applyRule(imageData, rule, project,
+                            msg -> Platform.runLater(() -> {
+                            }));
 
-                        imgEntry.saveImageData(otherData);
+                    List<String> otherImages = new ArrayList<>();
+                    for (String imageName : selectedBatch) {
+                        if (finalCurrentImgName == null || !finalCurrentImgName.equals(imageName)) {
+                            otherImages.add(imageName);
+                        }
                     }
-                    return total;
+
+                    Map<String, String> batchResults = new LinkedHashMap<>();
+                    if (!otherImages.isEmpty()) {
+                        batchResults = classifier.batchApplyRule(project, otherImages, rule, false,
+                                msg -> Platform.runLater(() -> {
+                                }));
+                    }
+
+                    StringBuilder summary = new StringBuilder();
+                    summary.append("Matched ").append(matchedCurrent).append(" cell(s) in current image.");
+                    if (!batchResults.isEmpty()) {
+                        summary.append(" Batch images: ");
+                        for (Map.Entry<String, String> entry : batchResults.entrySet()) {
+                            summary.append(entry.getKey()).append("=").append(entry.getValue()).append("; ");
+                        }
+                    }
+                    return summary.toString();
                 }
             };
+
             task.setOnSucceeded(ev -> Platform.runLater(() -> {
                 progressStage.close();
-                resultLabel.setText("Classified " + task.getValue() + " cells"
-                        + (batchImages.size() > 1 ? " across " + batchImages.size() + " images" : "") + ".");
                 applyButton.setDisable(false);
                 batchButton.setDisable(false);
+                resultLabel.setText(task.getValue());
             }));
+
             task.setOnFailed(ev -> Platform.runLater(() -> {
                 progressStage.close();
                 applyButton.setDisable(false);
                 batchButton.setDisable(false);
-                String msg = task.getException() != null
-                        ? task.getException().getMessage() : "Unknown error";
-                Dialogs.showErrorMessage("Composite Classification", msg);
+                String msg = task.getException() != null ? task.getException().getMessage() : "Unknown error";
                 resultLabel.setText("Error: " + msg);
+                Dialogs.showErrorMessage("Composite Classification", msg);
             }));
-            new Thread(task, "composite-classify").start();
+
+            new Thread(task, "composite-rule-apply").start();
         });
 
-        // "Apply to which images..." only stores the image selection — Apply runs the actual classification
         batchButton.setOnAction(e -> {
             List<String> allImageNames = new ArrayList<>();
-            for (var entry : project.getImageList()) allImageNames.add(entry.getImageName());
-            if (allImageNames.isEmpty()) return;
+            for (var entry : project.getImageList()) {
+                allImageNames.add(entry.getImageName());
+            }
+            if (allImageNames.isEmpty()) {
+                return;
+            }
 
             String currentImgName = null;
             if (qupath.getImageData() != null) {
-                var curEntry2 = project.getEntry(qupath.getImageData());
-                if (curEntry2 != null) currentImgName = curEntry2.getImageName();
+                var currentEntry = project.getEntry(qupath.getImageData());
+                if (currentEntry != null) {
+                    currentImgName = currentEntry.getImageName();
+                }
             }
 
             ImageSelectionPane selectionPane = new ImageSelectionPane(
-                    stage, allImageNames, currentImgName);
+                    (Stage) batchButton.getScene().getWindow(), allImageNames, currentImgName);
             List<String> picked = selectionPane.showAndWait();
-            if (picked == null) return; // cancelled
+            if (picked == null) {
+                return;
+            }
 
             batchHolder[0] = new ArrayList<>(picked);
-            batchButton.setText(picked.isEmpty() ? "Apply to which images..." : "Apply to which images... (" + picked.size() + ")");
+            batchButton.setText(picked.isEmpty()
+                    ? "Apply to which images..."
+                    : "Apply to which images... (" + picked.size() + ")");
         });
 
+        HBox ruleButtons = new HBox(8, saveRuleButton, deleteRuleButton);
+        HBox actionButtons = new HBox(8, applyButton, batchButton, closeButton);
+
+        VBox root = new VBox(8,
+                titleLabel,
+                savedLabel,
+                savedRulesCombo,
+                nameLabel,
+                ruleNameField,
+                expressionLabel,
+                expressionField,
+                helperLabel,
+                ruleButtons,
+                resultLabel,
+                actionButtons);
+        root.setPadding(new Insets(12));
+
+        Stage stage = new Stage();
+        stage.initModality(Modality.APPLICATION_MODAL);
+        stage.initOwner(qupath.getStage());
+        stage.setTitle("Composite Classification");
+        stage.setScene(new Scene(root, 520, 370));
+        stage.setResizable(true);
         stage.showAndWait();
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    private CompositeClassificationRule parseRuleFromFields(TextField ruleNameField,
+                                                            TextField expressionField,
+                                                            Label feedbackLabel) {
+        String name = ruleNameField.getText() != null ? ruleNameField.getText().trim() : "";
+        String expression = expressionField.getText() != null ? expressionField.getText().trim() : "";
 
-    private boolean isMarkerTrained(qupath.lib.projects.Project<?> project, String markerName) {
+        if (name.isBlank()) {
+            if (feedbackLabel != null) {
+                feedbackLabel.setText("Rule name is required.");
+            }
+            Dialogs.showErrorMessage("Composite Classification", "Rule name is required.");
+            return null;
+        }
+        if (expression.isBlank()) {
+            if (feedbackLabel != null) {
+                feedbackLabel.setText("Rule expression is required.");
+            }
+            Dialogs.showErrorMessage("Composite Classification", "Rule expression is required.");
+            return null;
+        }
+
         try {
-            String sanitized = BinaryClassifierRegistry.sanitizeMarkerName(markerName);
-            ProjectStateManager.SavedState state =
-                    ProjectStateManager.loadBinaryState(project, sanitized);
-            return state != null && state.xgboostModelBase64 != null;
-        } catch (Exception ex) {
-            logger.debug("isMarkerTrained check failed for '{}': {}", markerName, ex.getMessage());
+            return CompositeClassificationRule.parse(name, expression);
+        } catch (IllegalArgumentException ex) {
+            String msg = "Invalid rule: " + ex.getMessage();
+            if (feedbackLabel != null) {
+                feedbackLabel.setText(msg);
+            }
+            Dialogs.showErrorMessage("Composite Classification", msg);
+            return null;
+        }
+    }
+
+    private boolean persistRules(qupath.lib.projects.Project<?> project,
+                                 Iterable<CompositeClassificationRule> rules,
+                                 Label feedbackLabel) {
+        List<CompositeClassificationRule> snapshot = new ArrayList<>();
+        for (CompositeClassificationRule rule : rules) {
+            snapshot.add(rule);
+        }
+
+        try {
+            ProjectStateManager.saveCompositeRules(project, snapshot);
+            return true;
+        } catch (IOException ex) {
+            logger.warn("Failed to save composite rules: {}", ex.getMessage());
+            String msg = "Failed to save composite rules: " + ex.getMessage();
+            if (feedbackLabel != null) {
+                feedbackLabel.setText(msg);
+            }
+            Dialogs.showErrorMessage("Composite Classification", msg);
             return false;
         }
     }
 
-    private List<String> getSelectedMarkers(List<CheckBox> checkBoxes) {
-        List<String> selected = new ArrayList<>();
-        for (CheckBox cb : checkBoxes) {
-            if (!cb.isDisabled() && cb.isSelected()) {
-                selected.add(cb.getText());
-            }
-        }
-        return selected;
-    }
-
-    private void saveConfig(qupath.lib.projects.Project<?> project, List<String> selected) {
-        try {
-            ProjectStateManager.saveCompositeConfig(project, selected);
-        } catch (IOException ex) {
-            logger.warn("Failed to save composite config: {}", ex.getMessage());
-        }
-    }
-
-    private Stage buildProgressStage(Stage owner, CompositeClassifier cc) {
-        Stage ps = new Stage();
-        ps.initModality(Modality.NONE);
-        ps.initOwner(owner);
-        ps.setTitle("Composite Classification");
+    private Stage buildProgressStage(Stage owner, CompositeClassifier classifier) {
+        Stage stage = new Stage();
+        stage.initModality(Modality.NONE);
+        stage.initOwner(owner);
+        stage.setTitle("Composite Classification");
 
         ProgressBar bar = new ProgressBar(0);
         bar.setPrefWidth(350);
-        bar.progressProperty().bind(cc.progressProperty());
+        bar.progressProperty().bind(classifier.progressProperty());
 
         Label statusLabel = new Label("Starting...");
-        statusLabel.textProperty().bind(cc.statusProperty());
+        statusLabel.textProperty().bind(classifier.statusProperty());
 
-        TextArea log = new TextArea();
-        log.setEditable(false);
-        log.setPrefHeight(100);
-        log.setWrapText(true);
+        TextArea logArea = new TextArea();
+        logArea.setEditable(false);
+        logArea.setPrefHeight(100);
 
-        VBox content = new VBox(8, statusLabel, bar, log);
-        content.setPadding(new Insets(12));
-        ps.setScene(new Scene(content, 400, 220));
-        return ps;
-    }
-
-    private void showBatchResults(Stage owner, java.util.Map<String, String> results) {
-        Stage rs = new Stage();
-        rs.initOwner(owner);
-        rs.initModality(Modality.APPLICATION_MODAL);
-        rs.setTitle("Batch Classification Results");
-
-        StringBuilder sb = new StringBuilder();
-        for (var entry : results.entrySet()) {
-            sb.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
-        }
-
-        TextArea area = new TextArea(sb.toString());
-        area.setEditable(false);
-        area.setPrefSize(450, 280);
-
-        Button ok = new Button("OK");
-        ok.setOnAction(e -> rs.close());
-
-        VBox box = new VBox(8, area, ok);
-        box.setPadding(new Insets(12));
-        rs.setScene(new Scene(box, 480, 320));
-        rs.showAndWait();
+        VBox root = new VBox(8, statusLabel, bar, logArea);
+        root.setPadding(new Insets(12));
+        stage.setScene(new Scene(root, 420, 220));
+        return stage;
     }
 }
