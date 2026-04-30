@@ -48,6 +48,13 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - COMP-06: Support OR-groups and nested composite definitions for advanced phenotype logic.
 - COMP-07: Add confidence-gated composite assignment controls beyond fixed threshold decisions.
 
+### Cohort Analytics
+
+- COH-01: Project summary computes cohort baseline proportions and per-image rare-type enrichment scores for predicted classes.
+- COH-02: Project summary computes robust outlier metrics (composition distance and disagreement anomaly) and exposes a ranked anomaly score per image.
+- COH-03: Project summary UI supports flagged-image filtering and class-targeted review workflows for unusual cell-type distributions.
+- COH-04: Automated tests cover cohort scoring math and summary CSV export schema for anomaly analytics fields.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -76,6 +83,10 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | GOV-01 | Phase 10 | Complete |
 | DOC-01 | Phase 10 | Complete |
 | DOC-02 | Phase 10 | Complete |
+| COH-01 | Phase 11 | Complete |
+| COH-02 | Phase 11 | Complete |
+| COH-03 | Phase 11 | Complete |
+| COH-04 | Phase 11 | Complete |
 
 Coverage:
 - v1 requirements: 16 total

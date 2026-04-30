@@ -29,6 +29,7 @@ dependencies {
     // For testing
     testImplementation(libs.bundles.qupath)
     testImplementation(libs.junit)
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.jar {

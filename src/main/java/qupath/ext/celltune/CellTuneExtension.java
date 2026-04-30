@@ -20,6 +20,8 @@ import qupath.ext.celltune.io.MarkerTableImporter;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellTypeTable;
+import qupath.ext.celltune.model.CohortAnomalyAnalyzer;
+import qupath.ext.celltune.model.CohortAnomalyReport;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.ext.celltune.ui.ChannelSelector;
@@ -614,7 +616,8 @@ public class CellTuneExtension implements QuPathExtension {
 
         @SuppressWarnings("unchecked")
         var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-        var rows = new ArrayList<ProjectPredictionSummaryView.Row>(entries.size());
+        var sourceRows = new ArrayList<SummaryInputRow>(entries.size());
+        var analyzerInputs = new ArrayList<CohortAnomalyReport.ImageInput>(entries.size());
 
         for (var entry : entries) {
             if (entry == null || entry.getImageName() == null) {
@@ -634,41 +637,104 @@ public class CellTuneExtension implements QuPathExtension {
                 }
             }
 
-            rows.add(buildPredictionSummaryRow(imageName, predictions));
+            if (predictions == null || predictions.size() == 0) {
+                sourceRows.add(new SummaryInputRow(
+                        imageName,
+                        0L,
+                        0L,
+                        "No saved predictions for this image."
+                ));
+                continue;
+            }
+
+            long predicted = predictions.size();
+            long disagreements = predictions.getDisagreementCount();
+            Map<String, Long> avgCounts = predictions.getAvgCounts();
+
+            sourceRows.add(new SummaryInputRow(
+                    imageName,
+                    predicted,
+                    disagreements,
+                    formatClassCounts(avgCounts)
+            ));
+
+            analyzerInputs.add(new CohortAnomalyReport.ImageInput(
+                    imageName,
+                    predicted,
+                    disagreements,
+                    avgCounts
+            ));
         }
 
-        if (rows.isEmpty()) {
+        if (sourceRows.isEmpty()) {
             Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
             return;
+        }
+
+        var anomalyReport = CohortAnomalyAnalyzer.analyze(analyzerInputs);
+        var anomalyByImage = anomalyReport.byImageName();
+
+        var rows = new ArrayList<ProjectPredictionSummaryView.Row>(sourceRows.size());
+        for (var source : sourceRows) {
+            rows.add(buildPredictionSummaryRow(source, anomalyByImage.get(source.imageName())));
         }
 
         new ProjectPredictionSummaryView(qupath, qupath.getStage(), rows).show();
     }
 
-    private ProjectPredictionSummaryView.Row buildPredictionSummaryRow(String imageName, PopulationSet predictions) {
-        if (predictions == null || predictions.size() == 0) {
+    private ProjectPredictionSummaryView.Row buildPredictionSummaryRow(
+            SummaryInputRow source,
+            CohortAnomalyReport.ImageAnomaly anomaly) {
+        if (source.predictedCells() == 0L) {
             return new ProjectPredictionSummaryView.Row(
-                    imageName,
+                    source.imageName(),
                     0L,
                     0L,
                     0L,
                     "-",
-                    "No saved predictions for this image.");
+                    0.0,
+                    false,
+                    "-",
+                    "No highlighted rare classes.",
+                    List.of(),
+                    source.classCountsText()
+            );
         }
 
-        long predicted = predictions.size();
-        long disagreements = predictions.getDisagreementCount();
-        long agreements = Math.max(0L, predicted - disagreements);
-        double agreementPct = predicted > 0 ? (100.0 * agreements) / predicted : 0.0;
-        String agreementText = String.format("%.1f%%", agreementPct);
+        long agreements = Math.max(0L, source.predictedCells() - source.disagreements());
+        double agreementPct = source.predictedCells() > 0
+                ? (100.0 * agreements) / source.predictedCells()
+                : 0.0;
+
+        if (anomaly == null) {
+            return new ProjectPredictionSummaryView.Row(
+                    source.imageName(),
+                    source.predictedCells(),
+                    agreements,
+                    source.disagreements(),
+                    String.format("%.1f%%", agreementPct),
+                    0.0,
+                    false,
+                    "-",
+                    "No highlighted rare classes.",
+                    List.of(),
+                    source.classCountsText()
+            );
+        }
 
         return new ProjectPredictionSummaryView.Row(
-                imageName,
-                predicted,
+                source.imageName(),
+                source.predictedCells(),
                 agreements,
-                disagreements,
-                agreementText,
-                formatClassCounts(predictions.getAvgCounts()));
+                source.disagreements(),
+                String.format("%.1f%%", agreementPct),
+                anomaly.anomalyScore(),
+                anomaly.flagged(),
+                formatFlagReasons(anomaly.flagReasons()),
+                formatHighlightedRareClasses(anomaly.highlightedClasses(), anomaly.enrichmentByClass()),
+                anomaly.highlightedClasses(),
+                source.classCountsText()
+        );
     }
 
     private String formatClassCounts(Map<String, Long> counts) {
@@ -683,6 +749,44 @@ public class CellTuneExtension implements QuPathExtension {
             parts.add(className + ": " + count);
         }
         return String.join(", ", parts);
+    }
+
+    private String formatFlagReasons(List<String> reasons) {
+        if (reasons == null || reasons.isEmpty()) {
+            return "-";
+        }
+        return String.join(", ", reasons);
+    }
+
+    private String formatHighlightedRareClasses(
+            List<String> highlightedClasses,
+            Map<String, CohortAnomalyReport.ClassEnrichment> enrichmentByClass) {
+        if (highlightedClasses == null || highlightedClasses.isEmpty()) {
+            return "No highlighted rare classes.";
+        }
+
+        var parts = new ArrayList<String>(highlightedClasses.size());
+        for (String className : highlightedClasses) {
+            var enrichment = enrichmentByClass == null ? null : enrichmentByClass.get(className);
+            if (enrichment == null) {
+                parts.add(className);
+                continue;
+            }
+            parts.add(String.format(
+                    "%s (count=%d, fold=%.2fx)",
+                    className,
+                    enrichment.count(),
+                    enrichment.enrichmentFold()
+            ));
+        }
+        return String.join("; ", parts);
+    }
+
+    private record SummaryInputRow(
+            String imageName,
+            long predictedCells,
+            long disagreements,
+            String classCountsText) {
     }
 
     private void showFeatureImportance(QuPathGUI qupath) {

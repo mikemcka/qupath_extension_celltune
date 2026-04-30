@@ -4,6 +4,7 @@
 
 - [x] v1.0 Binary Composite Classification (shipped 2026-04-29) - see [v1.0 archive](milestones/v1.0-ROADMAP.md)
 - [ ] v1.1 Reliability and Verification Hardening (in progress)
+- [x] v1.2 Cohort Outlier Analytics (shipped 2026-04-30)
 
 ## Milestone v1.1 - Reliability and Verification Hardening
 
@@ -81,6 +82,27 @@ Plans: 1 plan
 Plans:
 - [x] 10-01-PLAN.md - Review summary code and align planning, README, and build docs (completed 2026-04-29)
 
+
+## Milestone v1.2 - Cohort Outlier Analytics
+
+Goal: Detect rare cell-type enrichment and image-level composition anomalies from project-wide prediction summaries.
+
+### Phase 11 - Project Summary Cohort Outlier Analytics
+
+Goal: Add cohort baseline analytics, rare-type enrichment ranking, and anomaly-aware project summary review workflows.
+Depends on: Phase 10 summary pane baseline and persisted per-image Pred_ALL predictions.
+Requirements: COH-01, COH-02, COH-03, COH-04
+Success Criteria:
+1. Project summary computes per-image enrichment vs cohort baselines for predicted classes.
+2. Project summary computes robust anomaly scores for unusual composition and disagreement behavior.
+3. Summary UI can filter flagged images and target specific rare cell classes for review.
+4. CSV export includes anomaly fields and automated tests cover scoring and export schema.
+Plans: 2 plans
+
+Plans:
+- [x] 11-01-PLAN.md - Build cohort anomaly scoring contracts and analytics engine with tests (completed 2026-04-30)
+- [x] 11-02-PLAN.md - Integrate anomaly insights into summary UI filters and CSV export (completed 2026-04-30)
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -91,3 +113,4 @@ Plans:
 | 8. UX Safety and Explainability Polish | v1.1 | UX-01,UX-02 | 0/0 | Not started |
 | 9. Regression Tests for Hardening | v1.1 | TST-01 | 0/0 | Not started |
 | 10. Documentation and Governance Refresh | v1.1 | GOV-01,DOC-01,DOC-02 | 1/1 | Complete (2026-04-29) |
+| 11. Project Summary Cohort Outlier Analytics | v1.2 | COH-01,COH-02,COH-03,COH-04 | 2/2 | Complete (2026-04-30) |

@@ -3,10 +3,14 @@ package qupath.ext.celltune.ui;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -17,6 +21,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import qupath.ext.celltune.io.ProjectSummaryCsvExporter;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.ProjectImageEntry;
@@ -24,13 +29,14 @@ import qupath.lib.projects.ProjectImageEntry;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /**
  * Dialog that summarizes per-image prediction agreement/disagreement counts
- * and class-count breakdowns from saved Pred_ALL results.
+ * and anomaly analytics from saved Pred_ALL results.
  */
 public class ProjectPredictionSummaryView {
 
@@ -41,21 +47,47 @@ public class ProjectPredictionSummaryView {
             long agreements,
             long disagreements,
             String agreementRate,
+            double anomalyScore,
+            boolean flagged,
+            String flagReasons,
+            String rareEnrichmentText,
+            List<String> highlightedRareClasses,
             String classCountsText) {
+
+        public Row {
+            imageName = imageName == null ? "" : imageName;
+            agreementRate = agreementRate == null ? "-" : agreementRate;
+            flagReasons = flagReasons == null ? "-" : flagReasons;
+            rareEnrichmentText = rareEnrichmentText == null ? "No highlighted rare classes." : rareEnrichmentText;
+            highlightedRareClasses = highlightedRareClasses == null ? List.of() : List.copyOf(highlightedRareClasses);
+            classCountsText = classCountsText == null ? "No predicted classes." : classCountsText;
+        }
     }
 
     private static final String TITLE = "Project Prediction Summary";
+    private static final String PRESET_STRICT = "strict";
+    private static final String PRESET_BALANCED = "balanced";
+    private static final String PRESET_SENSITIVE = "sensitive";
+    private static final String ALL_CLASSES = "All classes";
 
     private final Stage stage;
     private final QuPathGUI qupath;
     private final List<Row> rows;
     private final TableView<Row> table;
+    private final FilteredList<Row> filteredRows;
+    private final Label summaryLabel;
+    private final TextArea detailsArea;
+    private final CheckBox flaggedOnlyBox;
+    private final ComboBox<String> targetClassBox;
+    private final ComboBox<String> presetBox;
 
     public ProjectPredictionSummaryView(QuPathGUI qupath, Stage owner, List<Row> rows) {
         this.qupath = qupath;
         this.rows = rows == null ? List.of() : List.copyOf(rows);
 
-        table = new TableView<>(FXCollections.observableArrayList(this.rows));
+        ObservableList<Row> backingRows = FXCollections.observableArrayList(this.rows);
+        filteredRows = new FilteredList<>(backingRows, row -> true);
+        table = new TableView<>(filteredRows);
 
         TableColumn<Row, String> imageCol = new TableColumn<>("Image");
         imageCol.setCellValueFactory(cd ->
@@ -82,46 +114,67 @@ public class ProjectPredictionSummaryView {
                 new SimpleStringProperty(cd.getValue().agreementRate()));
         agreementRateCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
+        TableColumn<Row, Number> anomalyCol = new TableColumn<>("Anomaly");
+        anomalyCol.setCellValueFactory(cd ->
+                new SimpleObjectProperty<>(cd.getValue().anomalyScore()));
+        anomalyCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+
+        TableColumn<Row, String> flaggedCol = new TableColumn<>("Flagged");
+        flaggedCol.setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().flagged() ? "Yes" : "No"));
+        flaggedCol.setStyle("-fx-alignment: CENTER;");
+
         table.getColumns().add(imageCol);
         table.getColumns().add(predictedCol);
         table.getColumns().add(agreementsCol);
         table.getColumns().add(disagreementsCol);
         table.getColumns().add(agreementRateCol);
+        table.getColumns().add(anomalyCol);
+        table.getColumns().add(flaggedCol);
 
+        anomalyCol.setSortType(TableColumn.SortType.DESCENDING);
         disagreementsCol.setSortType(TableColumn.SortType.DESCENDING);
+        table.getSortOrder().add(anomalyCol);
         table.getSortOrder().add(disagreementsCol);
         table.sort();
 
-        long withPredictions = 0L;
-        for (Row row : this.rows) {
-            if (row.predictedCells() > 0) {
-                withPredictions++;
-            }
-        }
-
-        Label summaryLabel = new Label("Images with predictions: "
-                + withPredictions + " / " + this.rows.size());
+        summaryLabel = new Label();
         summaryLabel.setStyle("-fx-font-weight: bold;");
 
-        Label detailsLabel = new Label("Predicted class counts (Pred_AVG):");
-        TextArea detailsArea = new TextArea();
+        detailsArea = new TextArea();
         detailsArea.setEditable(false);
         detailsArea.setWrapText(true);
-        detailsArea.setPrefRowCount(5);
+        detailsArea.setPrefRowCount(7);
 
-        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> {
-            if (newRow == null) {
-                detailsArea.setText("Select an image to view class counts.");
-                return;
-            }
-            detailsArea.setText(newRow.classCountsText());
-        });
+        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) ->
+                showDetailsFor(newRow));
 
-        if (!this.rows.isEmpty()) {
-            table.getSelectionModel().selectFirst();
-        } else {
-            detailsArea.setText("No project images found.");
-        }
+        flaggedOnlyBox = new CheckBox("Flagged only");
+
+        targetClassBox = new ComboBox<>();
+        targetClassBox.getItems().add(ALL_CLASSES);
+        targetClassBox.getItems().addAll(buildTargetClassOptions(this.rows));
+        targetClassBox.getSelectionModel().select(ALL_CLASSES);
+
+        presetBox = new ComboBox<>();
+        presetBox.getItems().addAll(PRESET_STRICT, PRESET_BALANCED, PRESET_SENSITIVE);
+        presetBox.getSelectionModel().select(PRESET_SENSITIVE);
+
+        flaggedOnlyBox.selectedProperty().addListener((obs, oldVal, newVal) -> applyFilters());
+        targetClassBox.valueProperty().addListener((obs, oldVal, newVal) -> applyFilters());
+        presetBox.valueProperty().addListener((obs, oldVal, newVal) -> applyFilters());
+
+        Label detailsLabel = new Label("Selected image details:");
+        Label targetClassLabel = new Label("Target class:");
+        Label presetLabel = new Label("Threshold preset:");
+
+        HBox filtersRow = new HBox(10,
+                flaggedOnlyBox,
+                targetClassLabel,
+                targetClassBox,
+                presetLabel,
+                presetBox);
+        filtersRow.setAlignment(Pos.CENTER_LEFT);
 
         Button openImageButton = new Button("Open Selected Image");
         openImageButton.setOnAction(e -> openSelectedImage());
@@ -135,7 +188,7 @@ public class ProjectPredictionSummaryView {
         HBox buttonRow = new HBox(8, openImageButton, exportCsvButton, closeButton);
         buttonRow.setAlignment(Pos.CENTER_LEFT);
 
-        VBox root = new VBox(8, summaryLabel, table, detailsLabel, detailsArea, buttonRow);
+        VBox root = new VBox(8, summaryLabel, filtersRow, table, detailsLabel, detailsArea, buttonRow);
         root.setPadding(new Insets(10));
         VBox.setVgrow(table, Priority.ALWAYS);
 
@@ -143,11 +196,109 @@ public class ProjectPredictionSummaryView {
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
         stage.setTitle(TITLE);
-        stage.setScene(new Scene(root, 980, 560));
+        stage.setScene(new Scene(root, 1120, 620));
+
+        applyFilters();
     }
 
     public void show() {
         stage.show();
+    }
+
+    private void applyFilters() {
+        boolean flaggedOnly = flaggedOnlyBox.isSelected();
+        String targetClass = targetClassBox.getValue();
+        String preset = presetBox.getValue();
+
+        filteredRows.setPredicate(row -> {
+            if (row == null) {
+                return false;
+            }
+
+            if (flaggedOnly && !row.flagged()) {
+                return false;
+            }
+
+            if (targetClass != null
+                    && !ALL_CLASSES.equals(targetClass)
+                    && !row.highlightedRareClasses().contains(targetClass)) {
+                return false;
+            }
+
+            double minScore = minScoreForPreset(preset);
+            return row.flagged() || row.anomalyScore() >= minScore || row.predictedCells() == 0L;
+        });
+
+        if (filteredRows.isEmpty()) {
+            table.getSelectionModel().clearSelection();
+            detailsArea.setText("No rows match the current filters.");
+        } else if (!filteredRows.contains(table.getSelectionModel().getSelectedItem())) {
+            table.getSelectionModel().selectFirst();
+        }
+
+        updateSummaryLabel();
+        table.sort();
+    }
+
+    private double minScoreForPreset(String preset) {
+        if (PRESET_STRICT.equalsIgnoreCase(preset)) {
+            return 1.5;
+        }
+        if (PRESET_SENSITIVE.equalsIgnoreCase(preset)) {
+            return 0.0;
+        }
+        return 0.5;
+    }
+
+    private void updateSummaryLabel() {
+        long withPredictions = 0L;
+        long flaggedCount = 0L;
+        for (Row row : filteredRows) {
+            if (row.predictedCells() > 0) {
+                withPredictions++;
+            }
+            if (row.flagged()) {
+                flaggedCount++;
+            }
+        }
+
+        summaryLabel.setText(String.format(
+                "Displayed: %d / %d images | with predictions: %d | flagged: %d",
+                filteredRows.size(),
+                rows.size(),
+                withPredictions,
+                flaggedCount));
+    }
+
+    private List<String> buildTargetClassOptions(List<Row> allRows) {
+        var classes = new LinkedHashSet<String>();
+        for (Row row : allRows) {
+            classes.addAll(row.highlightedRareClasses());
+        }
+        var out = new ArrayList<>(classes);
+        out.sort(Comparator.naturalOrder());
+        return out;
+    }
+
+    private void showDetailsFor(Row row) {
+        if (row == null) {
+            detailsArea.setText("Select an image to view details.");
+            return;
+        }
+
+        detailsArea.setText(String.format(
+                "Anomaly score: %.3f (higher means more unusual vs the project baseline)\n"
+                        + "Flagged: %s\n"
+                        + "Reasons: %s\n"
+                        + "Rare enrichment: %s\n"
+                        + "  - Rare enrichment highlights classes that are rare in the project overall\n"
+                        + "    but enriched in this image above count/fold thresholds.\n\n"
+                        + "Class counts:\n%s",
+                row.anomalyScore(),
+                row.flagged() ? "Yes" : "No",
+                row.flagReasons(),
+                row.rareEnrichmentText(),
+                row.classCountsText()));
     }
 
     private void openSelectedImage() {
@@ -181,7 +332,7 @@ public class ProjectPredictionSummaryView {
     }
 
     private void exportCsv() {
-        if (rows.isEmpty()) {
+        if (filteredRows.isEmpty()) {
             Dialogs.showInfoNotification(TITLE, "No rows available to export.");
             return;
         }
@@ -197,35 +348,27 @@ public class ProjectPredictionSummaryView {
             return;
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("Image,Predicted,Agreements,Disagreements,AgreementPercent,ClassCounts\n");
-        for (Row row : rows) {
-            sb.append(csvEscape(row.imageName())).append(',')
-                    .append(row.predictedCells()).append(',')
-                    .append(row.agreements()).append(',')
-                    .append(row.disagreements()).append(',')
-                    .append(csvEscape(row.agreementRate())).append(',')
-                    .append(csvEscape(row.classCountsText()))
-                    .append('\n');
+        var exportRows = new ArrayList<ProjectSummaryCsvExporter.Row>(filteredRows.size());
+        for (Row row : filteredRows) {
+            exportRows.add(new ProjectSummaryCsvExporter.Row(
+                    row.imageName(),
+                    row.predictedCells(),
+                    row.agreements(),
+                    row.disagreements(),
+                    row.agreementRate(),
+                    row.anomalyScore(),
+                    row.flagged(),
+                    row.flagReasons(),
+                    row.rareEnrichmentText(),
+                    row.classCountsText()
+            ));
         }
 
         try {
-            Files.writeString(out.toPath(), sb.toString(), StandardCharsets.UTF_8);
+            ProjectSummaryCsvExporter.writeCsv(out.toPath(), exportRows);
             Dialogs.showInfoNotification(TITLE, "Exported CSV: " + out.getAbsolutePath());
         } catch (IOException ex) {
             Dialogs.showErrorMessage(TITLE, "Failed to export CSV: " + ex.getMessage());
         }
     }
-
-    private static String csvEscape(String value) {
-        if (value == null) {
-            return "";
-        }
-        return '"' + value.replace("\"", "\"\"") + '"';
-    }
 }
-
-
-
-
-

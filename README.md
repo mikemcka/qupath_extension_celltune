@@ -26,7 +26,7 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 - **AnnData export** — export cell data as AnnData-compatible CSV with a companion Python script for H5AD conversion. The CSV includes unique cell IDs, FOV assignments, feature values, population predictions, and ground truth labels. Run the generated `convert_to_h5ad.py` script to produce a standard `.h5ad` file for downstream analysis in scanpy or other Python tools.
 - **Random Forest classifier** — a pure-Java Random Forest implementation (no external dependencies) is available as an alternative to XGBoost or LightGBM. Uses CART decision trees with cross-entropy split criterion, bootstrap sampling, and random feature subsets (mtry = √features). Both model slots (Model 1 and Model 2) can be independently set to XGBoost, LightGBM, or Random Forest.
 - **Feature importance (XGBoost TreeSHAP)** — after training, compute per-class feature importance using native XGBoost TreeSHAP values (`predictContrib`). Results are shown as a horizontal bar chart of the top 10 features sorted by mean |SHAP| value, with a class selector to switch between cell types. Accessible via *Extensions > CellTune Classifier > Feature Importance…* at any time after training, or automatically after training by ticking **"Show top 10 feature importance after training"** in the training dialog. For Random Forest models, normalised split counts are shown instead.
-- **Project Prediction Summary** — open *Extensions > CellTune Classifier > Project Prediction Summary...* to view per-image predicted cell totals, agreement/disagreement counts, and agreement percentages across the entire project. The dialog includes **Open Selected Image** (jump directly to the selected row's image) and **Export CSV** for external reporting.
+- **Project Prediction Summary** — open *Extensions > CellTune Classifier > Project Prediction Summary...* to view per-image predicted cell totals, agreement/disagreement counts, anomaly scores, and rare-enrichment highlights across the entire project. The dialog includes **Open Selected Image** (jump directly to the selected row's image), **flag/target-class filters**, and **Export CSV** for external reporting.
 - **Project state persistence** — classifier models, labels, and feature names are saved as JSON+Base64 in the QuPath project folder with timestamped backups. Per-image labels are saved separately for cross-image pooling. On restart or image switch, the trained classifier is automatically restored from saved state — no retraining needed to continue reviewing or classifying new images.
 
 ## The Active Learning Loop
@@ -84,6 +84,31 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 11. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
 
 After running predictions, use *Extensions > CellTune Classifier > Project Prediction Summary...* to compare per-image agreement/disagreement counts, jump to a selected image, or export the summary as CSV.
+
+### Project Summary Metrics
+
+The summary panel reports two derived metrics in addition to raw counts:
+
+- **Anomaly score** — how unusual an image looks compared with the whole project baseline.
+  - Per-image class proportions are compared to project-wide class proportions using **Jensen-Shannon composition distance**.
+  - Disagreement pressure is measured as: `disagreementRate = disagreements / predictedCells`.
+  - Both signals are converted to robust z-scores using median/MAD across images:
+    - `robustZ = 0.6745 * (value - median) / MAD`
+  - Final score uses positive-only outlier components:
+    - `anomalyScore = 0.65 * max(0, compositionZ) + 0.35 * max(0, disagreementZ)`
+
+- **Rare enrichment** — highlights classes that are rare in the project overall but enriched in a specific image.
+  - Baseline and per-image fractions use Laplace smoothing (`alpha = 1.0`).
+  - For each class: `enrichmentFold = imageFraction / baselineFraction`.
+  - A class is highlighted when all are true:
+    - baseline fraction <= 1%
+    - per-image count >= 20 cells
+    - enrichment fold >= 3x
+
+Default flagging reasons:
+- `RARE_ENRICHMENT` when at least one class is highlighted
+- `COMPOSITION_OUTLIER` when composition robust z >= 3
+- `HIGH_DISAGREEMENT` when disagreement robust z >= 3
 
 ### Marker Table Format
 

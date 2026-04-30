@@ -6,7 +6,7 @@
 - Phase: 5 complete, 10 complete, preparing Phase 6
 - Plan: phase 5 plans complete (05-01, 05-02) and phase 10 plan complete (10-01)
 - Status: documentation/governance refresh executed; reliability and validation hardening remains pending
-- Last activity: 2026-04-29 - completed phase 10 code review and planning/docs alignment
+- Last activity: 2026-04-30 - executed phase 11 cohort outlier analytics plans (11-01, 11-02)
 
 ## Carry-Forward Context
 
@@ -14,6 +14,7 @@
 - Verification evidence debt for phases 1-3 is normalized via formal VERIFICATION artifacts.
 - Documentation and build guidance now include project prediction summary workflow and reproducible build steps.
 - Remaining milestone scope: Nyquist validation coverage and reliability hardening phases 6-9.
+- Additional completed phase: 11 (v1.2) cohort outlier analytics for project summary rare-type enrichment and anomaly triage.
 
 ## Deferred Items (Carried)
 
@@ -27,4 +28,4 @@
 ## Session Continuity
 
 - Recommended next command: /gsd-plan-phase 6
-- Resume target: plan Phase 6 Nyquist validation coverage
+- Resume target: continue v1.1 hardening flow at Phase 6 Nyquist validation coverage
