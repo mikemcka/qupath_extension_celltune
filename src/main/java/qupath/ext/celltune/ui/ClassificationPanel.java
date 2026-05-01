@@ -48,6 +48,8 @@ public class ClassificationPanel extends VBox {
     private PopulationSet predAll;
     private double[] lastAgreementRates;
     private List<String> lastSampledCellIds;
+    private Map<String, String> lastSampledCellImageMap = Map.of();
+    private PopulationSet lastSampledPredictions;
     private FeatureNormalizer featureNormalizer;
     private List<GroundTruthIO.TrainingRow> importedTrainingRows;
     private List<String> importedTrainingFeatureNames;
@@ -273,6 +275,10 @@ public class ClassificationPanel extends VBox {
     public void setLastAgreementRates(double[] rates) { this.lastAgreementRates = rates; }
     public void setLastSampledCellIds(List<String> ids) {
         this.lastSampledCellIds = ids;
+        if (ids == null || ids.isEmpty()) {
+            this.lastSampledCellImageMap = Map.of();
+            this.lastSampledPredictions = null;
+        }
         reviewButton.setDisable(ids == null || ids.isEmpty());
     }
     public void setImportedTrainingData(List<GroundTruthIO.TrainingRow> rows, List<String> featureNames) {
@@ -719,21 +725,22 @@ public class ClassificationPanel extends VBox {
         if (predAll == null && autoClassifyCallback != null) {
             autoClassifyCallback.get();
         }
-        if (predAll == null || classifier == null) return;
-
-        long disagreeCount = predAll.getDisagreementCount();
-        if (disagreeCount == 0) {
-            Dialogs.showInfoNotification(STRINGS.getString("name"),
-                    "Perfect agreement — no disagreement cells to sample.");
-            return;
-        }
+        if (classifier == null) return;
 
         // If no confusion matrix has been shown yet, compute agreement rates now
-        if (lastAgreementRates == null) {
+        if (predAll != null && predAll.size() > 0 && lastAgreementRates == null) {
             var view = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
             lastAgreementRates = view.getAgreementRates();
             if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
             view.show();
+        }
+
+        SamplingContext samplingContext = buildSamplingContext();
+        long disagreeCount = samplingContext.predictions().getDisagreementCount();
+        if (disagreeCount == 0) {
+            Dialogs.showInfoNotification(STRINGS.getString("name"),
+                    "No disagreement cells available across saved project predictions.");
+            return;
         }
 
         String countStr = Dialogs.showInputDialog(
@@ -752,28 +759,16 @@ public class ClassificationPanel extends VBox {
         }
         if (sampleSize <= 0) return;
 
-        lastSampledCellIds = UncertaintySampler.sample(
-                predAll, classifier.getClassNames(), lastAgreementRates, sampleSize);
-
-        reviewButton.setDisable(lastSampledCellIds.isEmpty());
-        if (onSampledCellsChanged != null) onSampledCellsChanged.accept(lastSampledCellIds);
-
-        // Persist sampled cell IDs for this image
-        var project = qupath.getProject();
-        var imageData = qupath.getImageData();
-        if (project != null && imageData != null) {
-            var imgEntry = project.getEntry(imageData);
-            if (imgEntry != null && lastSampledCellIds != null && !lastSampledCellIds.isEmpty()) {
-                try {
-                    ProjectStateManager.saveImageSampledCells(project, imgEntry.getImageName(), lastSampledCellIds);
-                } catch (Exception ex) {
-                    // Ignore errors
-                }
-            }
+        if (!sampleForReviewBatch(samplingContext, sampleSize)) {
+            Dialogs.showInfoNotification(STRINGS.getString("name"),
+                    "No eligible disagreement cells remained after excluding reviewed cells.");
+            return;
         }
 
+        int imageCount = new LinkedHashSet<>(lastSampledCellImageMap.values()).size();
         Dialogs.showInfoNotification(STRINGS.getString("name"),
-                "Sampled " + lastSampledCellIds.size() + " cells. Use 'Enter Review Mode' to start.");
+                "Sampled " + lastSampledCellIds.size() + " cells across "
+                        + imageCount + " image(s). Use 'Enter Review Mode' to start.");
     }
 
     private void doEnterReview() {
@@ -781,65 +776,60 @@ public class ClassificationPanel extends VBox {
         if (predAll == null && autoClassifyCallback != null) {
             autoClassifyCallback.get();
         }
+        if (classifier == null) return;
 
         // Always prompt the user to choose how many cells to review
-        if (predAll != null && predAll.size() > 0 && classifier != null) {
-            long disagreeCount = predAll.getDisagreementCount();
-            if (disagreeCount == 0) {
-                Dialogs.showInfoNotification(STRINGS.getString("name"),
-                        "Perfect agreement — no disagreement cells to review.");
-                return;
-            }
-            // Compute agreement rates if not yet available
-            if (lastAgreementRates == null) {
-                var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
-                lastAgreementRates = confView.getAgreementRates();
-                if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
-            }
-            String countStr = Dialogs.showInputDialog(
-                    STRINGS.getString("sample.dialog.title"),
-                    "How many disagreement cells to review?"
-                            + " (" + disagreeCount + " available)",
-                    "200");
-            if (countStr == null) return;
-            int sampleSize;
-            try {
-                sampleSize = Integer.parseInt(countStr.strip());
-            } catch (NumberFormatException e) {
-                Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
-                return;
-            }
-            if (sampleSize <= 0) return;
-            lastSampledCellIds = UncertaintySampler.sample(
-                    predAll, classifier.getClassNames(), lastAgreementRates, sampleSize);
-            reviewButton.setDisable(lastSampledCellIds.isEmpty());
-            if (onSampledCellsChanged != null) onSampledCellsChanged.accept(lastSampledCellIds);
+        SamplingContext samplingContext = buildSamplingContext();
+        long disagreeCount = samplingContext.predictions().getDisagreementCount();
+        if (disagreeCount == 0) {
+            Dialogs.showInfoNotification(STRINGS.getString("name"),
+                    "No disagreement cells available across saved project predictions.");
+            return;
+        }
 
-            // Persist sampled cell IDs
-            var project = qupath.getProject();
-            var imageData = qupath.getImageData();
-            if (project != null && imageData != null) {
-                var imgEntry = project.getEntry(imageData);
-                if (imgEntry != null) {
-                    try {
-                        ProjectStateManager.saveImageSampledCells(project, imgEntry.getImageName(), lastSampledCellIds);
-                    } catch (Exception ex) {
-                        // Ignore errors
-                    }
-                }
-            }
+        // Compute agreement rates for the current image if not yet available
+        if (predAll != null && predAll.size() > 0 && lastAgreementRates == null) {
+            var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
+            lastAgreementRates = confView.getAgreementRates();
+            if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
+        }
+
+        String countStr = Dialogs.showInputDialog(
+                STRINGS.getString("sample.dialog.title"),
+                "How many disagreement cells to review?"
+                        + " (" + disagreeCount + " available)",
+                "200");
+        if (countStr == null) return;
+
+        int sampleSize;
+        try {
+            sampleSize = Integer.parseInt(countStr.strip());
+        } catch (NumberFormatException e) {
+            Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
+            return;
+        }
+        if (sampleSize <= 0) return;
+
+        if (!sampleForReviewBatch(samplingContext, sampleSize)) {
+            Dialogs.showInfoNotification(STRINGS.getString("name"),
+                    "No eligible disagreement cells remained after excluding reviewed cells.");
+            return;
         }
 
         if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
             Dialogs.showErrorMessage(STRINGS.getString("name"), STRINGS.getString("review.no_sample"));
             return;
         }
-        if (predAll == null) return;
 
-        var reviewController = new ReviewController(qupath, lastSampledCellIds, predAll);
+        PopulationSet reviewPredictions = (lastSampledPredictions != null && lastSampledPredictions.size() > 0)
+                ? lastSampledPredictions : predAll;
+        if (reviewPredictions == null || reviewPredictions.size() == 0) return;
+
+        var reviewController = new ReviewController(qupath, lastSampledCellIds,
+                reviewPredictions, lastSampledCellImageMap);
         if (reviewController.size() == 0) {
             Dialogs.showErrorMessage(STRINGS.getString("name"),
-                    "Could not resolve any sampled cells in the current image.");
+                    "Could not resolve sampled cells in project images.");
             return;
         }
 
@@ -867,20 +857,7 @@ public class ClassificationPanel extends VBox {
                 refreshStats();
                 if (onLabelStoreChanged != null) onLabelStoreChanged.accept(labelStore);
 
-                // Persist per-image labels for cross-image pooling
-                var project = qupath.getProject();
-                var imgData = qupath.getImageData();
-                if (project != null && imgData != null) {
-                    var imgEntry = project.getEntry(imgData);
-                    if (imgEntry != null) {
-                        try {
-                            // Filter to only IDs belonging to this image
-                            var filteredStore = filterLabelStoreToImage(labelStore, imgData);
-                            ProjectStateManager.saveImageLabels(
-                                    project, imgEntry.getImageName(), filteredStore);
-                        } catch (Exception ignored) {}
-                    }
-                }
+                persistReviewedLabelsByImage(outputLabels);
 
                 Dialogs.showInfoNotification(STRINGS.getString("name"),
                         String.format("Review complete: %d labels merged.", outputLabels.size()));
@@ -950,6 +927,232 @@ public class ClassificationPanel extends VBox {
             }
         }
         return filtered;
+    }
+
+    private static final class SamplingContext {
+        private final PopulationSet predictions;
+        private final Map<String, String> cellToImage;
+
+        private SamplingContext(PopulationSet predictions, Map<String, String> cellToImage) {
+            this.predictions = predictions;
+            this.cellToImage = cellToImage;
+        }
+
+        private PopulationSet predictions() {
+            return predictions;
+        }
+
+        private Map<String, String> cellToImage() {
+            return cellToImage;
+        }
+    }
+
+    private SamplingContext buildSamplingContext() {
+        PopulationSet pooled = new PopulationSet("Pred_ALL");
+        Map<String, String> cellToImage = new LinkedHashMap<>();
+
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        String currentImageName = null;
+        if (project != null && imageData != null) {
+            var entry = project.getEntry(imageData);
+            if (entry != null) {
+                currentImageName = entry.getImageName();
+            }
+        }
+
+        if (predAll != null && predAll.size() > 0) {
+            addPredictionsToSamplingPool(pooled, predAll, currentImageName, cellToImage);
+        } else if (project != null && currentImageName != null) {
+            try {
+                var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageName);
+                if (loadedCurrent != null && loadedCurrent.size() > 0) {
+                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageName, cellToImage);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (project != null) {
+            @SuppressWarnings("unchecked")
+            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            for (var entry : entries) {
+                if (entry == null || entry.getImageName() == null) continue;
+                if (currentImageName != null && currentImageName.equals(entry.getImageName())) continue;
+
+                try {
+                    var loaded = ProjectStateManager.loadImagePredictions(project, entry.getImageName());
+                    if (loaded != null && loaded.size() > 0) {
+                        addPredictionsToSamplingPool(pooled, loaded, entry.getImageName(), cellToImage);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        return new SamplingContext(pooled, cellToImage);
+    }
+
+    private static void addPredictionsToSamplingPool(PopulationSet pooled,
+                                                     PopulationSet source,
+                                                     String imageName,
+                                                     Map<String, String> cellToImage) {
+        if (source == null || source.size() == 0) return;
+        String safeImageName = (imageName == null || imageName.isBlank()) ? "image" : imageName;
+
+        for (var entry : source.getAll().entrySet()) {
+            String cellId = entry.getKey();
+            if (cellId == null || cellId.isBlank()) continue;
+            if (pooled.get(cellId) != null) continue;
+
+            pooled.put(cellId, entry.getValue());
+            cellToImage.put(cellId, safeImageName);
+        }
+    }
+
+    private boolean sampleForReviewBatch(SamplingContext samplingContext, int sampleSize) {
+        if (samplingContext == null || samplingContext.predictions() == null
+                || samplingContext.predictions().size() == 0 || sampleSize <= 0) {
+            return false;
+        }
+
+        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, labelStore, lastSampledCellIds);
+        lastSampledCellIds = UncertaintySampler.sample(
+                samplingContext.predictions(),
+                classifier.getClassNames(),
+                lastAgreementRates,
+                sampleSize,
+                List.of(),
+                List.of(),
+                samplingContext.cellToImage(),
+                reviewedCellIds,
+                new Random());
+
+        if (lastSampledCellIds == null) {
+            lastSampledCellIds = List.of();
+        }
+
+        lastSampledCellImageMap = new LinkedHashMap<>();
+        for (String id : lastSampledCellIds) {
+            String imageName = samplingContext.cellToImage().get(id);
+            if (imageName != null) {
+                lastSampledCellImageMap.put(id, imageName);
+            }
+        }
+        lastSampledPredictions = samplingContext.predictions();
+
+        reviewButton.setDisable(lastSampledCellIds.isEmpty());
+        if (onSampledCellsChanged != null) {
+            onSampledCellsChanged.accept(lastSampledCellIds);
+        }
+
+        persistCurrentImageSampledIds();
+        return !lastSampledCellIds.isEmpty();
+    }
+
+    private void persistCurrentImageSampledIds() {
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project == null || imageData == null || lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
+            return;
+        }
+
+        var imgEntry = project.getEntry(imageData);
+        if (imgEntry == null) return;
+
+        String currentImageName = imgEntry.getImageName();
+        List<String> currentImageOnlyIds = new ArrayList<>();
+        for (String id : lastSampledCellIds) {
+            String imageName = lastSampledCellImageMap.get(id);
+            if (imageName == null || imageName.equals(currentImageName)) {
+                currentImageOnlyIds.add(id);
+            }
+        }
+
+        if (currentImageOnlyIds.isEmpty()) return;
+
+        try {
+            ProjectStateManager.saveImageSampledCells(project, currentImageName, currentImageOnlyIds);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void persistReviewedLabelsByImage(LabelStore reviewedLabels) {
+        if (reviewedLabels == null || reviewedLabels.size() == 0) return;
+
+        var project = qupath.getProject();
+        if (project == null) return;
+
+        String currentImageName = null;
+        var currentImageData = qupath.getImageData();
+        if (currentImageData != null) {
+            var currentEntry = project.getEntry(currentImageData);
+            if (currentEntry != null) {
+                currentImageName = currentEntry.getImageName();
+            }
+        }
+
+        Map<String, LabelStore> labelsByImage = new LinkedHashMap<>();
+        for (var entry : reviewedLabels.getAllLabels().entrySet()) {
+            String cellId = entry.getKey();
+            String label = entry.getValue();
+            if (cellId == null || label == null) continue;
+
+            String imageName = lastSampledCellImageMap.get(cellId);
+            if ((imageName == null || imageName.isBlank()) && currentImageName != null) {
+                imageName = currentImageName;
+            }
+            if (imageName == null || imageName.isBlank()) continue;
+
+            labelsByImage
+                    .computeIfAbsent(imageName, ignored -> new LabelStore("CellTune"))
+                    .setLabel(cellId, label);
+        }
+
+        for (var entry : labelsByImage.entrySet()) {
+            String imageName = entry.getKey();
+            LabelStore delta = entry.getValue();
+
+            try {
+                LabelStore merged = ProjectStateManager.loadImageLabels(project, imageName);
+                if (merged == null) {
+                    merged = new LabelStore("CellTune");
+                }
+                merged.mergeFrom(delta);
+                ProjectStateManager.saveImageLabels(project, imageName, merged);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static Set<String> buildReviewedCellIdsForSampling(
+            QuPathGUI qupath,
+            LabelStore labels,
+            List<String> previouslySampledIds) {
+        Set<String> reviewed = new LinkedHashSet<>();
+        if (labels != null) {
+            reviewed.addAll(labels.getAllLabels().keySet());
+        }
+        if (previouslySampledIds != null) {
+            reviewed.addAll(previouslySampledIds);
+        }
+
+        if (qupath != null && qupath.getProject() != null) {
+            @SuppressWarnings("unchecked")
+            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            for (var entry : entries) {
+                if (entry == null || entry.getImageName() == null) continue;
+                try {
+                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), entry.getImageName());
+                    if (imageLabels != null) {
+                        reviewed.addAll(imageLabels.getAllLabels().keySet());
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        return reviewed;
     }
 
     private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,

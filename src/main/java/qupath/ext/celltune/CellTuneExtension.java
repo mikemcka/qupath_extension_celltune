@@ -59,8 +59,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.ResourceBundle;
 import java.util.Set;
 
@@ -105,6 +107,10 @@ public class CellTuneExtension implements QuPathExtension {
     private double[] lastAgreementRates;
     /** Cell IDs sampled for review. */
     private List<String> lastSampledCellIds;
+    /** Sampled cell ID to image name map for cross-image review. */
+    private Map<String, String> lastSampledCellImageMap = Map.of();
+    /** Prediction pool used to generate lastSampledCellIds. */
+    private PopulationSet lastSampledPredictions;
     /** Training rows imported from CSV (feature vectors + labels). */
     private List<GroundTruthIO.TrainingRow> importedTrainingRows;
     /** Feature names associated with importedTrainingRows. */
@@ -168,7 +174,11 @@ public class CellTuneExtension implements QuPathExtension {
             persistCurrentImagePredictions(qupath);
         });
         classificationPanel.setOnAgreementRatesChanged(ar -> this.lastAgreementRates = ar);
-        classificationPanel.setOnSampledCellsChanged(ids -> this.lastSampledCellIds = ids);
+        classificationPanel.setOnSampledCellsChanged(ids -> {
+            this.lastSampledCellIds = ids;
+            this.lastSampledCellImageMap = Map.of();
+            this.lastSampledPredictions = null;
+        });
         classificationPanel.setOnClassifierChanged(cls -> {
             this.classifier = cls;
             // Auto-save binary classifier state after training completes in binary mode
@@ -218,6 +228,11 @@ public class CellTuneExtension implements QuPathExtension {
     private void handleImageChange(QuPathGUI qupath,
                                    qupath.lib.images.ImageData<BufferedImage> oldData,
                                    qupath.lib.images.ImageData<BufferedImage> newData) {
+        if (ReviewController.isReviewSessionActive()) {
+            logger.debug("Skipping image-change state sync during active review navigation");
+            return;
+        }
+
         var project = qupath.getProject();
 
         // ── Save labels for the OLD image (filtered) ──
@@ -239,11 +254,20 @@ public class CellTuneExtension implements QuPathExtension {
                 }
                 // Save sampled cell IDs (independent of labels)
                 if (lastSampledCellIds != null && !lastSampledCellIds.isEmpty()) {
-                    try {
-                        ProjectStateManager.saveImageSampledCells(project, oldEntry.getImageName(), lastSampledCellIds);
-                    } catch (IOException ex) {
-                        logger.warn("Failed to save sampled cells for {} on image switch: {}",
-                                oldEntry.getImageName(), ex.getMessage());
+                    List<String> oldImageOnlyIds = new ArrayList<>();
+                    for (String id : lastSampledCellIds) {
+                        String imageName = lastSampledCellImageMap.get(id);
+                        if (imageName == null || imageName.equals(oldEntry.getImageName())) {
+                            oldImageOnlyIds.add(id);
+                        }
+                    }
+                    if (!oldImageOnlyIds.isEmpty()) {
+                        try {
+                            ProjectStateManager.saveImageSampledCells(project, oldEntry.getImageName(), oldImageOnlyIds);
+                        } catch (IOException ex) {
+                            logger.warn("Failed to save sampled cells for {} on image switch: {}",
+                                    oldEntry.getImageName(), ex.getMessage());
+                        }
                     }
                 }
 
@@ -264,6 +288,8 @@ public class CellTuneExtension implements QuPathExtension {
         this.predAll = null;
         this.lastAgreementRates = null;
         this.lastSampledCellIds = null;
+        this.lastSampledCellImageMap = Map.of();
+        this.lastSampledPredictions = null;
 
         // ── Load labels for the NEW image (if any) ──
         if (newData != null && project != null) {
@@ -285,6 +311,8 @@ public class CellTuneExtension implements QuPathExtension {
                 try {
                     List<String> sampledIds = ProjectStateManager.loadImageSampledCells(project, newEntry.getImageName());
                     this.lastSampledCellIds = sampledIds;
+                    this.lastSampledCellImageMap = Map.of();
+                    this.lastSampledPredictions = null;
                 } catch (IOException ex) {
                     logger.warn("Failed to load sampled cell IDs for {}: {}", newEntry.getImageName(), ex.getMessage());
                 }
@@ -1419,6 +1447,231 @@ public class CellTuneExtension implements QuPathExtension {
         return filtered;
     }
 
+    private static final class SamplingContext {
+        private final PopulationSet predictions;
+        private final Map<String, String> cellToImage;
+
+        private SamplingContext(PopulationSet predictions, Map<String, String> cellToImage) {
+            this.predictions = predictions;
+            this.cellToImage = cellToImage;
+        }
+
+        private PopulationSet predictions() {
+            return predictions;
+        }
+
+        private Map<String, String> cellToImage() {
+            return cellToImage;
+        }
+    }
+
+    private SamplingContext buildSamplingContext(QuPathGUI qupath) {
+        PopulationSet pooled = new PopulationSet("Pred_ALL");
+        Map<String, String> cellToImage = new LinkedHashMap<>();
+
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        String currentImageName = null;
+        if (project != null && imageData != null) {
+            var entry = project.getEntry(imageData);
+            if (entry != null) {
+                currentImageName = entry.getImageName();
+            }
+        }
+
+        if (predAll != null && predAll.size() > 0) {
+            addPredictionsToSamplingPool(pooled, predAll, currentImageName, cellToImage);
+        } else if (project != null && currentImageName != null) {
+            try {
+                var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageName);
+                if (loadedCurrent != null && loadedCurrent.size() > 0) {
+                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageName, cellToImage);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (project != null) {
+            @SuppressWarnings("unchecked")
+            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            for (var entry : entries) {
+                if (entry == null || entry.getImageName() == null) continue;
+                if (currentImageName != null && currentImageName.equals(entry.getImageName())) continue;
+
+                try {
+                    var loaded = ProjectStateManager.loadImagePredictions(project, entry.getImageName());
+                    if (loaded != null && loaded.size() > 0) {
+                        addPredictionsToSamplingPool(pooled, loaded, entry.getImageName(), cellToImage);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        return new SamplingContext(pooled, cellToImage);
+    }
+
+    private static void addPredictionsToSamplingPool(PopulationSet pooled,
+                                                     PopulationSet source,
+                                                     String imageName,
+                                                     Map<String, String> cellToImage) {
+        if (source == null || source.size() == 0) return;
+        String safeImageName = (imageName == null || imageName.isBlank()) ? "image" : imageName;
+
+        for (var entry : source.getAll().entrySet()) {
+            String cellId = entry.getKey();
+            if (cellId == null || cellId.isBlank()) continue;
+            if (pooled.get(cellId) != null) continue;
+
+            pooled.put(cellId, entry.getValue());
+            cellToImage.put(cellId, safeImageName);
+        }
+    }
+
+    private boolean sampleForReviewBatch(QuPathGUI qupath,
+                                         SamplingContext samplingContext,
+                                         int sampleSize) {
+        if (samplingContext == null || samplingContext.predictions() == null
+                || samplingContext.predictions().size() == 0 || sampleSize <= 0) {
+            return false;
+        }
+
+        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, labelStore, lastSampledCellIds);
+        lastSampledCellIds = UncertaintySampler.sample(
+                samplingContext.predictions(),
+                classifier.getClassNames(),
+                lastAgreementRates,
+                sampleSize,
+                List.of(),
+                List.of(),
+                samplingContext.cellToImage(),
+                reviewedCellIds,
+                new Random());
+
+        if (lastSampledCellIds == null) {
+            lastSampledCellIds = List.of();
+        }
+
+        lastSampledCellImageMap = new LinkedHashMap<>();
+        for (String id : lastSampledCellIds) {
+            String imageName = samplingContext.cellToImage().get(id);
+            if (imageName != null) {
+                lastSampledCellImageMap.put(id, imageName);
+            }
+        }
+        lastSampledPredictions = samplingContext.predictions();
+
+        syncPanelState();
+        persistCurrentImageSampledIds(qupath);
+        return !lastSampledCellIds.isEmpty();
+    }
+
+    private void persistCurrentImageSampledIds(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project == null || imageData == null || lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
+            return;
+        }
+
+        var imgEntry = project.getEntry(imageData);
+        if (imgEntry == null) return;
+
+        String currentImageName = imgEntry.getImageName();
+        List<String> currentImageOnlyIds = new ArrayList<>();
+        for (String id : lastSampledCellIds) {
+            String imageName = lastSampledCellImageMap.get(id);
+            if (imageName == null || imageName.equals(currentImageName)) {
+                currentImageOnlyIds.add(id);
+            }
+        }
+
+        if (currentImageOnlyIds.isEmpty()) return;
+
+        try {
+            ProjectStateManager.saveImageSampledCells(project, currentImageName, currentImageOnlyIds);
+        } catch (Exception ex) {
+            logger.warn("Failed to save sampled cells: {}", ex.getMessage());
+        }
+    }
+
+    private void persistReviewedLabelsByImage(QuPathGUI qupath, LabelStore reviewedLabels) {
+        if (reviewedLabels == null || reviewedLabels.size() == 0) return;
+        var project = qupath.getProject();
+        if (project == null) return;
+
+        String currentImageName = null;
+        var currentImageData = qupath.getImageData();
+        if (currentImageData != null) {
+            var currentEntry = project.getEntry(currentImageData);
+            if (currentEntry != null) {
+                currentImageName = currentEntry.getImageName();
+            }
+        }
+
+        Map<String, LabelStore> labelsByImage = new LinkedHashMap<>();
+        for (var entry : reviewedLabels.getAllLabels().entrySet()) {
+            String cellId = entry.getKey();
+            String label = entry.getValue();
+            if (cellId == null || label == null) continue;
+
+            String imageName = lastSampledCellImageMap.get(cellId);
+            if ((imageName == null || imageName.isBlank()) && currentImageName != null) {
+                imageName = currentImageName;
+            }
+            if (imageName == null || imageName.isBlank()) continue;
+
+            labelsByImage
+                    .computeIfAbsent(imageName, ignored -> new LabelStore("CellTune"))
+                    .setLabel(cellId, label);
+        }
+
+        for (var entry : labelsByImage.entrySet()) {
+            String imageName = entry.getKey();
+            LabelStore delta = entry.getValue();
+
+            try {
+                LabelStore merged = ProjectStateManager.loadImageLabels(project, imageName);
+                if (merged == null) {
+                    merged = new LabelStore("CellTune");
+                }
+                merged.mergeFrom(delta);
+                ProjectStateManager.saveImageLabels(project, imageName, merged);
+            } catch (Exception ex) {
+                logger.warn("Failed to save reviewed labels for {}: {}", imageName, ex.getMessage());
+            }
+        }
+    }
+
+    private static Set<String> buildReviewedCellIdsForSampling(
+            QuPathGUI qupath,
+            LabelStore labels,
+            List<String> previouslySampledIds) {
+        Set<String> reviewed = new LinkedHashSet<>();
+        if (labels != null) {
+            reviewed.addAll(labels.getAllLabels().keySet());
+        }
+        if (previouslySampledIds != null) {
+            reviewed.addAll(previouslySampledIds);
+        }
+
+        if (qupath != null && qupath.getProject() != null) {
+            @SuppressWarnings("unchecked")
+            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            for (var entry : entries) {
+                if (entry == null || entry.getImageName() == null) continue;
+                try {
+                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), entry.getImageName());
+                    if (imageLabels != null) {
+                        reviewed.addAll(imageLabels.getAllLabels().keySet());
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        return reviewed;
+    }
+
     private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
                                               List<String> targetFeatureNames) {
         var sourceByName = new java.util.HashMap<String, Integer>();
@@ -1572,6 +1825,8 @@ public class CellTuneExtension implements QuPathExtension {
                         var loaded = ProjectStateManager.loadImageSampledCells(qupath.getProject(), entry.getImageName());
                         if (loaded != null && !loaded.isEmpty()) {
                             this.lastSampledCellIds = loaded;
+                            this.lastSampledCellImageMap = Map.of();
+                            this.lastSampledPredictions = null;
                             syncPanelState();
                         }
                     } catch (IOException ex) {
@@ -1584,49 +1839,46 @@ public class CellTuneExtension implements QuPathExtension {
         // Auto-classify if we have a trained classifier but no predictions yet
         autoClassifyCurrentImage(qupath);
 
-        // Always prompt the user to choose how many cells to review
-        if (predAll != null && predAll.size() > 0 && classifier != null) {
-            long disagreeCount = predAll.getDisagreementCount();
-            if (disagreeCount == 0) {
-                Dialogs.showInfoNotification(EXTENSION_NAME,
-                        "Perfect agreement — no disagreement cells to review.");
-                return;
-            }
-            // Compute agreement rates if not yet available
-            if (lastAgreementRates == null) {
-                var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
-                lastAgreementRates = confView.getAgreementRates();
-            }
-            String countStr = Dialogs.showInputDialog(
-                    resources.getString("sample.dialog.title"),
-                    "How many disagreement cells to review?"
-                            + " (" + disagreeCount + " available)",
-                    "200");
-            if (countStr == null) return;
-            int sampleSize;
-            try {
-                sampleSize = Integer.parseInt(countStr.strip());
-            } catch (NumberFormatException e) {
-                Dialogs.showErrorMessage(EXTENSION_NAME, "Invalid number.");
-                return;
-            }
-            if (sampleSize <= 0) return;
-            lastSampledCellIds = UncertaintySampler.sample(
-                    predAll, classifier.getClassNames(), lastAgreementRates, sampleSize);
-            syncPanelState();
+        if (classifier == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No trained classifier available. Train first.");
+            return;
+        }
 
-            // Persist sampled cell IDs
-            if (qupath.getProject() != null && qupath.getImageData() != null) {
-                var imgEntry = qupath.getProject().getEntry(qupath.getImageData());
-                if (imgEntry != null) {
-                    try {
-                        ProjectStateManager.saveImageSampledCells(
-                                qupath.getProject(), imgEntry.getImageName(), lastSampledCellIds);
-                    } catch (Exception ex) {
-                        logger.warn("Failed to save sampled cells: {}", ex.getMessage());
-                    }
-                }
-            }
+        SamplingContext samplingContext = buildSamplingContext(qupath);
+        long disagreeCount = samplingContext.predictions().getDisagreementCount();
+        if (disagreeCount == 0) {
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "No disagreement cells available across saved project predictions.");
+            return;
+        }
+
+        // Compute agreement rates if not yet available (for current image)
+        if (predAll != null && predAll.size() > 0 && lastAgreementRates == null) {
+            var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
+            lastAgreementRates = confView.getAgreementRates();
+        }
+
+        String countStr = Dialogs.showInputDialog(
+                resources.getString("sample.dialog.title"),
+                "How many disagreement cells to review?"
+                        + " (" + disagreeCount + " available)",
+                "200");
+        if (countStr == null) return;
+
+        int sampleSize;
+        try {
+            sampleSize = Integer.parseInt(countStr.strip());
+        } catch (NumberFormatException e) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "Invalid number.");
+            return;
+        }
+        if (sampleSize <= 0) return;
+
+        if (!sampleForReviewBatch(qupath, samplingContext, sampleSize)) {
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "No eligible disagreement cells remained after excluding reviewed cells.");
+            return;
         }
 
         if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
@@ -1634,17 +1886,20 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
 
-        if (predAll == null || predAll.size() == 0) {
+        PopulationSet reviewPredictions = (lastSampledPredictions != null && lastSampledPredictions.size() > 0)
+                ? lastSampledPredictions : predAll;
+        if (reviewPredictions == null || reviewPredictions.size() == 0) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
                     "No predictions available. Train and sample first.");
             return;
         }
 
         // Build controller and UI components
-        var reviewController = new ReviewController(qupath, lastSampledCellIds, predAll);
+        var reviewController = new ReviewController(qupath, lastSampledCellIds,
+                reviewPredictions, lastSampledCellImageMap);
         if (reviewController.size() == 0) {
             Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "Could not resolve any sampled cells in the current image.");
+                    "Could not resolve sampled cells in project images.");
             return;
         }
 
@@ -1674,11 +1929,10 @@ public class CellTuneExtension implements QuPathExtension {
                 }
                 labelStore.mergeFrom(outputLabels);
                 syncPanelState();
-                logger.info("Review complete — merged {} labels into main label store",
+                logger.info("Review complete - merged {} labels into main label store",
                         outputLabels.size());
 
-                // Persist per-image labels so they can be pooled from other images
-                saveCurrentImageLabels(qupath);
+                persistReviewedLabelsByImage(qupath, outputLabels);
 
                 Dialogs.showInfoNotification(EXTENSION_NAME,
                         String.format("Review complete: %d labels merged.", outputLabels.size()));

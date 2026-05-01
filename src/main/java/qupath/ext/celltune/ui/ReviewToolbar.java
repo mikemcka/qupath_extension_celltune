@@ -140,8 +140,11 @@ public class ReviewToolbar extends HBox {
 
         // Determine dot colour
         CellPrediction pred = controller.getCurrentPrediction();
-        String existingLabel = controller.getOutputLabels()
-                .getLabel(controller.getCurrentCell().getID().toString());
+        String existingLabel = null;
+        String currentCellId = controller.getCurrentCellId();
+        if (currentCellId != null) {
+            existingLabel = controller.getOutputLabels().getLabel(currentCellId);
+        }
 
         if (existingLabel == null) {
             statusDot.setFill(Color.WHITE);   // unlabelled

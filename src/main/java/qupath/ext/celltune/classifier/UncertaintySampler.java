@@ -10,7 +10,7 @@ import java.util.*;
 /**
  * Multi-tier cell sampling for human review, matching the Python CellTune approach.
  * <p>
- * The sample is composed of six tiers, collected in priority order:
+ * The sample is composed of five tiers, collected in priority order:
  * <ol>
  *   <li><b>FOV balance</b> — disagreement cells grouped by spatial region (FOV),
  *       prioritising regions with the highest disagreement fraction.
@@ -26,8 +26,6 @@ import java.util.*;
  *       over-sampled for targeted review.</li>
  *   <li><b>Random fill</b> — remaining disagreement cells, shuffled randomly,
  *       to fill any unused disagreement budget.</li>
- *   <li><b>Exploration</b> — random agreement cells (10%) to catch cases where
- *       both models agree incorrectly (co-misclassification blind spots).</li>
  * </ol>
  * Each tier marks sampled cells as used so later tiers cannot re-select them.
  * The final result is capped at {@code sampleSize}.
@@ -36,11 +34,7 @@ public class UncertaintySampler {
 
     private static final Logger logger = LoggerFactory.getLogger(UncertaintySampler.class);
 
-    /** Fraction of sample budget reserved for random exploration of agreement cells. */
-    private static final double EXPLORATION_FRACTION = 0.10;
-
     // Base per-tier budgets (calibrated for sampleSize = 256, matching Python CellTune)
-    private static final int BASE_SAMPLE_SIZE    = 256;
     private static final int BASE_FOV_BUDGET     = 84;   // FOV-balanced tier
     private static final int BASE_TYPE_BUDGET    = 112;  // cell-type disagreement tier
     private static final int BASE_RARE_BUDGET    = 60;   // rare cell-type tier
@@ -65,8 +59,7 @@ public class UncertaintySampler {
      * @param fovMap               optional cellId → FOV/region label map; if non-null
      *                             enables FOV-balanced sampling (tier 0)
      * @param rng                  random number generator
-     * @return list of sampled cell IDs — tiered disagreement cells first,
-     *         exploration cells at the end
+     * @return list of sampled cell IDs in tier order
      */
     public static List<String> sample(PopulationSet predALL,
                                       List<String> classNames,
@@ -76,14 +69,32 @@ public class UncertaintySampler {
                                       List<String> preferredTypes,
                                       Map<String, String> fovMap,
                                       Random rng) {
+        return sample(predALL, classNames, agreementRates, sampleSize,
+                preferredConfusions, preferredTypes, fovMap, Set.of(), rng);
+    }
+
+    /**
+     * Sample cells for review using the multi-tier strategy.
+     *
+     * @param reviewedCellIds already-reviewed cell IDs to exclude from sampling
+     */
+    public static List<String> sample(PopulationSet predALL,
+                                      List<String> classNames,
+                                      double[] agreementRates,
+                                      int sampleSize,
+                                      List<String> preferredConfusions,
+                                      List<String> preferredTypes,
+                                      Map<String, String> fovMap,
+                                      Set<String> reviewedCellIds,
+                                      Random rng) {
         if (preferredConfusions == null) preferredConfusions = List.of();
         if (preferredTypes == null) preferredTypes = List.of();
+        if (reviewedCellIds == null) reviewedCellIds = Set.of();
 
         Map<String, CellPrediction> predMap = predALL.getAll();
 
         // ── 1. Partition cells and build per-class index ────────────────────
         List<String> disagreementIds = new ArrayList<>();
-        List<String> agreementIds = new ArrayList<>();
 
         // For each class: list of disagreement cell IDs involving that class
         Map<String, List<String>> disagreeByClass = new LinkedHashMap<>();
@@ -100,6 +111,9 @@ public class UncertaintySampler {
 
         for (var entry : predMap.entrySet()) {
             String cellId = entry.getKey();
+            if (reviewedCellIds.contains(cellId)) {
+                continue;
+            }
             CellPrediction pred = entry.getValue();
             String l1 = pred.getModel1Label(), l2 = pred.getModel2Label();
 
@@ -116,30 +130,25 @@ public class UncertaintySampler {
                 disagreeByClass.computeIfAbsent(l2, k -> new ArrayList<>()).add(cellId);
                 disagreePerClass.merge(l1, 1L, Long::sum);
                 disagreePerClass.merge(l2, 1L, Long::sum);
-            } else {
-                agreementIds.add(cellId);
             }
         }
 
-        if (disagreementIds.isEmpty() && agreementIds.isEmpty()) {
+        if (disagreementIds.isEmpty()) {
             logger.info("No cells available for sampling.");
             return List.of();
         }
 
-        // ── 2. Scale tier budgets proportionally to requested sample size ───
-        double scale = sampleSize / (double) BASE_SAMPLE_SIZE;
+        // ── 2. Use fixed per-tier budgets (matching Python balanceSelectCells defaults) ───
         int fovBudget    = (fovMap == null || fovMap.isEmpty())
-                ? 0 : Math.max(1, (int) (BASE_FOV_BUDGET * scale));
-        int cellsPerFov  = Math.max(1, (int) (BASE_CELLS_PER_FOV * scale));
-        int typeBudget   = Math.max(1, (int) (BASE_TYPE_BUDGET * scale));
-        int rareBudget   = Math.max(1, (int) (BASE_RARE_BUDGET * scale));
+                ? 0 : BASE_FOV_BUDGET;
+        int cellsPerFov  = BASE_CELLS_PER_FOV;
+        int typeBudget   = BASE_TYPE_BUDGET;
+        int rareBudget   = BASE_RARE_BUDGET;
         int prefBudget   = (preferredConfusions.isEmpty() && preferredTypes.isEmpty())
-                ? 0 : Math.max(1, (int) (BASE_PREF_BUDGET * scale));
-        int cellsPerType = Math.max(1, (int) (BASE_CELLS_PER_TYPE * scale));
-        int cellsPerRare = Math.max(1, (int) (BASE_CELLS_PER_RARE * scale));
-        int cellsPerPref = Math.max(1, (int) (BASE_CELLS_PER_PREF * scale));
-        int explorationBudget = agreementIds.isEmpty() ? 0
-                : Math.max(1, (int) (sampleSize * EXPLORATION_FRACTION));
+                ? 0 : BASE_PREF_BUDGET;
+        int cellsPerType = BASE_CELLS_PER_TYPE;
+        int cellsPerRare = BASE_CELLS_PER_RARE;
+        int cellsPerPref = BASE_CELLS_PER_PREF;
 
         Set<String> used = new LinkedHashSet<>();
         List<String> result = new ArrayList<>();
@@ -213,24 +222,13 @@ public class UncertaintySampler {
         }
 
         // ── 7. Tier 4: Random fill from remaining disagreements ─────────────
-        int disagBudget = sampleSize - explorationBudget;
         List<String> remaining = new ArrayList<>(disagreementIds);
         remaining.removeIf(used::contains);
         Collections.shuffle(remaining, rng);
-        int fillCount = Math.min(Math.max(0, disagBudget - result.size()),
+        int fillCount = Math.min(Math.max(0, sampleSize - result.size()),
                 remaining.size());
         for (int i = 0; i < fillCount; i++) {
             result.add(remaining.get(i));
-        }
-
-        // ── 8. Tier 5: Exploration (random agreement cells) ─────────────────
-        int expCount = 0;
-        if (explorationBudget > 0) {
-            Collections.shuffle(agreementIds, rng);
-            expCount = Math.min(explorationBudget, agreementIds.size());
-            for (int i = 0; i < expCount; i++) {
-                result.add(agreementIds.get(i));
-            }
         }
 
         // Cap at requested sample size
@@ -238,8 +236,8 @@ public class UncertaintySampler {
             result = new ArrayList<>(result.subList(0, sampleSize));
         }
 
-        logger.info("Sampled {} cells: fov={}, type={}, rare={}, preferred={}, random={}, exploration={}",
-                result.size(), tier0, tier1, tier2, tier3, fillCount, expCount);
+        logger.info("Sampled {} cells: fov={}, type={}, rare={}, preferred={}, random={}",
+                result.size(), tier0, tier1, tier2, tier3, fillCount);
         return result;
     }
 
@@ -254,7 +252,7 @@ public class UncertaintySampler {
                                       List<String> preferredTypes,
                                       Random rng) {
         return sample(predALL, classNames, agreementRates, sampleSize,
-                preferredConfusions, preferredTypes, null, rng);
+                preferredConfusions, preferredTypes, null, Set.of(), rng);
     }
 
     /**
@@ -265,7 +263,7 @@ public class UncertaintySampler {
                                       double[] agreementRates,
                                       int sampleSize) {
         return sample(predALL, classNames, agreementRates, sampleSize,
-                List.of(), List.of(), null, new Random());
+                List.of(), List.of(), null, Set.of(), new Random());
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
