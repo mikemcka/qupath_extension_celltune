@@ -55,6 +55,13 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - COH-03: Project summary UI supports flagged-image filtering and class-targeted review workflows for unusual cell-type distributions.
 - COH-04: Automated tests cover cohort scoring math and summary CSV export schema for anomaly analytics fields.
 
+### Binary Ground Truth Portability
+
+- [ ] XFER-01: Export all registered binary classifiers with persisted marker-specific ground-truth measurement rows into a single portable bundle.
+- [ ] XFER-02: Importing a bundle into another project registers missing binary classifiers and restores per-marker training rows for immediate reuse.
+- [ ] XFER-03: Import supports explicit merge/replace behavior per marker and reports schema mismatches without mutating unaffected markers.
+- [ ] XFER-04: Automated tests verify bundle round-trip fidelity plus malformed-bundle and schema-mismatch handling.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -87,11 +94,15 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | COH-02 | Phase 11 | Complete |
 | COH-03 | Phase 11 | Complete |
 | COH-04 | Phase 11 | Complete |
+| XFER-01 | Phase 12 | Pending |
+| XFER-02 | Phase 12 | Pending |
+| XFER-03 | Phase 12 | Pending |
+| XFER-04 | Phase 12 | Pending |
 
 Coverage:
-- v1 requirements: 16 total
-- Mapped to phases: 16
-- Unmapped: 0
+- requirements listed in this file: 26
+- mapped to phases: 24
+- unmapped: 2 (COMP-06, COMP-07)
 
 ---
 Requirements defined: 2026-04-29

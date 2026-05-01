@@ -775,6 +775,100 @@ public class ProjectStateManager {
         return toLabelStore(state);
     }
 
+
+    /**
+     * Marker-specific imported training payload used by binary transfer workflows.
+     */
+    public record BinaryImportedTrainingData(List<String> featureNames,
+                                             List<GroundTruthIO.TrainingRow> rows) {}
+
+    private static class SavedBinaryImportedTrainingData {
+        public String timestamp;
+        public List<String> featureNames;
+        public List<SavedState.SavedTrainingRow> rows;
+    }
+
+    /**
+     * Resolve the binary-imported/ subdirectory inside the celltune dir, creating it if needed.
+     */
+    private static Path getBinaryImportedDir(Project<?> project) throws IOException {
+        Path ctDir = getCellTuneDir(project);
+        Path importedDir = ctDir.resolve("binary-imported");
+        Files.createDirectories(importedDir);
+        return importedDir;
+    }
+
+    /**
+     * Save imported training rows for a specific binary marker.
+     *
+     * @param project             the QuPath project
+     * @param sanitizedMarkerName sanitized marker name (or raw marker name that can be sanitized)
+     * @param featureNames        ordered feature names for the training rows
+     * @param rows                imported labelled feature rows
+     * @return path to the persisted marker payload
+     * @throws IOException if writing fails
+     */
+    public static Path saveBinaryImportedTrainingData(Project<?> project,
+                                                      String sanitizedMarkerName,
+                                                      List<String> featureNames,
+                                                      List<GroundTruthIO.TrainingRow> rows) throws IOException {
+        String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);
+        Path importedDir = getBinaryImportedDir(project);
+        Path outPath = importedDir.resolve(safeMarker + ".json");
+
+        SavedBinaryImportedTrainingData saved = new SavedBinaryImportedTrainingData();
+        saved.timestamp = LocalDateTime.now().format(TIMESTAMP_FMT);
+        saved.featureNames = featureNames == null ? List.of() : List.copyOf(featureNames);
+        saved.rows = toSavedTrainingRows(rows);
+
+        Files.writeString(outPath, GSON.toJson(saved), StandardCharsets.UTF_8);
+        int rowCount = saved.rows == null ? 0 : saved.rows.size();
+        logger.info("Saved binary imported training rows for '{}' ({} rows)", safeMarker, rowCount);
+        return outPath;
+    }
+
+    /**
+     * Load imported training rows for a specific binary marker.
+     *
+     * @param project             the QuPath project
+     * @param sanitizedMarkerName sanitized marker name (or raw marker name that can be sanitized)
+     * @return marker payload, or null when no payload exists
+     * @throws IOException if reading fails
+     */
+    public static BinaryImportedTrainingData loadBinaryImportedTrainingData(Project<?> project,
+                                                                            String sanitizedMarkerName) throws IOException {
+        String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);
+        Path importedDir = getBinaryImportedDir(project);
+        Path inPath = importedDir.resolve(safeMarker + ".json");
+        if (!Files.exists(inPath)) {
+            return null;
+        }
+
+        SavedBinaryImportedTrainingData saved =
+                GSON.fromJson(Files.readString(inPath, StandardCharsets.UTF_8), SavedBinaryImportedTrainingData.class);
+        if (saved == null) {
+            return null;
+        }
+
+        List<String> featureNames = saved.featureNames == null ? List.of() : List.copyOf(saved.featureNames);
+        List<GroundTruthIO.TrainingRow> rows = decodeSavedTrainingRows(saved.rows);
+        return new BinaryImportedTrainingData(featureNames, rows);
+    }
+
+    private static List<GroundTruthIO.TrainingRow> decodeSavedTrainingRows(List<SavedState.SavedTrainingRow> savedRows) {
+        if (savedRows == null || savedRows.isEmpty()) {
+            return List.of();
+        }
+        List<GroundTruthIO.TrainingRow> rows = new ArrayList<>();
+        for (SavedState.SavedTrainingRow saved : savedRows) {
+            if (saved == null || saved.label == null || saved.label.isBlank() || saved.features == null) {
+                continue;
+            }
+            rows.add(new GroundTruthIO.TrainingRow(saved.label, saved.features.clone()));
+        }
+        return rows;
+    }
+
     // -- Composite rule persistence ---------------------------------------------
 
     /**

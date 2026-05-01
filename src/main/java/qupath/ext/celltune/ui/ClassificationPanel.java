@@ -332,8 +332,13 @@ public class ClassificationPanel extends VBox {
             }
         }
 
-        // If not enough labels, try to reload from saved state
-        if (labelStore.size() < 10) {
+        int importedEvidenceCount = (int) (importedTrainingRows == null ? 0 : importedTrainingRows.stream()
+                .filter(r -> r != null && r.label() != null && !r.label().isBlank() && r.features() != null)
+                .count());
+
+        // If not enough local labels, try to reload from saved state.
+        // Imported rows are counted as training evidence and may satisfy the threshold.
+        if (labelStore.size() < 10 && importedEvidenceCount == 0) {
             if (project != null && imageData != null) {
                 var imgEntry = project.getEntry(imageData);
                 if (imgEntry != null) {
@@ -367,9 +372,12 @@ public class ClassificationPanel extends VBox {
             }
         }
 
-        if (labelStore.size() < 10) {
+        int totalEvidenceCount = labelStore.size() + importedEvidenceCount;
+        if (totalEvidenceCount < 10) {
             Dialogs.showErrorMessage(STRINGS.getString("name"),
-                    "Need at least 10 labelled cells to train. Found: " + labelStore.size() + "\nUse point annotations placed on detections to label cells.");
+                    "Need at least 10 labelled cells to train. Found: " + totalEvidenceCount
+                            + " (local labels=" + labelStore.size() + ", imported rows=" + importedEvidenceCount + ")"
+                            + "\nUse point annotations or import training rows to label cells.");
             return;
         }
 

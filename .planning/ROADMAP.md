@@ -5,6 +5,7 @@
 - [x] v1.0 Binary Composite Classification (shipped 2026-04-29) - see [v1.0 archive](milestones/v1.0-ROADMAP.md)
 - [ ] v1.1 Reliability and Verification Hardening (in progress)
 - [x] v1.2 Cohort Outlier Analytics (shipped 2026-04-30)
+- [ ] v1.3 Cross-Project Binary Ground Truth Portability (planned)
 
 ## Milestone v1.1 - Reliability and Verification Hardening
 
@@ -103,6 +104,26 @@ Plans:
 - [x] 11-01-PLAN.md - Build cohort anomaly scoring contracts and analytics engine with tests (completed 2026-04-30)
 - [x] 11-02-PLAN.md - Integrate anomaly insights into summary UI filters and CSV export (completed 2026-04-30)
 
+## Milestone v1.3 - Cross-Project Binary Ground Truth Portability
+
+Goal: Move binary classifier training evidence between projects so marker-specific classifiers can be reconstructed without relabelling from scratch.
+
+### Phase 12 - Binary Ground Truth Bundle Export/Import
+
+Goal: Export ground truth measurements from all registered binary classifiers in one project and import them into another project with schema-aware merge behavior.
+Depends on: Phase 1 binary classifier registry/persistence and existing ground-truth CSV import/export foundations.
+Requirements: XFER-01, XFER-02, XFER-03, XFER-04
+Success Criteria:
+1. A single export action produces a bundle containing marker-wise ground-truth measurements for every registered binary classifier with available training rows.
+2. Importing a bundle registers missing binary classifiers in the target project and persists imported training rows per marker.
+3. Import flow reports per-marker outcomes (imported, replaced, skipped, schema mismatch) without corrupting existing classifier state.
+4. Automated tests cover bundle round-trip, malformed bundle handling, and merge/replace behavior.
+Plans: 2 plans
+
+Plans:
+- [ ] 12-01-PLAN.md - Build bundle contract, persistence hooks, and automated round-trip tests
+- [ ] 12-02-PLAN.md - Wire QuPath menu actions and guided import/export workflow with verification checkpoint
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -114,3 +135,4 @@ Plans:
 | 9. Regression Tests for Hardening | v1.1 | TST-01 | 0/0 | Not started |
 | 10. Documentation and Governance Refresh | v1.1 | GOV-01,DOC-01,DOC-02 | 1/1 | Complete (2026-04-29) |
 | 11. Project Summary Cohort Outlier Analytics | v1.2 | COH-01,COH-02,COH-03,COH-04 | 2/2 | Complete (2026-04-30) |
+| 12. Binary Ground Truth Bundle Export/Import | v1.3 | XFER-01,XFER-02,XFER-03,XFER-04 | 0/2 | Not started |

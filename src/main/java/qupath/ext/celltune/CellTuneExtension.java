@@ -130,6 +130,8 @@ public class CellTuneExtension implements QuPathExtension {
     /** Multi-class state saved before entering binary mode, restored on exit. */
     private LabelStore preBinaryLabelStore = null;
     private DualModelClassifier preBinaryClassifier = null;
+    private List<GroundTruthIO.TrainingRow> preBinaryImportedTrainingRows = null;
+    private List<String> preBinaryImportedTrainingFeatureNames = null;
     /** Images pre-selected via "Apply to Images..." button; used in next training run. */
     private List<String> binaryTargetImages = new ArrayList<>();
 
@@ -582,6 +584,14 @@ public class CellTuneExtension implements QuPathExtension {
         importGtItem.setOnAction(e -> importGroundTruth(qupath));
         importGtItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem exportBinaryGroundTruthItem = new MenuItem(resources.getString("menu.export.binary.groundtruth"));
+        exportBinaryGroundTruthItem.setOnAction(e -> exportActiveBinaryGroundTruth(qupath));
+        exportBinaryGroundTruthItem.disableProperty().bind(enableExtensionProperty.not());
+
+        MenuItem importBinaryGroundTruthItem = new MenuItem(resources.getString("menu.import.binary.groundtruth"));
+        importBinaryGroundTruthItem.setOnAction(e -> importActiveBinaryGroundTruth(qupath));
+        importBinaryGroundTruthItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem featuresItem = new MenuItem(resources.getString("menu.features"));
         featuresItem.setOnAction(e -> showFeatureSelection(qupath));
         featuresItem.disableProperty().bind(enableExtensionProperty.not());
@@ -617,7 +627,9 @@ public class CellTuneExtension implements QuPathExtension {
                 exportAnnDataItem,
                 new SeparatorMenuItem(),
                 exportGtItem,
-                importGtItem
+                importGtItem,
+                exportBinaryGroundTruthItem,
+                importBinaryGroundTruthItem
         );
     }
 
@@ -2382,7 +2394,9 @@ public class CellTuneExtension implements QuPathExtension {
             File dir = project.getPath().getParent().toFile();
             if (dir.isDirectory()) fc.setInitialDirectory(dir);
         }
-        fc.setInitialFileName("ground_truth.csv");
+        fc.setInitialFileName(activeBinaryMarker != null && !activeBinaryMarker.isBlank()
+                ? activeBinaryMarker + "_ground_truth.csv"
+                : "ground_truth.csv");
         File chosen = fc.showSaveDialog(qupath.getStage());
         if (chosen == null) return;
 
@@ -2488,8 +2502,14 @@ public class CellTuneExtension implements QuPathExtension {
                 total = importedTrainingRows.size();
 
                 if (project != null) {
-                    ProjectStateManager.saveImportedTrainingData(
-                            project, importedTrainingFeatureNames, importedTrainingRows);
+                    if (activeBinaryMarker != null && !activeBinaryMarker.isBlank()) {
+                        ProjectStateManager.saveBinaryImportedTrainingData(
+                                project, activeBinaryMarker,
+                                importedTrainingFeatureNames, importedTrainingRows);
+                    } else {
+                        ProjectStateManager.saveImportedTrainingData(
+                                project, importedTrainingFeatureNames, importedTrainingRows);
+                    }
                 }
 
                 syncPanelState();
@@ -2504,6 +2524,25 @@ public class CellTuneExtension implements QuPathExtension {
             logger.error("Failed to import ground truth", ex);
             Dialogs.showErrorMessage(EXTENSION_NAME, "Import failed: " + ex.getMessage());
         }
+    }
+
+
+    private boolean ensureActiveBinaryMarker() {
+        if (activeBinaryMarker == null || activeBinaryMarker.isBlank()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("binary.marker.required"));
+            return false;
+        }
+        return true;
+    }
+
+    private void exportActiveBinaryGroundTruth(QuPathGUI qupath) {
+        if (!ensureActiveBinaryMarker()) return;
+        exportGroundTruth(qupath);
+    }
+
+    private void importActiveBinaryGroundTruth(QuPathGUI qupath) {
+        if (!ensureActiveBinaryMarker()) return;
+        importGroundTruth(qupath);
     }
 
     // ── Feature selection ──────────────────────────────────────────────────────
@@ -2694,6 +2733,10 @@ public class CellTuneExtension implements QuPathExtension {
         // Preserve current multi-class state
         preBinaryLabelStore = labelStore;
         preBinaryClassifier = classifier;
+        preBinaryImportedTrainingRows =
+                importedTrainingRows == null ? null : new ArrayList<>(importedTrainingRows);
+        preBinaryImportedTrainingFeatureNames =
+                importedTrainingFeatureNames == null ? null : new ArrayList<>(importedTrainingFeatureNames);
 
         // Load binary marker's labels
         try {
@@ -2726,6 +2769,23 @@ public class CellTuneExtension implements QuPathExtension {
         } catch (Exception ex) {
             logger.warn("Failed to load binary classifier state for '{}': {}", markerName, ex.getMessage());
             this.classifier = null;
+        }
+
+        try {
+            var imported = ProjectStateManager.loadBinaryImportedTrainingData(project, markerName);
+            if (imported != null) {
+                this.importedTrainingFeatureNames = new ArrayList<>(imported.featureNames());
+                this.importedTrainingRows = new ArrayList<>(imported.rows());
+                logger.info("[CellTune] Loaded binary imported training rows for '{}' ({} rows)",
+                        markerName, imported.rows().size());
+            } else {
+                this.importedTrainingFeatureNames = null;
+                this.importedTrainingRows = null;
+            }
+        } catch (Exception ex) {
+            logger.warn("Failed to load binary imported rows for '{}': {}", markerName, ex.getMessage());
+            this.importedTrainingFeatureNames = null;
+            this.importedTrainingRows = null;
         }
 
         this.activeBinaryMarker = markerName;
@@ -2765,9 +2825,13 @@ public class CellTuneExtension implements QuPathExtension {
         // Restore multi-class state
         this.labelStore = (preBinaryLabelStore != null) ? preBinaryLabelStore : new LabelStore("CellTune");
         this.classifier = preBinaryClassifier;
+        this.importedTrainingRows = preBinaryImportedTrainingRows;
+        this.importedTrainingFeatureNames = preBinaryImportedTrainingFeatureNames;
         this.activeBinaryMarker = null;
         this.preBinaryLabelStore = null;
         this.preBinaryClassifier = null;
+        this.preBinaryImportedTrainingRows = null;
+        this.preBinaryImportedTrainingFeatureNames = null;
 
         syncPanelState();
         logger.info("[CellTune] Exited binary mode \u2014 restored multi-class state");
