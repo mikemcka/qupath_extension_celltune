@@ -109,9 +109,9 @@ public class ClassificationPanel extends VBox {
         exitBinaryButton.setVisible(false);
         exitBinaryButton.setManaged(false);
         exitBinaryButton.setOnAction(e -> { if (onExitBinaryMode != null) onExitBinaryMode.run(); });
-        applyToImagesButton.setVisible(false);
-        applyToImagesButton.setManaged(false);
-        applyToImagesButton.setDisable(true);
+        applyToImagesButton.setVisible(true);
+        applyToImagesButton.setManaged(true);
+        applyToImagesButton.setDisable(false);
         applyToImagesButton.setOnAction(e -> { if (onApplyToImages != null) onApplyToImages.run(); });
 
         // ── Hyperparameter controls ──
@@ -254,9 +254,13 @@ public class ClassificationPanel extends VBox {
         binaryBannerLabel.setManaged(active);
         exitBinaryButton.setVisible(active);
         exitBinaryButton.setManaged(active);
-        applyToImagesButton.setVisible(active);
-        applyToImagesButton.setManaged(active);
-        applyToImagesButton.setDisable(!active || classifier == null || !classifier.isTrained());
+        // The "Apply to which images..." picker is useful in both modes:
+        // binary-mode users want to apply per-marker classifiers to a subset,
+        // multi-class users want to share one trained classifier across the
+        // project so every image's PopulationSet gets persisted.
+        applyToImagesButton.setVisible(true);
+        applyToImagesButton.setManaged(true);
+        applyToImagesButton.setDisable(false);
     }
 
     public void setOnExitBinaryMode(Runnable cb) {
@@ -630,7 +634,7 @@ public class ClassificationPanel extends VBox {
                 }
 
                 int batchApplied = 0;
-                if (binaryModeActive && projectRef != null && !batchTargetImages.isEmpty()) {
+                if (projectRef != null && !batchTargetImages.isEmpty()) {
                     @SuppressWarnings("unchecked")
                     var typedProject = (qupath.lib.projects.Project<BufferedImage>)
                             (qupath.lib.projects.Project<?>) projectRef;
