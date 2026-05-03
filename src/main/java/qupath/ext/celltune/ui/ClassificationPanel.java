@@ -867,40 +867,41 @@ public class ClassificationPanel extends VBox {
             view.show();
         }
 
-        SamplingContext samplingContext = buildSamplingContext();
-        long disagreeCount = samplingContext.predictions().getDisagreementCount();
-        if (disagreeCount == 0) {
+        loadSamplingContextAsync(samplingContext -> {
+            long disagreeCount = samplingContext.predictions().getDisagreementCount();
+            if (disagreeCount == 0) {
+                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                        "No disagreement cells available across saved project predictions.");
+                return;
+            }
+
+            String countStr = Dialogs.showInputDialog(
+                    STRINGS.getString("sample.dialog.title"),
+                    STRINGS.getString("sample.count.label")
+                            + " (" + disagreeCount + " disagreements available)",
+                    "200");
+            if (countStr == null) return;
+
+            int sampleSize;
+            try {
+                sampleSize = Integer.parseInt(countStr.strip());
+            } catch (NumberFormatException e) {
+                Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
+                return;
+            }
+            if (sampleSize <= 0) return;
+
+            if (!sampleForReviewBatch(samplingContext, sampleSize)) {
+                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                        "No eligible disagreement cells remained after excluding reviewed cells.");
+                return;
+            }
+
+            int imageCount = new LinkedHashSet<>(lastSampledCellImageMap.values()).size();
             Dialogs.showInfoNotification(STRINGS.getString("name"),
-                    "No disagreement cells available across saved project predictions.");
-            return;
-        }
-
-        String countStr = Dialogs.showInputDialog(
-                STRINGS.getString("sample.dialog.title"),
-                STRINGS.getString("sample.count.label")
-                        + " (" + disagreeCount + " disagreements available)",
-                "200");
-        if (countStr == null) return;
-
-        int sampleSize;
-        try {
-            sampleSize = Integer.parseInt(countStr.strip());
-        } catch (NumberFormatException e) {
-            Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
-            return;
-        }
-        if (sampleSize <= 0) return;
-
-        if (!sampleForReviewBatch(samplingContext, sampleSize)) {
-            Dialogs.showInfoNotification(STRINGS.getString("name"),
-                    "No eligible disagreement cells remained after excluding reviewed cells.");
-            return;
-        }
-
-        int imageCount = new LinkedHashSet<>(lastSampledCellImageMap.values()).size();
-        Dialogs.showInfoNotification(STRINGS.getString("name"),
-                "Sampled " + lastSampledCellIds.size() + " cells across "
-                        + imageCount + " image(s). Use 'Enter Review Mode' to start.");
+                    "Sampled " + lastSampledCellIds.size() + " cells across "
+                            + imageCount + " image(s). Use 'Enter Review Mode' to start.");
+        });
     }
 
     private void doEnterReview() {
@@ -910,53 +911,109 @@ public class ClassificationPanel extends VBox {
         }
         if (classifier == null) return;
 
-        // Always prompt the user to choose how many cells to review
-        SamplingContext samplingContext = buildSamplingContext();
-        long disagreeCount = samplingContext.predictions().getDisagreementCount();
-        if (disagreeCount == 0) {
-            Dialogs.showInfoNotification(STRINGS.getString("name"),
-                    "No disagreement cells available across saved project predictions.");
-            return;
-        }
+        loadSamplingContextAsync(samplingContext -> {
+            long disagreeCount = samplingContext.predictions().getDisagreementCount();
+            if (disagreeCount == 0) {
+                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                        "No disagreement cells available across saved project predictions.");
+                return;
+            }
 
-        // Compute agreement rates for the current image if not yet available
-        if (predAll != null && predAll.size() > 0 && lastAgreementRates == null) {
-            var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
-            lastAgreementRates = confView.getAgreementRates();
-            if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
-        }
+            // Compute agreement rates for the current image if not yet available
+            if (predAll != null && predAll.size() > 0 && lastAgreementRates == null) {
+                var confView = new ConfusionMatrixView(qupath.getStage(), predAll, classifier.getClassNames());
+                lastAgreementRates = confView.getAgreementRates();
+                if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
+            }
 
-        String countStr = Dialogs.showInputDialog(
-                STRINGS.getString("sample.dialog.title"),
-                "How many disagreement cells to review?"
-                        + " (" + disagreeCount + " available)",
-                "200");
-        if (countStr == null) return;
+            String countStr = Dialogs.showInputDialog(
+                    STRINGS.getString("sample.dialog.title"),
+                    "How many disagreement cells to review?"
+                            + " (" + disagreeCount + " available)",
+                    "200");
+            if (countStr == null) return;
 
-        int sampleSize;
-        try {
-            sampleSize = Integer.parseInt(countStr.strip());
-        } catch (NumberFormatException e) {
-            Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
-            return;
-        }
-        if (sampleSize <= 0) return;
+            int sampleSize;
+            try {
+                sampleSize = Integer.parseInt(countStr.strip());
+            } catch (NumberFormatException e) {
+                Dialogs.showErrorMessage(STRINGS.getString("name"), "Invalid number.");
+                return;
+            }
+            if (sampleSize <= 0) return;
 
-        if (!sampleForReviewBatch(samplingContext, sampleSize)) {
-            Dialogs.showInfoNotification(STRINGS.getString("name"),
-                    "No eligible disagreement cells remained after excluding reviewed cells.");
-            return;
-        }
+            if (!sampleForReviewBatch(samplingContext, sampleSize)) {
+                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                        "No eligible disagreement cells remained after excluding reviewed cells.");
+                return;
+            }
 
-        if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
-            Dialogs.showErrorMessage(STRINGS.getString("name"), STRINGS.getString("review.no_sample"));
-            return;
-        }
+            if (lastSampledCellIds == null || lastSampledCellIds.isEmpty()) {
+                Dialogs.showErrorMessage(STRINGS.getString("name"), STRINGS.getString("review.no_sample"));
+                return;
+            }
 
-        PopulationSet reviewPredictions = (lastSampledPredictions != null && lastSampledPredictions.size() > 0)
-                ? lastSampledPredictions : predAll;
-        if (reviewPredictions == null || reviewPredictions.size() == 0) return;
+            PopulationSet reviewPredictions = (lastSampledPredictions != null && lastSampledPredictions.size() > 0)
+                    ? lastSampledPredictions : predAll;
+            if (reviewPredictions == null || reviewPredictions.size() == 0) return;
 
+            launchReviewStage(reviewPredictions);
+        });
+    }
+
+    /**
+     * Build the sampling context off the FX thread (so the UI doesn't freeze
+     * while loading 49 prediction JSONs) and run {@code onReady} on the FX
+     * thread once it's available. Shows a small modal progress dialog.
+     */
+    private void loadSamplingContextAsync(Consumer<SamplingContext> onReady) {
+        var stage = new javafx.stage.Stage();
+        stage.setTitle(STRINGS.getString("name") + " \u2014 Loading predictions");
+        stage.initOwner(qupath.getStage());
+        stage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        stage.setResizable(false);
+
+        var bar = new ProgressBar(0);
+        bar.setPrefWidth(360);
+        var status = new Label("Scanning project images\u2026");
+        status.setMaxWidth(360);
+        status.setWrapText(true);
+        var box = new VBox(8, status, bar);
+        box.setPadding(new Insets(15));
+        stage.setScene(new javafx.scene.Scene(box));
+        stage.setOnCloseRequest(e -> e.consume()); // disable manual close
+        stage.show();
+
+        Thread t = new Thread(() -> {
+            SamplingContext ctx = null;
+            try {
+                ctx = buildSamplingContext((done, total) -> Platform.runLater(() -> {
+                    if (total > 0) {
+                        bar.setProgress((double) done / total);
+                        status.setText(String.format("Loading predictions: %d / %d images\u2026",
+                                done, total));
+                    }
+                }));
+            } catch (Exception e) {
+                final Exception err = e;
+                Platform.runLater(() -> {
+                    stage.close();
+                    Dialogs.showErrorMessage(STRINGS.getString("name"),
+                            "Failed to load predictions: " + err.getMessage());
+                });
+                return;
+            }
+            final SamplingContext result = ctx;
+            Platform.runLater(() -> {
+                stage.close();
+                if (result != null) onReady.accept(result);
+            });
+        }, "celltune-sampling-load");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void launchReviewStage(PopulationSet reviewPredictions) {
         var reviewController = new ReviewController(qupath, lastSampledCellIds,
                 reviewPredictions, lastSampledCellImageMap);
         if (reviewController.size() == 0) {
@@ -1080,6 +1137,20 @@ public class ClassificationPanel extends VBox {
     }
 
     private SamplingContext buildSamplingContext() {
+        return buildSamplingContext(null);
+    }
+
+    /**
+     * Build the cross-image sampling pool. Loads each image's saved
+     * PopulationSet JSON in parallel (across all available CPU cores) so that
+     * entering review mode on a project with dozens of images stays responsive.
+     *
+     * @param progressCallback optional callback invoked from worker threads as
+     *     each image finishes loading; receives (completed, total). Use
+     *     Platform.runLater inside the callback if updating UI.
+     */
+    private SamplingContext buildSamplingContext(
+            java.util.function.BiConsumer<Integer, Integer> progressCallback) {
         PopulationSet pooled = new PopulationSet("Pred_ALL");
         Map<String, String> cellToImage = new LinkedHashMap<>();
 
@@ -1092,14 +1163,15 @@ public class ClassificationPanel extends VBox {
                 currentImageName = entry.getImageName();
             }
         }
+        final String currentImageNameFinal = currentImageName;
 
         if (predAll != null && predAll.size() > 0) {
-            addPredictionsToSamplingPool(pooled, predAll, currentImageName, cellToImage);
-        } else if (project != null && currentImageName != null) {
+            addPredictionsToSamplingPool(pooled, predAll, currentImageNameFinal, cellToImage);
+        } else if (project != null && currentImageNameFinal != null) {
             try {
-                var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageName);
+                var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageNameFinal);
                 if (loadedCurrent != null && loadedCurrent.size() > 0) {
-                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageName, cellToImage);
+                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageNameFinal, cellToImage);
                 }
             } catch (Exception ignored) {
             }
@@ -1108,16 +1180,33 @@ public class ClassificationPanel extends VBox {
         if (project != null) {
             @SuppressWarnings("unchecked")
             var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-            for (var entry : entries) {
-                if (entry == null || entry.getImageName() == null) continue;
-                if (currentImageName != null && currentImageName.equals(entry.getImageName())) continue;
+            List<String> otherNames = entries.stream()
+                    .filter(e -> e != null && e.getImageName() != null)
+                    .map(ProjectImageEntry::getImageName)
+                    .filter(n -> currentImageNameFinal == null || !currentImageNameFinal.equals(n))
+                    .collect(Collectors.toList());
+            int total = otherNames.size();
+            if (progressCallback != null) progressCallback.accept(0, total);
+            java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger();
 
-                try {
-                    var loaded = ProjectStateManager.loadImagePredictions(project, entry.getImageName());
-                    if (loaded != null && loaded.size() > 0) {
-                        addPredictionsToSamplingPool(pooled, loaded, entry.getImageName(), cellToImage);
-                    }
-                } catch (Exception ignored) {
+            // Parallel JSON load — independent files, CPU+IO bound, safe to fan out.
+            List<Map.Entry<String, PopulationSet>> loaded = otherNames.parallelStream()
+                    .map(name -> {
+                        PopulationSet ps = null;
+                        try {
+                            ps = ProjectStateManager.loadImagePredictions(project, name);
+                        } catch (Exception ignored) {
+                        }
+                        int c = done.incrementAndGet();
+                        if (progressCallback != null) progressCallback.accept(c, total);
+                        return new AbstractMap.SimpleEntry<>(name, ps);
+                    })
+                    .collect(Collectors.toList());
+
+            // Merge serially to keep dedup/order deterministic.
+            for (var e : loaded) {
+                if (e.getValue() != null && e.getValue().size() > 0) {
+                    addPredictionsToSamplingPool(pooled, e.getValue(), e.getKey(), cellToImage);
                 }
             }
         }
