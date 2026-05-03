@@ -2551,6 +2551,23 @@ public class CellTuneExtension implements QuPathExtension {
             GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName,
                     opts.includeRaw(), opts.includeNorm());
 
+            // Pool labels from every other project image so the export reflects the
+            // full training set used (matches the auto-pool behaviour during training).
+            // Per-image labels are scoped by activeBinaryMarker so binary classifiers
+            // don't pull labels from each other.
+            int appendedFromOtherImages = 0;
+            if (project != null) {
+                appendedFromOtherImages = appendOtherImageLabelsToCsv(
+                        chosen.toPath(),
+                        project,
+                        imageData,
+                        activeBinaryMarker,
+                        featureNames,
+                        featureNormalizer,
+                        opts.includeRaw(),
+                        opts.includeNorm());
+            }
+
             // In binary mode, also append previously-imported training rows so the exported
             // CSV is the union of (this project's labels) + (rows imported from prior projects).
             // This keeps round-trips (project1 -> project2 -> project3) lossless for a single
@@ -2568,6 +2585,9 @@ public class CellTuneExtension implements QuPathExtension {
             }
 
             String msg = "Exported " + localLabelCount + " labelled cells to " + chosen.getName();
+            if (appendedFromOtherImages > 0) {
+                msg += " (+" + appendedFromOtherImages + " from other project images)";
+            }
             if (appendedImported > 0) {
                 msg += " (+" + appendedImported + " imported training rows from prior projects)";
             }
@@ -2626,6 +2646,102 @@ public class CellTuneExtension implements QuPathExtension {
         if (lines.isEmpty()) return 0;
         Files.write(csvPath, lines, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
         return lines.size();
+    }
+
+    /**
+     * Append rows for labels saved on every project image OTHER than the currently
+     * open one. Each non-current image is opened off-screen, its detections are matched
+     * against its persisted labels, and a feature row is written per matched cell.
+     * Schema must match {@link GroundTruthIO#exportCSV} so the resulting CSV is one
+     * coherent file.
+     *
+     * @param scope sanitized binary marker name, or null in multi-class mode
+     * @return number of rows appended (across all other images)
+     */
+    private static int appendOtherImageLabelsToCsv(Path csvPath,
+                                                   qupath.lib.projects.Project<?> project,
+                                                   qupath.lib.images.ImageData<BufferedImage> currentImageData,
+                                                   String scope,
+                                                   List<String> featureNames,
+                                                   FeatureNormalizer normalizer,
+                                                   boolean includeRaw,
+                                                   boolean includeNorm) throws IOException {
+        if (project == null) return 0;
+        boolean hasNorm = includeNorm && normalizer != null;
+        if (!includeRaw && !hasNorm) return 0;
+
+        @SuppressWarnings("unchecked")
+        var typedProject = (qupath.lib.projects.Project<BufferedImage>) (qupath.lib.projects.Project<?>) project;
+        @SuppressWarnings("unchecked")
+        var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        var currentEntry = currentImageData != null ? typedProject.getEntry(currentImageData) : null;
+
+        List<String> linesOut = new ArrayList<>();
+        for (var entry : allEntries) {
+            if (entry == null) continue;
+            if (currentEntry != null && entry.equals(currentEntry)) continue;
+
+            String otherImageName = entry.getImageName();
+            if (otherImageName == null || otherImageName.isBlank()) continue;
+
+            // Skip images with no saved labels — avoids the expensive readImageData() call.
+            if (!ProjectStateManager.hasImageLabels(project, scope, otherImageName)) continue;
+
+            LabelStore otherLabels;
+            try {
+                otherLabels = ProjectStateManager.loadImageLabels(project, scope, otherImageName);
+            } catch (Exception ex) {
+                logger.warn("Failed to load labels for {}: {}", otherImageName, ex.getMessage());
+                continue;
+            }
+            if (otherLabels == null || otherLabels.size() == 0) continue;
+
+            try {
+                var otherImageData = entry.readImageData();
+                var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
+                if (otherDetections.isEmpty()) continue;
+
+                Map<String, PathObject> cellById = new LinkedHashMap<>();
+                for (PathObject cell : otherDetections) {
+                    cellById.put(cell.getID().toString(), cell);
+                }
+
+                CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
+                extractor.setNormalizer(normalizer);
+
+                for (var labelEntry : otherLabels.getAllLabels().entrySet()) {
+                    PathObject cell = cellById.get(labelEntry.getKey());
+                    if (cell == null) continue;
+                    String label = labelEntry.getValue();
+                    if (label == null || label.isBlank()) continue;
+
+                    var roi = cell.getROI();
+                    double cx = roi != null ? roi.getCentroidX() : 0;
+                    double cy = roi != null ? roi.getCentroidY() : 0;
+
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(otherImageName).append(',').append(label);
+                    sb.append(',').append(String.format("%.2f", cx));
+                    sb.append(',').append(String.format("%.2f", cy));
+                    if (includeRaw) {
+                        float[] raw = extractor.extractRowRaw(cell);
+                        for (float v : raw) sb.append(',').append(v);
+                    }
+                    if (hasNorm) {
+                        float[] norm = extractor.extractRow(cell);
+                        for (float v : norm) sb.append(',').append(v);
+                    }
+                    linesOut.add(sb.toString());
+                }
+            } catch (Exception ex) {
+                logger.warn("Failed to extract labelled features from {}: {}",
+                        otherImageName, ex.getMessage());
+            }
+        }
+
+        if (linesOut.isEmpty()) return 0;
+        Files.write(csvPath, linesOut, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
+        return linesOut.size();
     }
 
     private void importGroundTruth(QuPathGUI qupath) {
