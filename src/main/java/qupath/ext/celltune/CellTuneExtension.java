@@ -1383,7 +1383,7 @@ public class CellTuneExtension implements QuPathExtension {
 
                                 var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
                                 otherExtractor.setNormalizer(featureNormalizer);
-                                classifier.predictOnly(otherDetections, otherExtractor,
+                                var otherPredAll = classifier.predictAndCollect(otherDetections, otherExtractor,
                                         msg -> {
                                             logger.info("[CellTune] [{}] {}", imgName, msg);
                                             javafx.application.Platform.runLater(() ->
@@ -1399,6 +1399,19 @@ public class CellTuneExtension implements QuPathExtension {
                                 try { saveReady.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
 
                                 entryFinal.saveImageData(otherImageData);
+                                // Persist the per-image PopulationSet so the Project
+                                // Prediction Summary and review-mode sampling include
+                                // disagreements from this image.
+                                try {
+                                    ProjectStateManager.saveImagePredictions(
+                                            project, imgName, otherPredAll);
+                                } catch (Exception persistEx) {
+                                    logger.warn("[CellTune] Could not save predictions JSON for {}: {}",
+                                            imgName, persistEx.getMessage());
+                                    javafx.application.Platform.runLater(() ->
+                                            logArea.appendText("[" + imgName + "] WARN: could not save predictions JSON: "
+                                                    + persistEx.getMessage() + "\n"));
+                                }
                                 int n = appliedCounter.incrementAndGet();
                                 javafx.application.Platform.runLater(() ->
                                         logArea.appendText("[" + imgName + "] Saved (" + n + "/" + totalWork + ")\n"));

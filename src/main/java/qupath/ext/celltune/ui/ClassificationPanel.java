@@ -677,7 +677,7 @@ public class ClassificationPanel extends VBox {
 
                                 var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
                                 otherExtractor.setNormalizer(featureNormalizer);
-                                classifier.predictOnly(otherDetections, otherExtractor,
+                                var otherPredAll = classifier.predictAndCollect(otherDetections, otherExtractor,
                                         m -> trainLog.accept("[" + imgNameFinal + "] " + m));
 
                                 var saveReady = new java.util.concurrent.CountDownLatch(1);
@@ -693,6 +693,16 @@ public class ClassificationPanel extends VBox {
                                 }
 
                                 entry.saveImageData(otherImageData);
+                                // Persist the per-image PopulationSet so the Project
+                                // Prediction Summary and review-mode sampling can pull
+                                // disagreements from this image.
+                                try {
+                                    ProjectStateManager.saveImagePredictions(
+                                            projectRef, imgNameFinal, otherPredAll);
+                                } catch (Exception persistEx) {
+                                    trainLog.accept("[" + imgNameFinal + "] WARN: could not save predictions JSON: "
+                                            + persistEx.getMessage());
+                                }
                                 int n = appliedCounter.incrementAndGet();
                                 trainLog.accept("[" + imgNameFinal + "] Saved (" + n + "/"
                                         + batchTargetImages.size() + ")");

@@ -580,6 +580,118 @@ public class DualModelClassifier {
     }
 
     /**
+     * Apply predictions to a collection of cells and return a freshly built
+     * {@code Pred_ALL} {@link PopulationSet} for those cells, without mutating
+     * any shared classifier state. This is the thread-safe variant used by the
+     * parallel batch-apply loops, so each worker can persist its own
+     * {@code PopulationSet} via {@code ProjectStateManager.saveImagePredictions}.
+     *
+     * @param cells     detection objects to classify
+     * @param extractor feature extractor (must use the same feature columns as training)
+     * @param log       optional progress callback
+     * @return a populated {@link PopulationSet} keyed by cell ID
+     * @throws Exception if prediction fails
+     */
+    public PopulationSet predictAndCollect(Collection<PathObject> cells,
+                                           CellFeatureExtractor extractor,
+                                           Consumer<String> log) throws Exception {
+        if (!isTrained()) {
+            throw new IllegalStateException("Models must be trained before predicting.");
+        }
+        Consumer<String> out = log != null ? log : s -> {};
+
+        int totalCells = cells.size();
+        int nFeatures = extractor.getNumFeatures();
+
+        if (featureNames != null && featureNames.size() != nFeatures) {
+            throw new IllegalStateException(
+                    "Feature count mismatch: extractor has " + nFeatures
+                    + " feature(s) but this classifier was trained with "
+                    + featureNames.size() + ". Re-select features and retrain.");
+        }
+
+        out.accept("Predicting " + totalCells + " cells…");
+
+        List<PathObject> cellList = (cells instanceof List)
+                ? (List<PathObject>) cells
+                : new ArrayList<>(cells);
+
+        PopulationSet localALL = new PopulationSet("Pred_ALL");
+        List<PathObject> classifyObjects = new ArrayList<>(totalCells);
+        List<PathClass>  classifyClasses = new ArrayList<>(totalCells);
+
+        int disagreements = 0;
+        for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
+            int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
+            int chunkSize = chunkEnd - chunkStart;
+            List<PathObject> chunk = cellList.subList(chunkStart, chunkEnd);
+
+            float[] chunkData = extractor.extractMatrix(chunk);
+            float[][] mdl1Probs = predictModel(model1Type, true, chunkData, chunkSize, nFeatures);
+            float[][] mdl2Probs = predictModel(model2Type, false, chunkData, chunkSize, nFeatures);
+
+            for (int i = 0; i < chunkSize; i++) {
+                PathObject cell = chunk.get(i);
+                String cellId = cell.getID().toString();
+                int mdl1Best = argmax(mdl1Probs[i]);
+                int mdl2Best = argmax(mdl2Probs[i]);
+
+                String mdl1Label = classNames.get(mdl1Best);
+                String mdl2Label = classNames.get(mdl2Best);
+
+                CellPrediction pred = new CellPrediction(
+                        cellId, mdl1Label, mdl2Label,
+                        mdl1Probs[i], mdl2Probs[i], classNames);
+
+                classifyObjects.add(cell);
+                classifyClasses.add(PathClass.fromString(pred.avgLabel()));
+
+                localALL.put(cellId, pred);
+                if (pred.isDisagreement()) disagreements++;
+            }
+
+            out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
+        }
+
+        // Apply PathClass assignments on the FX thread and wait for completion
+        // so callers can safely persist immediately after this returns.
+        if (Platform.isFxApplicationThread()) {
+            for (int i = 0; i < classifyObjects.size(); i++) {
+                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+            }
+        } else {
+            var done = new java.util.concurrent.CountDownLatch(1);
+            final RuntimeException[] fxError = new RuntimeException[1];
+            Platform.runLater(() -> {
+                try {
+                    for (int i = 0; i < classifyObjects.size(); i++) {
+                        classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+                    }
+                } catch (RuntimeException ex) {
+                    fxError[0] = ex;
+                } finally {
+                    done.countDown();
+                }
+            });
+            try {
+                done.await();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while applying predictions.", ie);
+            }
+            if (fxError[0] != null) {
+                throw fxError[0];
+            }
+        }
+
+        out.accept("Predictions applied: " + totalCells + " cells, "
+                + disagreements + " disagreements ("
+                + String.format("%.1f%%", 100.0 * disagreements / totalCells) + ")");
+
+        return localALL;
+    }
+
+    /**
      * Create a {@link ClassifierState} snapshot from the current trained models.
      *
      * @param name user-given classifier name
