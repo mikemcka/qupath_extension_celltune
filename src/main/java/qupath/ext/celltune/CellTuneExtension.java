@@ -251,7 +251,7 @@ public class CellTuneExtension implements QuPathExtension {
                     if (filteredStore.size() > 0) {
                         try {
                             ProjectStateManager.saveImageLabels(
-                                    project, oldEntry.getImageName(), filteredStore);
+                                    project, activeBinaryMarker, oldEntry.getImageName(), filteredStore);
                         } catch (IOException ex) {
                             logger.warn("Failed to save labels for {} on image switch: {}",
                                     oldEntry.getImageName(), ex.getMessage());
@@ -304,7 +304,7 @@ public class CellTuneExtension implements QuPathExtension {
                 LabelStore loaded = null;
                 try {
                     loaded = ProjectStateManager.loadImageLabels(
-                            project, newEntry.getImageName());
+                            project, activeBinaryMarker, newEntry.getImageName());
                 } catch (IOException ex) {
                     logger.warn("Failed to load labels for {}: {}",
                             newEntry.getImageName(), ex.getMessage());
@@ -978,7 +978,7 @@ public class CellTuneExtension implements QuPathExtension {
                 var imgEntry = project.getEntry(imageData);
                 if (imgEntry != null) {
                     try {
-                        var savedLabels = ProjectStateManager.loadImageLabels(project, imgEntry.getImageName());
+                        var savedLabels = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imgEntry.getImageName());
                         if (savedLabels != null && savedLabels.size() > labelStore.size()) {
                             labelStore.mergeFrom(savedLabels);
                             logger.info("Loaded {} saved labels for current image", labelStore.size());
@@ -1175,7 +1175,11 @@ public class CellTuneExtension implements QuPathExtension {
                 || confirmResult.get() != javafx.scene.control.ButtonType.OK) {
             return;
         }
-        final boolean poolAllImages = hasMultipleImages && poolCheckBox.isSelected();
+        // In binary mode every label belongs to one classifier, so always pool labels
+        // for that classifier across all project images — the user shouldn't have to remember
+        // to tick the box.
+        final boolean poolAllImages =
+                hasMultipleImages && (activeBinaryMarker != null || poolCheckBox.isSelected());
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final boolean autoTuneHyperparams = autoTuneCheckBox.isSelected();
         final boolean earlyStopEnabled = earlyStopCheckBox.isSelected();
@@ -1314,14 +1318,14 @@ public class CellTuneExtension implements QuPathExtension {
 
                         // Fast check: skip images with no saved label file to avoid
                         // the expensive readImageData() call for unlabelled images.
-                        if (!ProjectStateManager.hasImageLabels(project, entry.getImageName())) continue;
+                        if (!ProjectStateManager.hasImageLabels(project, activeBinaryMarker, entry.getImageName())) continue;
 
                         try {
                             // Load saved labels first (no image I/O required)
                             LabelStore otherLabels = new LabelStore("temp");
                             try {
                                 var savedLabels = ProjectStateManager.loadImageLabels(
-                                        project, entry.getImageName());
+                                        project, activeBinaryMarker, entry.getImageName());
                                 if (savedLabels != null) {
                                     otherLabels.mergeFrom(savedLabels);
                                 }
@@ -1396,7 +1400,7 @@ public class CellTuneExtension implements QuPathExtension {
                     // Save per-image labels for cross-image pooling
                     if (currentImageNameFinal != null) {
                         ProjectStateManager.saveImageLabels(
-                                project, currentImageNameFinal, currentImageLabelStoreFinal);
+                                project, activeBinaryMarker, currentImageNameFinal, currentImageLabelStoreFinal);
                     }
                 }
 
@@ -1560,7 +1564,7 @@ public class CellTuneExtension implements QuPathExtension {
         if (filteredStore.size() == 0) return;
 
         try {
-            ProjectStateManager.saveImageLabels(project, entry.getImageName(), filteredStore);
+            ProjectStateManager.saveImageLabels(project, activeBinaryMarker, entry.getImageName(), filteredStore);
         } catch (IOException ex) {
             logger.warn("Failed to save per-image labels for {}: {}",
                     entry.getImageName(), ex.getMessage());
@@ -1678,7 +1682,7 @@ public class CellTuneExtension implements QuPathExtension {
             return false;
         }
 
-        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, labelStore, lastSampledCellIds);
+        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, activeBinaryMarker, labelStore, lastSampledCellIds);
         lastSampledCellIds = UncertaintySampler.sample(
                 samplingContext.predictions(),
                 classifier.getClassNames(),
@@ -1772,12 +1776,12 @@ public class CellTuneExtension implements QuPathExtension {
             LabelStore delta = entry.getValue();
 
             try {
-                LabelStore merged = ProjectStateManager.loadImageLabels(project, imageName);
+                LabelStore merged = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imageName);
                 if (merged == null) {
                     merged = new LabelStore("CellTune");
                 }
                 merged.mergeFrom(delta);
-                ProjectStateManager.saveImageLabels(project, imageName, merged);
+                ProjectStateManager.saveImageLabels(project, activeBinaryMarker, imageName, merged);
             } catch (Exception ex) {
                 logger.warn("Failed to save reviewed labels for {}: {}", imageName, ex.getMessage());
             }
@@ -1786,6 +1790,7 @@ public class CellTuneExtension implements QuPathExtension {
 
     private static Set<String> buildReviewedCellIdsForSampling(
             QuPathGUI qupath,
+            String scope,
             LabelStore labels,
             List<String> previouslySampledIds) {
         Set<String> reviewed = new LinkedHashSet<>();
@@ -1802,7 +1807,7 @@ public class CellTuneExtension implements QuPathExtension {
             for (var entry : entries) {
                 if (entry == null || entry.getImageName() == null) continue;
                 try {
-                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), entry.getImageName());
+                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
                     if (imageLabels != null) {
                         reviewed.addAll(imageLabels.getAllLabels().keySet());
                     }

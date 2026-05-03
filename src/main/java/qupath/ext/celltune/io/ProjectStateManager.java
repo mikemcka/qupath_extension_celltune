@@ -481,6 +481,66 @@ public class ProjectStateManager {
         }
     }
 
+    // ── Scope-aware overloads (binary classifier vs multi-class) ─────────────────
+    //
+    // When {@code scope} is null/blank, labels live in the shared
+    // {@code image-labels/<image>.json} (multi-class).
+    // When {@code scope} is a sanitized binary-marker name, labels live in
+    // {@code binary-image-labels/<scope>/<image>.json} so each binary classifier
+    // owns its own per-image labels and they don't bleed between classifiers.
+
+    private static final String BINARY_IMAGE_LABELS_DIR = "binary-image-labels";
+
+    private static Path resolveImageLabelsDir(Project<?> project, String scope) throws IOException {
+        Path ctDir = getCellTuneDir(project);
+        if (scope == null || scope.isBlank()) {
+            return ctDir.resolve(IMAGE_LABELS_DIR);
+        }
+        String safeScope = sanitiseFileName(scope);
+        return ctDir.resolve(BINARY_IMAGE_LABELS_DIR).resolve(safeScope);
+    }
+
+    /** Save labels for an image within an optional scope (null/blank = multi-class). */
+    public static Path saveImageLabels(Project<?> project,
+                                       String scope,
+                                       String imageName,
+                                       LabelStore labelStore) throws IOException {
+        Path dir = resolveImageLabelsDir(project, scope);
+        Files.createDirectories(dir);
+        String safeFileName = sanitiseFileName(imageName) + ".json";
+        Path outPath = dir.resolve(safeFileName);
+        String json = GSON.toJson(labelStore.getAllLabels());
+        Files.writeString(outPath, json, StandardCharsets.UTF_8);
+        logger.info("Saved {} labels for image '{}' (scope='{}') to {}",
+                labelStore.size(), imageName, scope == null ? "" : scope, outPath);
+        return outPath;
+    }
+
+    /** Load labels for an image within an optional scope (null/blank = multi-class). */
+    public static LabelStore loadImageLabels(Project<?> project,
+                                             String scope,
+                                             String imageName) throws IOException {
+        Path dir = resolveImageLabelsDir(project, scope);
+        Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
+        if (!Files.exists(filePath)) return null;
+        String json = Files.readString(filePath, StandardCharsets.UTF_8);
+        @SuppressWarnings("unchecked")
+        Map<String, String> labels = GSON.fromJson(json, Map.class);
+        if (labels == null || labels.isEmpty()) return null;
+        return new LabelStore(imageName, labels);
+    }
+
+    /** True if labels exist for the image within the given scope. */
+    public static boolean hasImageLabels(Project<?> project, String scope, String imageName) {
+        try {
+            Path dir = resolveImageLabelsDir(project, scope);
+            Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
+            return Files.exists(filePath);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     /**
      * Replace characters that are unsafe in file names with underscores.
      */

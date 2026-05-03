@@ -92,6 +92,9 @@ public class ClassificationPanel extends VBox {
     private Runnable onExitBinaryMode;
     private final Button applyToImagesButton = new Button("Apply to which images...");
     private Runnable onApplyToImages;
+    /** Sanitized name of the active binary classifier, or null in multi-class mode.
+     *  Used to scope per-image label files so binary classifiers don't share labels. */
+    private String activeBinaryMarker = null;
 
     public ClassificationPanel(QuPathGUI qupath) {
         super(10);
@@ -249,6 +252,7 @@ public class ClassificationPanel extends VBox {
     /** Show or hide the binary mode banner in the docked panel. */
     public void setActiveBinaryMarker(String markerName) {
         boolean active = (markerName != null && !markerName.isBlank());
+        this.activeBinaryMarker = active ? markerName : null;
         binaryBannerLabel.setText(active ? "Active binary mode: " + markerName : "");
         binaryBannerLabel.setVisible(active);
         binaryBannerLabel.setManaged(active);
@@ -261,6 +265,16 @@ public class ClassificationPanel extends VBox {
         applyToImagesButton.setVisible(true);
         applyToImagesButton.setManaged(true);
         applyToImagesButton.setDisable(false);
+        // In binary mode, every label belongs to one classifier so pooling is
+        // automatic — disable the manual checkbox to make that obvious.
+        if (active) {
+            poolImagesCheckBox.setSelected(true);
+            poolImagesCheckBox.setDisable(true);
+            poolImagesCheckBox.setText("Pool labels from all images (auto in binary mode)");
+        } else {
+            poolImagesCheckBox.setDisable(false);
+            poolImagesCheckBox.setText("Pool labels from all images");
+        }
     }
 
     public void setOnExitBinaryMode(Runnable cb) {
@@ -360,7 +374,7 @@ public class ClassificationPanel extends VBox {
                 var imgEntry = project.getEntry(imageData);
                 if (imgEntry != null) {
                     try {
-                        var savedLabels = ProjectStateManager.loadImageLabels(project, imgEntry.getImageName());
+                        var savedLabels = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imgEntry.getImageName());
                         if (savedLabels != null && savedLabels.size() > labelStore.size()) {
                             labelStore.mergeFrom(savedLabels);
                             // Re-sync after merge
@@ -470,7 +484,13 @@ public class ClassificationPanel extends VBox {
 
         // Train in background
         final LabelStore storeCopy = labelStore;
-        final boolean poolAllImages = poolImagesCheckBox.isSelected();
+        // Capture the per-image label scope (sanitized binary marker, or null in
+        // multi-class mode) so per-image label files don't bleed between classifiers.
+        final String scope = activeBinaryMarker;
+        final boolean binaryActive = (scope != null);
+        // In binary mode every label belongs to one classifier — always pool labels
+        // for that classifier, regardless of the (now-disabled) checkbox state.
+        final boolean poolAllImages = binaryActive || poolImagesCheckBox.isSelected();
         final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
         final boolean autoTuneSelected = autoTuneCheckBox.isSelected();
         final boolean earlyStopSelected = earlyStopCheckBox.isSelected();
@@ -510,14 +530,14 @@ public class ClassificationPanel extends VBox {
 
                         // Fast check: skip images with no saved label file to avoid
                         // the expensive readImageData() call for unlabelled images.
-                        if (!ProjectStateManager.hasImageLabels(projectRef, entry.getImageName())) continue;
+                        if (!ProjectStateManager.hasImageLabels(projectRef, scope, entry.getImageName())) continue;
 
                         try {
                             // Load saved labels first (no image I/O required)
                             LabelStore otherLabels = new LabelStore("temp");
                             try {
                                 var savedLabels = ProjectStateManager.loadImageLabels(
-                                        projectRef, entry.getImageName());
+                                        projectRef, scope, entry.getImageName());
                                 if (savedLabels != null) {
                                     otherLabels.mergeFrom(savedLabels);
                                 }
@@ -629,7 +649,7 @@ public class ClassificationPanel extends VBox {
                     if (imgEntry != null) {
                         var filteredStore = filterLabelStoreToImage(storeCopy, imageData);
                         ProjectStateManager.saveImageLabels(
-                                projectRef, imgEntry.getImageName(), filteredStore);
+                                projectRef, scope, imgEntry.getImageName(), filteredStore);
                     }
                 }
 
@@ -1237,7 +1257,7 @@ public class ClassificationPanel extends VBox {
             return false;
         }
 
-        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, labelStore, lastSampledCellIds);
+        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, activeBinaryMarker, labelStore, lastSampledCellIds);
         lastSampledCellIds = UncertaintySampler.sample(
                 samplingContext.predictions(),
                 classifier.getClassNames(),
@@ -1335,12 +1355,12 @@ public class ClassificationPanel extends VBox {
             LabelStore delta = entry.getValue();
 
             try {
-                LabelStore merged = ProjectStateManager.loadImageLabels(project, imageName);
+                LabelStore merged = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imageName);
                 if (merged == null) {
                     merged = new LabelStore("CellTune");
                 }
                 merged.mergeFrom(delta);
-                ProjectStateManager.saveImageLabels(project, imageName, merged);
+                ProjectStateManager.saveImageLabels(project, activeBinaryMarker, imageName, merged);
             } catch (Exception ignored) {
             }
         }
@@ -1348,6 +1368,7 @@ public class ClassificationPanel extends VBox {
 
     private static Set<String> buildReviewedCellIdsForSampling(
             QuPathGUI qupath,
+            String scope,
             LabelStore labels,
             List<String> previouslySampledIds) {
         Set<String> reviewed = new LinkedHashSet<>();
@@ -1364,7 +1385,7 @@ public class ClassificationPanel extends VBox {
             for (var entry : entries) {
                 if (entry == null || entry.getImageName() == null) continue;
                 try {
-                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), entry.getImageName());
+                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
                     if (imageLabels != null) {
                         reviewed.addAll(imageLabels.getAllLabels().keySet());
                     }
