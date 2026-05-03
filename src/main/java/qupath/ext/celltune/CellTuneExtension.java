@@ -656,73 +656,110 @@ public class CellTuneExtension implements QuPathExtension {
                 currentImageName = currentEntry.getImageName();
             }
         }
+        final String currentImageNameFinal = currentImageName;
+        final PopulationSet liveCurrent = predAll;
 
         @SuppressWarnings("unchecked")
         var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-        var sourceRows = new ArrayList<SummaryInputRow>(entries.size());
-        var analyzerInputs = new ArrayList<CohortAnomalyReport.ImageInput>(entries.size());
-
+        var imageNames = new ArrayList<String>(entries.size());
         for (var entry : entries) {
-            if (entry == null || entry.getImageName() == null) {
-                continue;
-            }
-
-            String imageName = entry.getImageName();
-            PopulationSet predictions = null;
-            if (currentImageName != null && currentImageName.equals(imageName)
-                    && predAll != null && predAll.size() > 0) {
-                predictions = predAll;
-            } else {
-                try {
-                    predictions = ProjectStateManager.loadImagePredictions(project, imageName);
-                } catch (IOException ex) {
-                    logger.warn("Failed to load predictions for {} in project summary: {}", imageName, ex.getMessage());
-                }
-            }
-
-            if (predictions == null || predictions.size() == 0) {
-                sourceRows.add(new SummaryInputRow(
-                        imageName,
-                        0L,
-                        0L,
-                        "No saved predictions for this image."
-                ));
-                continue;
-            }
-
-            long predicted = predictions.size();
-            long disagreements = predictions.getDisagreementCount();
-            Map<String, Long> avgCounts = predictions.getAvgCounts();
-
-            sourceRows.add(new SummaryInputRow(
-                    imageName,
-                    predicted,
-                    disagreements,
-                    formatClassCounts(avgCounts)
-            ));
-
-            analyzerInputs.add(new CohortAnomalyReport.ImageInput(
-                    imageName,
-                    predicted,
-                    disagreements,
-                    avgCounts
-            ));
+            if (entry == null || entry.getImageName() == null) continue;
+            imageNames.add(entry.getImageName());
         }
 
-        if (sourceRows.isEmpty()) {
+        if (imageNames.isEmpty()) {
             Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
             return;
         }
 
-        var anomalyReport = CohortAnomalyAnalyzer.analyze(analyzerInputs);
-        var anomalyByImage = anomalyReport.byImageName();
+        // ── Show a small progress dialog and load all images in parallel
+        // off the FX thread so the UI stays responsive on large projects.
+        var stage = new javafx.stage.Stage();
+        stage.setTitle(EXTENSION_NAME + " \u2014 Loading prediction summary");
+        stage.initOwner(qupath.getStage());
+        stage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        stage.setResizable(false);
+        var bar = new javafx.scene.control.ProgressBar(0);
+        bar.setPrefWidth(360);
+        var status = new javafx.scene.control.Label("Scanning project images\u2026");
+        status.setMaxWidth(360);
+        status.setWrapText(true);
+        var box = new javafx.scene.layout.VBox(8, status, bar);
+        box.setPadding(new javafx.geometry.Insets(15));
+        stage.setScene(new javafx.scene.Scene(box));
+        stage.setOnCloseRequest(e -> e.consume());
+        stage.show();
 
-        var rows = new ArrayList<ProjectPredictionSummaryView.Row>(sourceRows.size());
-        for (var source : sourceRows) {
-            rows.add(buildPredictionSummaryRow(source, anomalyByImage.get(source.imageName())));
-        }
+        Thread t = new Thread(() -> {
+            int total = imageNames.size();
+            java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger();
+            // Capture avgCounts per image alongside the row (rows themselves are immutable).
+            java.util.Map<String, Map<String, Long>> avgCountsByImage =
+                    new java.util.concurrent.ConcurrentHashMap<>();
 
-        new ProjectPredictionSummaryView(qupath, qupath.getStage(), rows).show();
+            // Parallel JSON load — independent files per image, IO+CPU bound.
+            List<SummaryInputRow> sourceRows = imageNames.parallelStream()
+                    .map(imageName -> {
+                        PopulationSet predictions = null;
+                        if (currentImageNameFinal != null && currentImageNameFinal.equals(imageName)
+                                && liveCurrent != null && liveCurrent.size() > 0) {
+                            predictions = liveCurrent;
+                        } else {
+                            try {
+                                predictions = ProjectStateManager.loadImagePredictions(project, imageName);
+                            } catch (IOException ex) {
+                                logger.warn("Failed to load predictions for {} in project summary: {}",
+                                        imageName, ex.getMessage());
+                            }
+                        }
+                        SummaryInputRow row;
+                        if (predictions == null || predictions.size() == 0) {
+                            row = new SummaryInputRow(imageName, 0L, 0L,
+                                    "No saved predictions for this image.");
+                        } else {
+                            long predicted = predictions.size();
+                            long disagreements = predictions.getDisagreementCount();
+                            Map<String, Long> avgCounts = predictions.getAvgCounts();
+                            avgCountsByImage.put(imageName, avgCounts);
+                            row = new SummaryInputRow(imageName, predicted, disagreements,
+                                    formatClassCounts(avgCounts));
+                        }
+                        int c = done.incrementAndGet();
+                        javafx.application.Platform.runLater(() -> {
+                            bar.setProgress((double) c / total);
+                            status.setText(String.format("Loading predictions: %d / %d images\u2026",
+                                    c, total));
+                        });
+                        return row;
+                    })
+                    .collect(java.util.stream.Collectors.toList());
+
+            var analyzerInputs = new ArrayList<CohortAnomalyReport.ImageInput>(sourceRows.size());
+            for (var src : sourceRows) {
+                Map<String, Long> avg = avgCountsByImage.get(src.imageName());
+                if (src.predictedCells() > 0 && avg != null) {
+                    analyzerInputs.add(new CohortAnomalyReport.ImageInput(
+                            src.imageName(),
+                            src.predictedCells(),
+                            src.disagreements(),
+                            avg));
+                }
+            }
+            var anomalyReport = CohortAnomalyAnalyzer.analyze(analyzerInputs);
+            var anomalyByImage = anomalyReport.byImageName();
+
+            var rows = new ArrayList<ProjectPredictionSummaryView.Row>(sourceRows.size());
+            for (var source : sourceRows) {
+                rows.add(buildPredictionSummaryRow(source, anomalyByImage.get(source.imageName())));
+            }
+
+            javafx.application.Platform.runLater(() -> {
+                stage.close();
+                new ProjectPredictionSummaryView(qupath, qupath.getStage(), rows).show();
+            });
+        }, "celltune-summary-load");
+        t.setDaemon(true);
+        t.start();
     }
 
     private ProjectPredictionSummaryView.Row buildPredictionSummaryRow(
