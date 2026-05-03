@@ -121,6 +121,17 @@ Bcell,CD20,,
 Macrophage,CD68,CD163,CD11b
 ```
 
+### Image Switching Improvements
+
+When the active-learning sampler returns cells from images other than the one currently open, the review session opens those images on demand. CellTune applies several optimisations so the user can review a mixed-image queue without UI lag or disruptive prompts:
+
+- **Queue grouping by image.** The sampler still picks the same N cells using the same uncertainty/disagreement scoring; CellTune just reorders them so all cells from one image are reviewed before moving to the next. The currently-open image is placed first so the session starts with zero switches. Within each image's batch, the sampler's original priority order is preserved. N reviews across K images go from up to N&minus;1 image switches down to K&minus;1.
+- **Silent auto-save before switching.** Before each image switch, the active image's hierarchy is persisted via the project entry. QuPath's "save changes?" prompt no longer appears mid-review, but no user work is lost. The same behaviour applies when jumping to an image from the *Project Prediction Summary* table.
+- **Immediate zoom and centre.** When navigating to a sampled cell, the viewer downsample is set first (sized so the cell occupies ~80&nbsp;px on screen), then the centre is moved to the cell. QuPath paints the first frame at the final zoom rather than rendering the wide overview and zooming in afterwards, which removes most of the perceived lag on cold image opens.
+- **Background prefetch of the next image.** Once the user lands on a cell, if the next reviewable cell lives in a different image, a daemon thread starts reading that image's data so QuPath's tile cache is warm by the time the user navigates there. Failures are non-fatal and do not block the review thread.
+
+These changes are in [`ReviewController.java`](src/main/java/qupath/ext/celltune/ui/ReviewController.java) and the openSelectedImage handler in [`ProjectPredictionSummaryView.java`](src/main/java/qupath/ext/celltune/ui/ProjectPredictionSummaryView.java).
+
 ## Building from Source
 
 For a concise reproducible build workflow, see [BUILD.md](BUILD.md).
