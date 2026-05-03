@@ -624,8 +624,21 @@ public class ClassificationPanel extends VBox {
                     var currentEntry = projectRef.getEntry(imageData);
                     String currentImageName = currentEntry != null ? currentEntry.getImageName() : null;
 
+                    // Parallelise per-image classification. Cap at 2 to bound memory:
+                    // each entry.readImageData() loads a full slide hierarchy and the
+                    // user is on a CPU desktop. Booster.predict is thread-safe.
+                    int parallelism = Math.min(2, Math.max(1, batchTargetImages.size()));
                     trainLog.accept("Applying classifier to " + batchTargetImages.size()
-                            + " target image(s)\u2026");
+                            + " target image(s) using " + parallelism + " worker(s)\u2026");
+
+                    var poolExec = java.util.concurrent.Executors.newFixedThreadPool(parallelism, r -> {
+                        Thread t = new Thread(r, "CellTune-BatchPredict");
+                        t.setDaemon(true);
+                        return t;
+                    });
+                    var appliedCounter = new java.util.concurrent.atomic.AtomicInteger(0);
+                    var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+
                     for (String imgName : batchTargetImages) {
                         if (currentImageName != null && currentImageName.equals(imgName)) continue;
 
@@ -634,39 +647,55 @@ public class ClassificationPanel extends VBox {
                                 .findFirst();
                         if (entryOpt.isEmpty()) continue;
 
-                        var entry = entryOpt.get();
-                        try {
-                            trainLog.accept("Classifying: " + imgName);
-                            var otherImageData = entry.readImageData();
-                            if (otherImageData == null) continue;
-                            var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
-                            if (otherDetections.isEmpty()) {
-                                trainLog.accept("  Skipped (no detections): " + imgName);
-                                continue;
-                            }
-
-                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
-                            otherExtractor.setNormalizer(featureNormalizer);
-                            classifier.predictOnly(otherDetections, otherExtractor,
-                                    m -> trainLog.accept("  " + m));
-
-                            var saveReady = new java.util.concurrent.CountDownLatch(1);
-                            Platform.runLater(() -> {
-                                otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
-                                saveReady.countDown();
-                            });
+                        final var entry = entryOpt.get();
+                        final String imgNameFinal = imgName;
+                        futures.add(poolExec.submit(() -> {
                             try {
-                                saveReady.await();
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
-                            }
+                                trainLog.accept("[" + imgNameFinal + "] Loading\u2026");
+                                var otherImageData = entry.readImageData();
+                                if (otherImageData == null) return;
+                                var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
+                                if (otherDetections.isEmpty()) {
+                                    trainLog.accept("[" + imgNameFinal + "] Skipped (no detections)");
+                                    return;
+                                }
 
-                            entry.saveImageData(otherImageData);
-                            batchApplied++;
+                                var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                                otherExtractor.setNormalizer(featureNormalizer);
+                                classifier.predictOnly(otherDetections, otherExtractor,
+                                        m -> trainLog.accept("[" + imgNameFinal + "] " + m));
+
+                                var saveReady = new java.util.concurrent.CountDownLatch(1);
+                                Platform.runLater(() -> {
+                                    otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
+                                    saveReady.countDown();
+                                });
+                                try {
+                                    saveReady.await();
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                    return;
+                                }
+
+                                entry.saveImageData(otherImageData);
+                                int n = appliedCounter.incrementAndGet();
+                                trainLog.accept("[" + imgNameFinal + "] Saved (" + n + "/"
+                                        + batchTargetImages.size() + ")");
+                            } catch (Exception ex) {
+                                trainLog.accept("[" + imgNameFinal + "] ERROR: " + ex.getMessage());
+                            }
+                        }));
+                    }
+
+                    poolExec.shutdown();
+                    for (var f : futures) {
+                        try {
+                            f.get();
                         } catch (Exception ex) {
-                            trainLog.accept("  ERROR: " + ex.getMessage());
+                            // already logged inside the task
                         }
                     }
+                    batchApplied = appliedCounter.get();
                 }
 
                 final int totalBatchApplied = batchApplied;
