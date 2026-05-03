@@ -147,6 +147,7 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
         isInstalled = true;
+        suppressImageTypePromptOnce();
         addPreferenceToPane(qupath);
         addMenuItems(qupath);
         dockClassificationPanel(qupath);
@@ -534,6 +535,38 @@ public class CellTuneExtension implements QuPathExtension {
                 .description(EXTENSION_DESCRIPTION)
                 .build();
         qupath.getPreferencePane().getPropertySheet().getItems().add(item);
+    }
+
+    /**
+     * Stop QuPath from popping the "Set image type" dialog the first time each image
+     * is opened. CellTune's workflow doesn't depend on the image type being set, and
+     * the prompt is disruptive for users with large multi-image projects. We switch
+     * the global preference to AUTO_ESTIMATE so QuPath quietly guesses (RGB →
+     * brightfield, multichannel → fluorescence). Users can change this back via
+     * Edit → Preferences → Set image type if they want.
+     */
+    private void suppressImageTypePromptOnce() {
+        try {
+            var prop = PathPrefs.imageTypeSettingProperty();
+            var current = prop.getValue();
+            if (current == null || "PROMPT".equals(current.name())) {
+                // Resolve AUTO_ESTIMATE reflectively so we don't have to import the
+                // nested enum type at compile time.
+                @SuppressWarnings({ "unchecked", "rawtypes" })
+                Class<? extends Enum> enumCls =
+                        (Class<? extends Enum>) Class.forName(
+                                "qupath.lib.gui.prefs.PathPrefs$ImageTypeSetting");
+                @SuppressWarnings({ "unchecked", "rawtypes" })
+                Enum auto = Enum.valueOf(enumCls, "AUTO_ESTIMATE");
+                @SuppressWarnings("unchecked")
+                javafx.beans.property.ObjectProperty<Enum> typed =
+                        (javafx.beans.property.ObjectProperty<Enum>) (Object) prop;
+                typed.setValue(auto);
+                logger.debug("Set QuPath imageTypeSetting to AUTO_ESTIMATE to suppress first-open prompt");
+            }
+        } catch (Throwable t) {
+            logger.debug("Could not adjust imageTypeSetting preference: {}", t.toString());
+        }
     }
 
     private void addMenuItems(QuPathGUI qupath) {

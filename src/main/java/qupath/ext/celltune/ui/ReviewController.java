@@ -428,10 +428,12 @@ public class ReviewController {
             return false;
         }
 
-        // Save the currently-open image's data BEFORE QuPath has a chance to prompt.
-        // openImageEntry() shows a save dialog when the active hierarchy is dirty; by
-        // persisting first we make the switch silent and still preserve user work.
-        saveCurrentImageDataQuietly();
+        // Mark the current image's hierarchy clean so QuPath's openImageEntry()
+        // doesn't show a "save changes?" dialog. We do NOT actually write the .qpdata
+        // file — saving is slow on big images and unnecessary here, because review
+        // labels are kept in ReviewController.outputLabels (in-memory) and persisted
+        // separately at session end via persistReviewedLabelsByImage().
+        markCurrentImageCleanForSwitch();
 
         clearHighlightMarker();
 
@@ -447,25 +449,23 @@ public class ReviewController {
     }
 
     /**
-     * Persist the active image's hierarchy without showing a dialog, so that the next
-     * call to {@link QuPathGUI#openImageEntry} won't trigger QuPath's "save changes?"
-     * prompt mid-review.
+     * Clear the "dirty" flag on the active image's hierarchy so the next call to
+     * {@link QuPathGUI#openImageEntry} won't trigger QuPath's "save changes?" prompt.
+     * <p>
+     * We deliberately do NOT call {@code entry.saveImageData(...)} — that's slow on
+     * large images, and the review workflow doesn't need it: review labels live in
+     * {@link #outputLabels} (in-memory) and are written to disk at the end of the
+     * session by {@code persistReviewedLabelsByImage()}.
      */
-    private void saveCurrentImageDataQuietly() {
-        var project = qupath.getProject();
+    private void markCurrentImageCleanForSwitch() {
         var imageData = qupath.getImageData();
-        if (project == null || imageData == null) {
-            return;
-        }
-        var entry = project.getEntry(imageData);
-        if (entry == null) {
+        if (imageData == null) {
             return;
         }
         try {
-            entry.saveImageData(imageData);
+            imageData.setChanged(false);
         } catch (Exception ex) {
-            logger.warn("Auto-save of '{}' before image switch failed: {}",
-                    entry.getImageName(), ex.getMessage());
+            logger.warn("Failed to clear dirty flag before image switch: {}", ex.getMessage());
         }
     }
 
