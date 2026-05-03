@@ -324,6 +324,19 @@ public class ProjectPredictionSummaryView {
             return;
         }
 
+        // Persist the currently-open image quietly so QuPath doesn't prompt mid-flow.
+        var currentImageData = qupath.getImageData();
+        if (currentImageData != null) {
+            var currentEntry = qupath.getProject().getEntry(currentImageData);
+            if (currentEntry != null) {
+                try {
+                    currentEntry.saveImageData(currentImageData);
+                } catch (Exception ex) {
+                    // Non-fatal: if save fails, QuPath's own prompt will catch any unsaved work.
+                }
+            }
+        }
+
         boolean opened = qupath.openImageEntry(entryOpt.get());
         if (!opened) {
             Dialogs.showErrorMessage(TITLE,

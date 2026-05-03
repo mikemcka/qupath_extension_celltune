@@ -19,6 +19,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -51,6 +53,19 @@ public class ReviewController {
 
     private final Map<String, PathObject> currentImageCellCache = new LinkedHashMap<>();
     private String cachedImageName;
+
+    /**
+     * Background single-thread executor used to prefetch the next image's data so that
+     * its tile cache is warm before the user switches to it. Daemon thread so it never
+     * blocks JVM shutdown.
+     */
+    private final ExecutorService prefetchExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "CellTune-ReviewPrefetch");
+        t.setDaemon(true);
+        return t;
+    });
+    /** Image name most recently submitted for prefetch, to avoid duplicate work. */
+    private volatile String lastPrefetchedImageName;
 
     private int currentIndex = -1;
     private PathObject highlightMarker;
@@ -102,6 +117,11 @@ public class ReviewController {
         }
 
         int unresolvedImageCount = 0;
+        // Group cell IDs by image while preserving the within-image order from the
+        // sampler. This means the user reviews ALL cells from image A before moving
+        // to image B, which collapses N image switches into K (where K = number of
+        // distinct images) and dramatically reduces cold-open overhead.
+        Map<String, List<String>> idsByImage = new LinkedHashMap<>();
         for (String id : cellIds) {
             if (id == null || id.isBlank()) {
                 continue;
@@ -117,7 +137,20 @@ public class ReviewController {
             }
 
             cellIdToImageName.putIfAbsent(id, imageName);
-            reviewItems.add(new ReviewItem(id, imageName));
+            idsByImage.computeIfAbsent(imageName, k -> new ArrayList<>()).add(id);
+        }
+
+        // Put the currently-open image first so the session starts without a switch.
+        if (defaultImageName != null && idsByImage.containsKey(defaultImageName)) {
+            List<String> firstBatch = idsByImage.remove(defaultImageName);
+            for (String id : firstBatch) {
+                reviewItems.add(new ReviewItem(id, defaultImageName));
+            }
+        }
+        for (var entry : idsByImage.entrySet()) {
+            for (String id : entry.getValue()) {
+                reviewItems.add(new ReviewItem(id, entry.getKey()));
+            }
         }
 
         Set<String> imageSet = new LinkedHashSet<>();
@@ -303,7 +336,19 @@ public class ReviewController {
             return;
         }
 
+        // Set the zoom factor BEFORE centering so QuPath paints at the final scale on
+        // first frame instead of rendering the wide overview and zooming in afterwards.
+        // Target downsample sized so the cell occupies ~80px on screen.
+        double cellSize = Math.max(roi.getBoundsWidth(), roi.getBoundsHeight());
+        if (cellSize > 0) {
+            double targetDownsample = Math.max(0.25, cellSize / 80.0);
+            viewer.setDownsampleFactor(targetDownsample);
+        }
         viewer.setCenterPixelLocation(roi.getCentroidX(), roi.getCentroidY());
+
+        // Kick off a background read of the next image's ImageData so its tile cache
+        // is warmed by the time the user navigates there. No-op if already prefetched.
+        prefetchNextImageIfNeeded();
 
         var imageData = viewer.getImageData();
         if (imageData == null) {
@@ -357,6 +402,7 @@ public class ReviewController {
         }
         sessionClosed = true;
         ACTIVE_REVIEW_SESSIONS.updateAndGet(value -> Math.max(0, value - 1));
+        prefetchExecutor.shutdownNow();
     }
 
     private ReviewItem getCurrentItem() {
@@ -382,6 +428,11 @@ public class ReviewController {
             return false;
         }
 
+        // Save the currently-open image's data BEFORE QuPath has a chance to prompt.
+        // openImageEntry() shows a save dialog when the active hierarchy is dirty; by
+        // persisting first we make the switch silent and still preserve user work.
+        saveCurrentImageDataQuietly();
+
         clearHighlightMarker();
 
         boolean opened = qupath.openImageEntry(entry);
@@ -393,6 +444,73 @@ public class ReviewController {
         currentImageCellCache.clear();
         cachedImageName = null;
         return true;
+    }
+
+    /**
+     * Persist the active image's hierarchy without showing a dialog, so that the next
+     * call to {@link QuPathGUI#openImageEntry} won't trigger QuPath's "save changes?"
+     * prompt mid-review.
+     */
+    private void saveCurrentImageDataQuietly() {
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project == null || imageData == null) {
+            return;
+        }
+        var entry = project.getEntry(imageData);
+        if (entry == null) {
+            return;
+        }
+        try {
+            entry.saveImageData(imageData);
+        } catch (Exception ex) {
+            logger.warn("Auto-save of '{}' before image switch failed: {}",
+                    entry.getImageName(), ex.getMessage());
+        }
+    }
+
+    /**
+     * If the next reviewable cell is in a different image than the current one, submit
+     * a background task to read that image's data so QuPath's tile cache is warmed by
+     * the time {@link #ensureImageOpen} is called.
+     */
+    private void prefetchNextImageIfNeeded() {
+        if (sessionClosed || prefetchExecutor.isShutdown()) {
+            return;
+        }
+        int nextIdx = currentIndex + 1;
+        if (nextIdx >= reviewItems.size()) {
+            return;
+        }
+        ReviewItem nextItem = reviewItems.get(nextIdx);
+        String nextName = nextItem == null ? null : nextItem.imageName;
+        if (nextName == null || nextName.isBlank()) {
+            return;
+        }
+        String currentName = currentImageName();
+        if (nextName.equals(currentName)) {
+            return;
+        }
+        if (nextName.equals(lastPrefetchedImageName)) {
+            return;
+        }
+        var entry = entryByImageName.get(nextName);
+        if (entry == null) {
+            return;
+        }
+        lastPrefetchedImageName = nextName;
+        prefetchExecutor.submit(() -> {
+            try {
+                // Reading the ImageData warms the project entry's data path; QuPath's tile
+                // cache will then have headers/metadata ready when openImageEntry runs on
+                // the FX thread. We don't keep a reference — GC reclaims it shortly.
+                entry.readImageData();
+                logger.debug("Prefetched ImageData for next review image '{}'", nextName);
+            } catch (Throwable t) {
+                // Prefetch is purely an optimisation; failures are non-fatal.
+                logger.debug("Prefetch of '{}' failed: {}", nextName, t.getMessage());
+            }
+        });
     }
 
     private PathObject resolveCellInCurrentImage(String cellId) {
