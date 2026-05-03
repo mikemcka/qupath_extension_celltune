@@ -428,14 +428,16 @@ public class ReviewController {
             return false;
         }
 
-        // Mark the current image's hierarchy clean so QuPath's openImageEntry()
-        // doesn't show a "save changes?" dialog. We do NOT actually write the .qpdata
-        // file — saving is slow on big images and unnecessary here, because review
-        // labels are kept in ReviewController.outputLabels (in-memory) and persisted
-        // separately at session end via persistReviewedLabelsByImage().
-        markCurrentImageCleanForSwitch();
-
         clearHighlightMarker();
+
+        // Mark the current image's hierarchy clean so QuPath's openImageEntry()
+        // doesn't show a "save changes?" dialog. Must be done AFTER clearHighlightMarker
+        // (which removes an annotation and re-dirties the hierarchy) and immediately
+        // before openImageEntry, so no further hierarchy events can flip the flag back.
+        // We do NOT actually write the .qpdata file — saving is slow on big images and
+        // unnecessary, because review labels are kept in ReviewController.outputLabels
+        // (in-memory) and persisted at session end via persistReviewedLabelsByImage().
+        markCurrentImageCleanForSwitch();
 
         boolean opened = qupath.openImageEntry(entry);
         if (!opened) {
