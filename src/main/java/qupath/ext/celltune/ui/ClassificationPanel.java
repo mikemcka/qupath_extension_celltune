@@ -412,13 +412,44 @@ public class ClassificationPanel extends VBox {
         classifier.setNumRounds(roundsSpinner.getValue());
         classifier.setMaxDepth(depthSpinner.getValue());
 
-        // Reset and bind progress
+        // Reset and bind progress (sidebar)
         progressBar.progressProperty().unbind();
         progressBar.setProgress(0);
         classifier.resetProgress();
         progressBar.progressProperty().bind(classifier.progressProperty());
         statusLabel.textProperty().bind(classifier.statusProperty());
         trainButton.setDisable(true);
+
+        // ── Detailed progress dialog (mirrors the dropdown-menu trainer) ──
+        var progressStage = new javafx.stage.Stage();
+        progressStage.setTitle("CellTune \u2014 Training");
+        progressStage.initOwner(qupath.getStage());
+        progressStage.initModality(javafx.stage.Modality.NONE);
+        progressStage.setResizable(false);
+        progressStage.setAlwaysOnTop(true);
+
+        var dlgProgressBar = new ProgressBar(0);
+        dlgProgressBar.setPrefWidth(500);
+        var dlgStatusLabel = new Label("Initialising\u2026");
+        dlgStatusLabel.setWrapText(true);
+        dlgStatusLabel.setMaxWidth(500);
+        var logArea = new TextArea();
+        logArea.setEditable(false);
+        logArea.setPrefHeight(180);
+        logArea.setPrefWidth(500);
+        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
+
+        var progressBox = new VBox(8, dlgStatusLabel, dlgProgressBar, logArea);
+        progressBox.setPadding(new Insets(15));
+        progressStage.setScene(new javafx.scene.Scene(progressBox));
+        progressStage.show();
+
+        dlgProgressBar.progressProperty().bind(classifier.progressProperty());
+        dlgStatusLabel.textProperty().bind(classifier.statusProperty());
+
+        Consumer<String> trainLog = msg -> {
+            Platform.runLater(() -> logArea.appendText(msg + "\n"));
+        };
 
         // Train in background
         final LabelStore storeCopy = labelStore;
@@ -456,6 +487,7 @@ public class ClassificationPanel extends VBox {
                     var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) projectRef.getImageList();
                     var currentEntry = projectRef.getEntry(imageData);
 
+                    trainLog.accept("Pooling labels from other project images\u2026");
                     for (var entry : allEntries) {
                         if (currentEntry != null && entry.equals(currentEntry)) continue;
 
@@ -499,10 +531,17 @@ public class ClassificationPanel extends VBox {
                                 supplementaryLabels.add(labelEntry.getValue());
                                 added++;
                             }
+                            if (added > 0) {
+                                int addedFinal = added;
+                                trainLog.accept("  + " + addedFinal + " labelled cells from "
+                                        + entry.getImageName());
+                            }
                         } catch (Exception ex) {
-                            // Skip images that can't be read
+                            trainLog.accept("  ! Could not read " + entry.getImageName()
+                                    + " (" + ex.getMessage() + ")");
                         }
                     }
+                    trainLog.accept("Pooled total: " + supplementaryRows.size() + " rows.");
                 }
 
                 // Always include explicitly imported training rows (if any).
@@ -538,6 +577,12 @@ public class ClassificationPanel extends VBox {
                             supplementaryLabels.add(row.label());
                             added++;
                         }
+                        if (added > 0) {
+                            int addedFinal = added;
+                            int mappedFinal = mappedFeatureCount;
+                            trainLog.accept("Merged " + addedFinal + " imported training rows ("
+                                    + mappedFinal + "/" + finalFeatureNames.size() + " features aligned).");
+                        }
                     }
 
                     // Imported rows are now available as supplementary training data.
@@ -548,7 +593,7 @@ public class ClassificationPanel extends VBox {
                         resamplingStrategy,
                         autoTuneSelected,
                         earlyStopSelected,
-                        msg -> {});
+                        trainLog);
 
                 predAll = classifier.getPredALL();
 
@@ -579,6 +624,8 @@ public class ClassificationPanel extends VBox {
                     var currentEntry = projectRef.getEntry(imageData);
                     String currentImageName = currentEntry != null ? currentEntry.getImageName() : null;
 
+                    trainLog.accept("Applying classifier to " + batchTargetImages.size()
+                            + " target image(s)\u2026");
                     for (String imgName : batchTargetImages) {
                         if (currentImageName != null && currentImageName.equals(imgName)) continue;
 
@@ -589,14 +636,19 @@ public class ClassificationPanel extends VBox {
 
                         var entry = entryOpt.get();
                         try {
+                            trainLog.accept("Classifying: " + imgName);
                             var otherImageData = entry.readImageData();
                             if (otherImageData == null) continue;
                             var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
-                            if (otherDetections.isEmpty()) continue;
+                            if (otherDetections.isEmpty()) {
+                                trainLog.accept("  Skipped (no detections): " + imgName);
+                                continue;
+                            }
 
                             var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
                             otherExtractor.setNormalizer(featureNormalizer);
-                            classifier.predictOnly(otherDetections, otherExtractor, msg -> {});
+                            classifier.predictOnly(otherDetections, otherExtractor,
+                                    m -> trainLog.accept("  " + m));
 
                             var saveReady = new java.util.concurrent.CountDownLatch(1);
                             Platform.runLater(() -> {
@@ -612,7 +664,7 @@ public class ClassificationPanel extends VBox {
                             entry.saveImageData(otherImageData);
                             batchApplied++;
                         } catch (Exception ex) {
-                            // Skip unreadable or unsaveable images and continue the batch.
+                            trainLog.accept("  ERROR: " + ex.getMessage());
                         }
                     }
                 }
@@ -621,6 +673,15 @@ public class ClassificationPanel extends VBox {
                 Platform.runLater(() -> {
                     progressBar.progressProperty().unbind();
                     statusLabel.textProperty().unbind();
+                    dlgProgressBar.progressProperty().unbind();
+                    dlgStatusLabel.textProperty().unbind();
+                    dlgProgressBar.setProgress(1.0);
+                    dlgStatusLabel.setText("Complete \u2014 close this window when ready.");
+                    logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
+                            + predAll.getDisagreementCount() + " disagreements.\n"
+                            + (totalBatchApplied > 0
+                                    ? "Applied to " + totalBatchApplied + " additional image(s).\n"
+                                    : ""));
                     trainButton.setDisable(false);
                     confusionsButton.setDisable(false);
                     sampleButton.setDisable(false);
@@ -662,6 +723,11 @@ public class ClassificationPanel extends VBox {
                     statusLabel.textProperty().unbind();
                     progressBar.setProgress(0);
                     statusLabel.setText("Training failed");
+                    dlgProgressBar.progressProperty().unbind();
+                    dlgStatusLabel.textProperty().unbind();
+                    dlgProgressBar.setProgress(0);
+                    dlgStatusLabel.setText("Training failed!");
+                    logArea.appendText("\nERROR: " + ex.getMessage() + "\n");
                     trainButton.setDisable(false);
                     Dialogs.showErrorMessage(STRINGS.getString("name"),
                             "Training failed: " + ex.getMessage());
