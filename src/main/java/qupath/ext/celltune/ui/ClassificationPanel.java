@@ -148,7 +148,7 @@ public class ClassificationPanel extends VBox {
         // ── Pool images checkbox ──
         poolImagesCheckBox.setTooltip(new Tooltip(
                 "Include labelled cells from all project images in the training set"));
-        poolImagesCheckBox.setSelected(false);
+        poolImagesCheckBox.setSelected(true);
 
         resamplingCombo.getItems().addAll(ResamplingStrategy.values());
         resamplingCombo.setValue(ResamplingStrategy.NONE);

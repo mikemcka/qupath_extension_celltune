@@ -1089,7 +1089,10 @@ public class CellTuneExtension implements QuPathExtension {
         boolean hasMultipleImages = allImageNames.size() > 1;
         var poolCheckBox = new javafx.scene.control.CheckBox(
                 "Pool labelled cells from all project images into training set");
-        poolCheckBox.setSelected(false);
+        // Default ON: per-image labels are persisted, so users almost always want to
+        // include labels from other project images. Avoids "too few training samples"
+        // surprises after closing/reopening QuPath and switching to a fresh image.
+        poolCheckBox.setSelected(true);
 
         var model1Combo = new javafx.scene.control.ComboBox<ModelType>();
         model1Combo.getItems().addAll(ModelType.values());
