@@ -324,16 +324,17 @@ public class ProjectPredictionSummaryView {
             return;
         }
 
-        // Persist the currently-open image quietly so QuPath doesn't prompt mid-flow.
+        // Suppress QuPath's "save changes?" prompt without actually writing the
+        // .qpdata file — saving is slow on big images and unnecessary here, since
+        // the user is just navigating between images in the summary view.
+        // Must be the last hierarchy-touching op before openImageEntry, because
+        // any hierarchy event re-flips ImageData.changed back to true.
         var currentImageData = qupath.getImageData();
         if (currentImageData != null) {
-            var currentEntry = qupath.getProject().getEntry(currentImageData);
-            if (currentEntry != null) {
-                try {
-                    currentEntry.saveImageData(currentImageData);
-                } catch (Exception ex) {
-                    // Non-fatal: if save fails, QuPath's own prompt will catch any unsaved work.
-                }
+            try {
+                currentImageData.setChanged(false);
+            } catch (Exception ex) {
+                // Non-fatal: if this fails, QuPath's own prompt will catch unsaved work.
             }
         }
 
