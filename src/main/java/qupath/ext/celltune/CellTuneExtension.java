@@ -54,7 +54,10 @@ import qupath.ext.celltune.ui.CompositeClassificationDialog;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -2373,7 +2376,10 @@ public class CellTuneExtension implements QuPathExtension {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
             return;
         }
-        if (labelStore == null || labelStore.size() == 0) {
+        boolean inBinaryMode = activeBinaryMarker != null && !activeBinaryMarker.isBlank();
+        int importedRowCount = (inBinaryMode && importedTrainingRows != null) ? importedTrainingRows.size() : 0;
+        int localLabelCount = (labelStore == null) ? 0 : labelStore.size();
+        if (localLabelCount == 0 && importedRowCount == 0) {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("gt.export.empty"));
             return;
         }
@@ -2409,12 +2415,82 @@ public class CellTuneExtension implements QuPathExtension {
             String imgName = imageData.getServer().getMetadata().getName();
             GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName,
                     opts.includeRaw(), opts.includeNorm());
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Exported " + labelStore.size() + " labelled cells to " + chosen.getName());
+
+            // In binary mode, also append previously-imported training rows so the exported
+            // CSV is the union of (this project's labels) + (rows imported from prior projects).
+            // This keeps round-trips (project1 -> project2 -> project3) lossless for a single
+            // binary marker, since each export carries the full accumulated training set.
+            int appendedImported = 0;
+            if (inBinaryMode && importedRowCount > 0
+                    && importedTrainingFeatureNames != null && !importedTrainingFeatureNames.isEmpty()) {
+                appendedImported = appendImportedRowsToCsv(
+                        chosen.toPath(),
+                        featureNames,
+                        opts.includeRaw(),
+                        opts.includeNorm() && featureNormalizer != null,
+                        importedTrainingFeatureNames,
+                        importedTrainingRows);
+            }
+
+            String msg = "Exported " + localLabelCount + " labelled cells to " + chosen.getName();
+            if (appendedImported > 0) {
+                msg += " (+" + appendedImported + " imported training rows from prior projects)";
+            }
+            Dialogs.showInfoNotification(EXTENSION_NAME, msg);
         } catch (IOException ex) {
             logger.error("Failed to export ground truth", ex);
             Dialogs.showErrorMessage(EXTENSION_NAME, "Export failed: " + ex.getMessage());
         }
+    }
+
+    /**
+     * Append previously-imported training rows to a ground-truth CSV that was just written
+     * by {@link GroundTruthIO#exportCSV}. Imported rows are aligned to the export's column
+     * layout by feature name; columns absent from the imported schema are written as 0.
+     *
+     * @return number of rows appended
+     */
+    private static int appendImportedRowsToCsv(Path csvPath,
+                                               List<String> featureNames,
+                                               boolean includeRaw,
+                                               boolean hasNorm,
+                                               List<String> importedFeatureNames,
+                                               List<GroundTruthIO.TrainingRow> importedRows) throws IOException {
+        if (importedRows == null || importedRows.isEmpty()) return 0;
+
+        // Build the export column ordering: raw featureNames first (if includeRaw), then
+        // featureNames with __norm suffix (if hasNorm). Mirrors GroundTruthIO.exportCSV.
+        List<String> exportCols = new ArrayList<>();
+        if (includeRaw) exportCols.addAll(featureNames);
+        if (hasNorm) {
+            for (String f : featureNames) exportCols.add(f + "__norm");
+        }
+        if (exportCols.isEmpty()) return 0;
+
+        // name -> index lookup into the imported feature vector
+        Map<String, Integer> importedNameToIdx = new LinkedHashMap<>();
+        for (int i = 0; i < importedFeatureNames.size(); i++) {
+            importedNameToIdx.putIfAbsent(importedFeatureNames.get(i), i);
+        }
+
+        List<String> lines = new ArrayList<>();
+        for (GroundTruthIO.TrainingRow row : importedRows) {
+            if (row == null || row.label() == null || row.label().isBlank() || row.features() == null) continue;
+            float[] src = row.features();
+            StringBuilder sb = new StringBuilder();
+            // Image, Label, CentroidX, CentroidY (centroid 0,0 - row originates from another project)
+            sb.append("imported").append(',').append(row.label()).append(",0.00,0.00");
+            for (String col : exportCols) {
+                Integer idx = importedNameToIdx.get(col);
+                float v = (idx != null && idx < src.length) ? src[idx] : 0f;
+                sb.append(',').append(v);
+            }
+            lines.add(sb.toString());
+        }
+
+        if (lines.isEmpty()) return 0;
+        Files.write(csvPath, lines, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
+        return lines.size();
     }
 
     private void importGroundTruth(QuPathGUI qupath) {
@@ -2730,13 +2806,19 @@ public class CellTuneExtension implements QuPathExtension {
         var project = qupath.getProject();
         if (project == null) return;
 
-        // Preserve current multi-class state
-        preBinaryLabelStore = labelStore;
-        preBinaryClassifier = classifier;
-        preBinaryImportedTrainingRows =
-                importedTrainingRows == null ? null : new ArrayList<>(importedTrainingRows);
-        preBinaryImportedTrainingFeatureNames =
-                importedTrainingFeatureNames == null ? null : new ArrayList<>(importedTrainingFeatureNames);
+        // Preserve current multi-class state — but only when we're actually transitioning
+        // INTO binary mode. If we're already in binary mode (user switched markers without
+        // exiting first), the existing pre-binary snapshot must be left alone, otherwise we
+        // would clobber it with the previous marker's binary state and lose the multi-class
+        // labels/classifier on exit.
+        if (activeBinaryMarker == null) {
+            preBinaryLabelStore = labelStore;
+            preBinaryClassifier = classifier;
+            preBinaryImportedTrainingRows =
+                    importedTrainingRows == null ? null : new ArrayList<>(importedTrainingRows);
+            preBinaryImportedTrainingFeatureNames =
+                    importedTrainingFeatureNames == null ? null : new ArrayList<>(importedTrainingFeatureNames);
+        }
 
         // Load binary marker's labels
         try {
