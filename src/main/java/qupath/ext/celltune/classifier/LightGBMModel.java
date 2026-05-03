@@ -7,7 +7,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
@@ -21,6 +25,46 @@ import java.util.function.Consumer;
 public class LightGBMModel {
 
     private static final Logger logger = LoggerFactory.getLogger(LightGBMModel.class);
+
+    /**
+     * LightGBM4J extracts its native library by reading {@code java.io.tmpdir} during
+     * static initialisation of {@link LGBMBooster}. On shared/HPC systems the default
+     * {@code /tmp/lib_lightgbm.so} path frequently fails: another user owns the file,
+     * or {@code /tmp} is mounted noexec. Redirect the extraction to a per-user
+     * directory under {@code $HOME/.celltune/native/<pid>-<uuid>/} before the LGBM
+     * classes are referenced, then restore {@code java.io.tmpdir} so the rest of the
+     * JVM (QuPath, etc.) keeps using its original temp dir.
+     */
+    static {
+        String originalTmp = System.getProperty("java.io.tmpdir");
+        try {
+            String userHome = System.getProperty("user.home");
+            Path baseDir = (userHome != null && !userHome.isBlank())
+                    ? Paths.get(userHome, ".celltune", "native")
+                    : Paths.get(originalTmp == null ? "." : originalTmp, "celltune-native");
+            // Use a unique sub-directory per JVM invocation so concurrent QuPath
+            // processes never collide on the extracted .so file.
+            Path nativeDir = baseDir.resolve(
+                    String.valueOf(ProcessHandle.current().pid()) + "-" + UUID.randomUUID());
+            Files.createDirectories(nativeDir);
+            // Best-effort cleanup at JVM exit; ignore failures (file may be in use).
+            nativeDir.toFile().deleteOnExit();
+            System.setProperty("java.io.tmpdir", nativeDir.toString());
+            // Force LGBMBooster's static initializer (which extracts the native lib
+            // using the now-redirected java.io.tmpdir) to run while the redirect
+            // is still in effect.
+            Class.forName(LGBMBooster.class.getName());
+            logger.info("LightGBM native library extracted to user-scoped tmp dir: {}", nativeDir);
+        } catch (Throwable t) {
+            // Don't fail extension load just because LightGBM init failed; the actual
+            // training call will surface the original error if the lib never loaded.
+            logger.warn("LightGBM native init redirect failed: {}", t.getMessage());
+        } finally {
+            if (originalTmp != null) {
+                System.setProperty("java.io.tmpdir", originalTmp);
+            }
+        }
+    }
 
     private LGBMBooster booster;
     private int nClasses;
