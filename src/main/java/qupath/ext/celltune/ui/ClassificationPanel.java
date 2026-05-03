@@ -77,6 +77,7 @@ public class ClassificationPanel extends VBox {
     private final Label importedCountLabel = new Label("Imported rows: 0");
     private final Spinner<Integer> roundsSpinner;
     private final Spinner<Integer> depthSpinner;
+    private final Spinner<Integer> workersSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
     private final ComboBox<ResamplingStrategy> resamplingCombo = new ComboBox<>();
     private final ComboBox<ModelType> model1Combo = new ComboBox<>();
@@ -124,9 +125,21 @@ public class ClassificationPanel extends VBox {
         depthSpinner.setPrefWidth(70);
         depthSpinner.setTooltip(new Tooltip(STRINGS.getString("param.max_depth.help")));
 
+        // Number of parallel workers for the per-image batch prediction step.
+        // Default 1 (safe on memory). Capped at 8 — each worker loads a full slide
+        // hierarchy into memory.
+        workersSpinner = new Spinner<>(1, 8, 1, 1);
+        workersSpinner.setEditable(true);
+        workersSpinner.setPrefWidth(70);
+        workersSpinner.setTooltip(new Tooltip(
+                "Number of parallel workers used when applying the trained classifier "
+                        + "to other selected images. Higher = faster but uses more memory "
+                        + "(each worker loads a full slide)."));
+
         HBox paramRow = new HBox(8,
                 new Label(STRINGS.getString("param.num_rounds.label")), roundsSpinner,
-                new Label(STRINGS.getString("param.max_depth.label")), depthSpinner);
+                new Label(STRINGS.getString("param.max_depth.label")), depthSpinner,
+                new Label("Workers:"), workersSpinner);
         paramRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Pool images checkbox ──
@@ -624,10 +637,12 @@ public class ClassificationPanel extends VBox {
                     var currentEntry = projectRef.getEntry(imageData);
                     String currentImageName = currentEntry != null ? currentEntry.getImageName() : null;
 
-                    // Parallelise per-image classification. Cap at 2 to bound memory:
-                    // each entry.readImageData() loads a full slide hierarchy and the
-                    // user is on a CPU desktop. Booster.predict is thread-safe.
-                    int parallelism = Math.min(2, Math.max(1, batchTargetImages.size()));
+                    // Parallelise per-image classification using the user-chosen worker
+                    // count from the sidebar spinner. Capped at the number of target
+                    // images. Booster.predict in XGBoost4J / LightGBM4J is thread-safe
+                    // and predictOnly(populateSets=false) does not mutate shared state.
+                    int parallelism = Math.min(workersSpinner.getValue(), batchTargetImages.size());
+                    parallelism = Math.max(1, parallelism);
                     trainLog.accept("Applying classifier to " + batchTargetImages.size()
                             + " target image(s) using " + parallelism + " worker(s)\u2026");
 

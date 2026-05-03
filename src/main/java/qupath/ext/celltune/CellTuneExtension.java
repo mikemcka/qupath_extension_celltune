@@ -1056,6 +1056,18 @@ public class CellTuneExtension implements QuPathExtension {
         featureImportanceCheckBox.setTooltip(new javafx.scene.control.Tooltip(
                 "After training, compute mean |SHAP| values and display a per-class bar chart"));
 
+        // Parallel workers for the per-image batch-apply step. Default 1.
+        var workersSpinner = new javafx.scene.control.Spinner<Integer>(1, 8, 1, 1);
+        workersSpinner.setEditable(true);
+        workersSpinner.setPrefWidth(70);
+        workersSpinner.setTooltip(new javafx.scene.control.Tooltip(
+                "Number of parallel workers used when applying the trained classifier "
+                        + "to other selected images. Higher = faster but uses more memory "
+                        + "(each worker loads a full slide)."));
+        var workersRow = new javafx.scene.layout.HBox(6,
+                new javafx.scene.control.Label("Prediction workers:"), workersSpinner);
+        workersRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
         var confirmAlert = new javafx.scene.control.Alert(
                 javafx.scene.control.Alert.AlertType.CONFIRMATION);
         confirmAlert.setTitle(EXTENSION_NAME);
@@ -1076,7 +1088,7 @@ public class CellTuneExtension implements QuPathExtension {
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg), poolCheckBox,
                     modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox,
-                    featureImportanceCheckBox);
+                    featureImportanceCheckBox, workersRow);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         } else {
@@ -1084,7 +1096,7 @@ public class CellTuneExtension implements QuPathExtension {
             var contentBox = new javafx.scene.layout.VBox(8,
                     new javafx.scene.control.Label(confirmMsg),
                     modelRow, resamplingRow, autoTuneCheckBox, earlyStopCheckBox,
-                    featureImportanceCheckBox);
+                    featureImportanceCheckBox, workersRow);
             contentBox.setPadding(new javafx.geometry.Insets(4));
             confirmAlert.getDialogPane().setContent(contentBox);
         }
@@ -1100,6 +1112,7 @@ public class CellTuneExtension implements QuPathExtension {
         final boolean showFeatureImportance = featureImportanceCheckBox.isSelected();
         final ModelType model1Type = model1Combo.getValue();
         final ModelType model2Type = model2Combo.getValue();
+        final int predictionWorkers = workersSpinner.getValue();
 
         // Check whether the JVM has enough heap for this dataset
         if (!checkTrainingMemory(detections.size(), featureNames.size())) return;
@@ -1323,55 +1336,86 @@ public class CellTuneExtension implements QuPathExtension {
                     @SuppressWarnings("unchecked")
                     var typedProject = (qupath.lib.projects.Project<java.awt.image.BufferedImage>)
                             (qupath.lib.projects.Project<?>) project;
+
+                    // Build the actual work list (skip current image, skip missing entries).
+                    var workItems = new java.util.ArrayList<qupath.lib.projects.ProjectImageEntry<java.awt.image.BufferedImage>>();
                     for (String imgName : imagesToClassify) {
                         if (currentImageNameFinal != null && imgName.equals(currentImageNameFinal)) continue;
-
                         var entryOpt = typedProject.getImageList().stream()
                                 .filter(en -> en.getImageName().equals(imgName))
                                 .findFirst();
                         if (entryOpt.isEmpty()) continue;
-
-                        var entry = entryOpt.get();
-                        try {
-                            logger.info("[CellTune] Applying predictions to: {}", imgName);
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText("Classifying: " + imgName + "\n"));
-
-                            var otherImageData = entry.readImageData();
-                            var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
-                            if (otherDetections.isEmpty()) {
-                                logger.warn("[CellTune] No detections in {}, skipping", imgName);
-                                javafx.application.Platform.runLater(() ->
-                                        logArea.appendText("  Skipped (no detections): " + imgName + "\n"));
-                                continue;
-                            }
-
-                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
-                            otherExtractor.setNormalizer(featureNormalizer);
-                            classifier.predictOnly(otherDetections, otherExtractor,
-                                    msg -> {
-                                        logger.info("[CellTune] [{}] {}", imgName, msg);
-                                        javafx.application.Platform.runLater(() ->
-                                                logArea.appendText("  " + msg + "\n"));
-                                    });
-
-                            // Mark the off-screen hierarchy changed on FX thread before saving.
-                            var saveReady = new java.util.concurrent.CountDownLatch(1);
-                            javafx.application.Platform.runLater(() -> {
-                                otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
-                                saveReady.countDown();
-                            });
-                            try { saveReady.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-
-                            entry.saveImageData(otherImageData);
-                            applied++;
-                        } catch (Exception imgEx) {
-                            logger.error("[CellTune] Failed to classify {}: {}",
-                                    imgName, imgEx.getMessage());
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText("  ERROR: " + imgEx.getMessage() + "\n"));
-                        }
+                        workItems.add(entryOpt.get());
                     }
+
+                    int parallelism = Math.max(1, Math.min(predictionWorkers, workItems.size()));
+                    final int totalWork = workItems.size();
+                    final int parallelismFinal = parallelism;
+                    javafx.application.Platform.runLater(() ->
+                            logArea.appendText("Applying classifier to " + totalWork
+                                    + " target image(s) using " + parallelismFinal + " worker(s)\u2026\n"));
+
+                    var poolExec = java.util.concurrent.Executors.newFixedThreadPool(parallelism, r -> {
+                        Thread t = new Thread(r, "CellTune-BatchPredict");
+                        t.setDaemon(true);
+                        return t;
+                    });
+                    var appliedCounter = new java.util.concurrent.atomic.AtomicInteger(0);
+                    var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+
+                    for (var entry : workItems) {
+                        final var entryFinal = entry;
+                        final String imgName = entry.getImageName();
+                        futures.add(poolExec.submit(() -> {
+                            try {
+                                logger.info("[CellTune] Applying predictions to: {}", imgName);
+                                javafx.application.Platform.runLater(() ->
+                                        logArea.appendText("[" + imgName + "] Loading\u2026\n"));
+
+                                var otherImageData = entryFinal.readImageData();
+                                var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
+                                if (otherDetections.isEmpty()) {
+                                    logger.warn("[CellTune] No detections in {}, skipping", imgName);
+                                    javafx.application.Platform.runLater(() ->
+                                            logArea.appendText("[" + imgName + "] Skipped (no detections)\n"));
+                                    return;
+                                }
+
+                                var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
+                                otherExtractor.setNormalizer(featureNormalizer);
+                                classifier.predictOnly(otherDetections, otherExtractor,
+                                        msg -> {
+                                            logger.info("[CellTune] [{}] {}", imgName, msg);
+                                            javafx.application.Platform.runLater(() ->
+                                                    logArea.appendText("[" + imgName + "] " + msg + "\n"));
+                                        });
+
+                                // Mark the off-screen hierarchy changed on FX thread before saving.
+                                var saveReady = new java.util.concurrent.CountDownLatch(1);
+                                javafx.application.Platform.runLater(() -> {
+                                    otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
+                                    saveReady.countDown();
+                                });
+                                try { saveReady.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+
+                                entryFinal.saveImageData(otherImageData);
+                                int n = appliedCounter.incrementAndGet();
+                                javafx.application.Platform.runLater(() ->
+                                        logArea.appendText("[" + imgName + "] Saved (" + n + "/" + totalWork + ")\n"));
+                            } catch (Exception imgEx) {
+                                logger.error("[CellTune] Failed to classify {}: {}",
+                                        imgName, imgEx.getMessage());
+                                javafx.application.Platform.runLater(() ->
+                                        logArea.appendText("[" + imgName + "] ERROR: " + imgEx.getMessage() + "\n"));
+                            }
+                        }));
+                    }
+
+                    poolExec.shutdown();
+                    for (var f : futures) {
+                        try { f.get(); } catch (Exception ex) { /* logged inside */ }
+                    }
+                    applied = appliedCounter.get();
                 }
 
                 final int totalApplied = applied;
