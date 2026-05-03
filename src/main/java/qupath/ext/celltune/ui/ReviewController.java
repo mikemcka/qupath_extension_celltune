@@ -66,6 +66,13 @@ public class ReviewController {
     });
     /** Image name most recently submitted for prefetch, to avoid duplicate work. */
     private volatile String lastPrefetchedImageName;
+    /**
+     * Strong reference to the most recently prefetched ImageData. Holding it prevents
+     * the GC from reclaiming the warm tile cache, decoded TIFF headers, and parsed
+     * detection hierarchy before QuPath's {@code openImageEntry} actually consumes it.
+     * Cleared after the user switches to that image (or to another image).
+     */
+    private volatile qupath.lib.images.ImageData<BufferedImage> prefetchedImageData;
 
     private int currentIndex = -1;
     private PathObject highlightMarker;
@@ -445,6 +452,10 @@ public class ReviewController {
             return false;
         }
 
+        // Drop the strong reference now that QuPath has loaded the image — we don't
+        // want to pin two big ImageData instances in memory once the user has moved on.
+        prefetchedImageData = null;
+
         currentImageCellCache.clear();
         cachedImageName = null;
         return true;
@@ -472,25 +483,30 @@ public class ReviewController {
     }
 
     /**
-     * If the next reviewable cell is in a different image than the current one, submit
+     * If a later reviewable cell is in a different image than the current one, submit
      * a background task to read that image's data so QuPath's tile cache is warmed by
      * the time {@link #ensureImageOpen} is called.
+     * <p>
+     * Looks forward through the entire remaining queue (not just the next item) so
+     * prefetch starts as soon as the user lands on a new image, giving the background
+     * thread maximum time to load the next image's data.
      */
     private void prefetchNextImageIfNeeded() {
         if (sessionClosed || prefetchExecutor.isShutdown()) {
             return;
         }
-        int nextIdx = currentIndex + 1;
-        if (nextIdx >= reviewItems.size()) {
-            return;
-        }
-        ReviewItem nextItem = reviewItems.get(nextIdx);
-        String nextName = nextItem == null ? null : nextItem.imageName;
-        if (nextName == null || nextName.isBlank()) {
-            return;
-        }
         String currentName = currentImageName();
-        if (nextName.equals(currentName)) {
+
+        // Find the next item whose image differs from the current one.
+        String nextName = null;
+        for (int idx = currentIndex + 1; idx < reviewItems.size(); idx++) {
+            ReviewItem item = reviewItems.get(idx);
+            if (item == null || item.imageName == null || item.imageName.isBlank()) continue;
+            if (item.imageName.equals(currentName)) continue;
+            nextName = item.imageName;
+            break;
+        }
+        if (nextName == null) {
             return;
         }
         if (nextName.equals(lastPrefetchedImageName)) {
@@ -501,16 +517,19 @@ public class ReviewController {
             return;
         }
         lastPrefetchedImageName = nextName;
+        final String prefetchTarget = nextName;
         prefetchExecutor.submit(() -> {
             try {
-                // Reading the ImageData warms the project entry's data path; QuPath's tile
-                // cache will then have headers/metadata ready when openImageEntry runs on
-                // the FX thread. We don't keep a reference — GC reclaims it shortly.
-                entry.readImageData();
-                logger.debug("Prefetched ImageData for next review image '{}'", nextName);
+                // Reading the ImageData warms QuPath's caches (TIFF headers, detection
+                // hierarchy, tile cache). We hold a strong reference in
+                // prefetchedImageData so the GC doesn't reclaim those caches before
+                // openImageEntry actually consumes them.
+                var data = entry.readImageData();
+                prefetchedImageData = data;
+                logger.debug("Prefetched ImageData for next review image '{}'", prefetchTarget);
             } catch (Throwable t) {
                 // Prefetch is purely an optimisation; failures are non-fatal.
-                logger.debug("Prefetch of '{}' failed: {}", nextName, t.getMessage());
+                logger.debug("Prefetch of '{}' failed: {}", prefetchTarget, t.getMessage());
             }
         });
     }
