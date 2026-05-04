@@ -2170,7 +2170,7 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         List<String> classNames = classifier.getClassNames();
-        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames);
+        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames, labelStore);
         lastAgreementRates = view.getAgreementRates();
         view.show();
     }

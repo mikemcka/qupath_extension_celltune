@@ -830,7 +830,7 @@ public class ClassificationPanel extends VBox {
         }
 
         List<String> classNames = classifier.getClassNames();
-        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames);
+        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames, labelStore);
         lastAgreementRates = view.getAgreementRates();
         if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
         view.show();

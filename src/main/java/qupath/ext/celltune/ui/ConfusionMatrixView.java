@@ -21,6 +21,7 @@ import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellPrediction;
+import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 
 import javax.imageio.ImageIO;
@@ -43,16 +44,42 @@ public class ConfusionMatrixView {
 
     private static final Logger logger = LoggerFactory.getLogger(ConfusionMatrixView.class);
 
+    /** Display modes for the confusion matrix. */
+    public enum Mode {
+        /** Rows = Model 1 (XGBoost), Columns = Model 2 (LightGBM). Inter-model agreement. */
+        INTER_MODEL,
+        /** Rows = Ground Truth labels, Columns = Model 1 (XGBoost) predictions. */
+        GT_VS_M1,
+        /** Rows = Ground Truth labels, Columns = Model 2 (LightGBM) predictions. */
+        GT_VS_M2
+    }
+
     private final Stage stage;
     private final Canvas canvas;
     private final Label summaryLabel;
 
     private final List<String> classNames;
-    private final int[][] matrix;
+    private final PopulationSet predALL;
+    private final LabelStore labelStore;
+
+    // Inter-model values are kept stable for external getters (used by the
+    // uncertainty sampler) regardless of currently displayed mode.
+    private final int[][] interModelMatrix;
     private final double[] agreementRates;
     private final double[] f1Scores;
-    private final int totalCells;
-    private final int totalAgreements;
+    private final int interModelTotal;
+    private final int interModelAgreements;
+
+    // Currently displayed view (depends on mode).
+    private Mode mode = Mode.INTER_MODEL;
+    private int[][] matrix;
+    private double[] displayF1;
+    private double[] displayRowTpRate;  // per-row TP / row sum
+    private double[] displayColTpRate;  // per-col TP / col sum
+    private int totalCells;
+    private int totalAgreements;
+    private String rowAxisTitle = "Model 1 (XGBoost)";
+    private String colAxisTitle = "Model 2 (LightGBM)";
 
     // Layout constants
     private static final int CELL_SIZE = 64;
@@ -65,49 +92,59 @@ public class ConfusionMatrixView {
     private static final Font HEADER_FONT = Font.font("SansSerif", Font.getDefault().getSize() + 1);
 
     /**
+     * Build and display the confusion matrix in inter-model mode (no ground-truth toggle).
+     */
+    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames) {
+        this(owner, predALL, classNames, null);
+    }
+
+    /**
      * Build and display the confusion matrix.
      *
      * @param owner      parent stage
      * @param predALL    the Pred_ALL population set (contains all cell predictions)
      * @param classNames ordered class name list
+     * @param labelStore optional ground-truth label store; when non-null and non-empty,
+     *                   the dialog gets a toggle to switch between inter-model and
+     *                   ground-truth confusion matrices.
      */
-    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames) {
+    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames,
+                               LabelStore labelStore) {
         this.classNames = List.copyOf(classNames);
+        this.predALL = predALL;
+        this.labelStore = labelStore;
         int n = classNames.size();
         stage = new Stage();
 
-        // ── Build confusion matrix ──────────────────────────────────────────
-        this.matrix = new int[n][n];
-        int agreements = 0;
-        int total = 0;
-
+        // ── Build inter-model confusion matrix (kept as the canonical source ─
+        //    of agreement rates / F1 used by the uncertainty sampler) ─────────
+        int[][] imMatrix = new int[n][n];
+        int imAgreements = 0;
+        int imTotal = 0;
         for (CellPrediction pred : predALL.getAll().values()) {
             int row = classNames.indexOf(pred.getModel1Label());
             int col = classNames.indexOf(pred.getModel2Label());
             if (row < 0 || col < 0) continue;
-            matrix[row][col]++;
-            total++;
-            if (row == col) agreements++;
+            imMatrix[row][col]++;
+            imTotal++;
+            if (row == col) imAgreements++;
         }
-        this.totalCells = total;
-        this.totalAgreements = agreements;
+        this.interModelMatrix = imMatrix;
+        this.interModelTotal = imTotal;
+        this.interModelAgreements = imAgreements;
 
-        // ── Per-class agreement rates ───────────────────────────────────────
-        // Agreement rate for class i = diagonal[i] / (rowSum[i] + colSum[i] - diagonal[i])
-        // This measures how often both models agree when either predicts class i.
+        // ── Per-class agreement rates (inter-model, used by sampler) ────────
         this.agreementRates = new double[n];
         this.f1Scores = new double[n];
         for (int i = 0; i < n; i++) {
             int rowSum = 0, colSum = 0;
             for (int j = 0; j < n; j++) {
-                rowSum += matrix[i][j];
-                colSum += matrix[j][i];
+                rowSum += imMatrix[i][j];
+                colSum += imMatrix[j][i];
             }
-            int denom = rowSum + colSum - matrix[i][i];
-            agreementRates[i] = denom > 0 ? (double) matrix[i][i] / denom : 1.0;
-
-            // F1: treat diagonal as TP, row off-diag as FN, col off-diag as FP
-            int tp = matrix[i][i];
+            int denom = rowSum + colSum - imMatrix[i][i];
+            agreementRates[i] = denom > 0 ? (double) imMatrix[i][i] / denom : 1.0;
+            int tp = imMatrix[i][i];
             int fp = colSum - tp;
             int fn = rowSum - tp;
             double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0;
@@ -120,18 +157,13 @@ public class ConfusionMatrixView {
         int canvasWidth = LABEL_MARGIN + n * CELL_SIZE + RATE_MARGIN;
         int canvasHeight = HEADER_HEIGHT + LABEL_MARGIN + n * CELL_SIZE + BOTTOM_MARGIN + RATE_MARGIN;
         canvas = new Canvas(canvasWidth, canvasHeight);
-        drawMatrix();
 
         // ── Summary label ───────────────────────────────────────────────────
-        double overallRate = totalCells > 0 ? (double) totalAgreements / totalCells * 100 : 0;
-        double macroF1 = 0;
-        for (double f : f1Scores) macroF1 += f;
-        macroF1 = f1Scores.length > 0 ? macroF1 / f1Scores.length : 0;
-        summaryLabel = new Label(String.format(
-                "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%) | Macro F1: %.3f",
-                totalCells, totalAgreements, overallRate,
-                totalCells - totalAgreements, 100 - overallRate, macroF1));
+        summaryLabel = new Label("");
         summaryLabel.setPadding(new Insets(4));
+
+        // Compute initial display state (defaults to INTER_MODEL).
+        applyMode(Mode.INTER_MODEL);
 
         // ── Export button ───────────────────────────────────────────────────
         Button exportBtn = new Button("Export as PNG…");
@@ -161,6 +193,34 @@ public class ConfusionMatrixView {
         root.setCenter(scroll);
         root.setBottom(bottom);
         root.setPadding(new Insets(8));
+
+        // ── Mode toggle (only when ground-truth labels are available) ──────
+        boolean hasLabels = labelStore != null && labelStore.size() > 0;
+        if (hasLabels) {
+            Label modeLbl = new Label("View:");
+            javafx.scene.control.ComboBox<Mode> modeCombo = new javafx.scene.control.ComboBox<>();
+            modeCombo.getItems().addAll(Mode.INTER_MODEL, Mode.GT_VS_M1, Mode.GT_VS_M2);
+            modeCombo.setConverter(new javafx.util.StringConverter<>() {
+                @Override public String toString(Mode m) {
+                    if (m == null) return "";
+                    return switch (m) {
+                        case INTER_MODEL -> "Inter-Model (XGBoost vs LightGBM)";
+                        case GT_VS_M1    -> "Ground Truth vs Model 1 (XGBoost)";
+                        case GT_VS_M2    -> "Ground Truth vs Model 2 (LightGBM)";
+                    };
+                }
+                @Override public Mode fromString(String s) { return null; }
+            });
+            modeCombo.getSelectionModel().select(Mode.INTER_MODEL);
+            modeCombo.setOnAction(ev -> {
+                Mode selected = modeCombo.getValue();
+                if (selected != null && selected != mode) applyMode(selected);
+            });
+            HBox modeBar = new HBox(8, modeLbl, modeCombo);
+            modeBar.setAlignment(Pos.CENTER_LEFT);
+            modeBar.setPadding(new Insets(4, 8, 4, 8));
+            root.setTop(modeBar);
+        }
 
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
@@ -217,6 +277,102 @@ public class ConfusionMatrixView {
 
     // ── Drawing ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Recompute the displayed matrix and summary for the given mode and redraw.
+     * Falls back to INTER_MODEL when GT modes are requested but no labels exist.
+     */
+    private void applyMode(Mode requested) {
+        Mode m = requested;
+        boolean hasLabels = labelStore != null && labelStore.size() > 0;
+        if ((m == Mode.GT_VS_M1 || m == Mode.GT_VS_M2) && !hasLabels) {
+            m = Mode.INTER_MODEL;
+        }
+        this.mode = m;
+
+        int n = classNames.size();
+        int[][] mtx = new int[n][n];
+        int total = 0;
+        int agreements = 0;
+
+        if (m == Mode.INTER_MODEL) {
+            // Re-use the inter-model snapshot.
+            for (int i = 0; i < n; i++) {
+                System.arraycopy(interModelMatrix[i], 0, mtx[i], 0, n);
+            }
+            total = interModelTotal;
+            agreements = interModelAgreements;
+            rowAxisTitle = "Model 1 (XGBoost)";
+            colAxisTitle = "Model 2 (LightGBM)";
+            stage.setTitle("CellTune \u2014 Inter-Model Confusion Matrix");
+        } else {
+            // Ground truth (rows) vs predictions (cols).
+            boolean useM1 = (m == Mode.GT_VS_M1);
+            var labels = labelStore.getAllLabels();
+            for (CellPrediction pred : predALL.getAll().values()) {
+                String gt = labels.get(pred.getCellId());
+                if (gt == null) continue;
+                int row = classNames.indexOf(gt);
+                String predLabel = useM1 ? pred.getModel1Label() : pred.getModel2Label();
+                int col = classNames.indexOf(predLabel);
+                if (row < 0 || col < 0) continue;
+                mtx[row][col]++;
+                total++;
+                if (row == col) agreements++;
+            }
+            rowAxisTitle = "Ground Truth";
+            colAxisTitle = useM1 ? "Model 1 (XGBoost)" : "Model 2 (LightGBM)";
+            stage.setTitle("CellTune \u2014 " + (useM1
+                    ? "Ground Truth vs Model 1 (XGBoost)"
+                    : "Ground Truth vs Model 2 (LightGBM)"));
+        }
+
+        // Per-row / per-col TP rates and per-class F1.
+        double[] rowTp = new double[n];
+        double[] colTp = new double[n];
+        double[] f1 = new double[n];
+        for (int i = 0; i < n; i++) {
+            int rowSum = 0, colSum = 0;
+            for (int j = 0; j < n; j++) {
+                rowSum += mtx[i][j];
+                colSum += mtx[j][i];
+            }
+            rowTp[i] = rowSum > 0 ? (double) mtx[i][i] / rowSum : 0;
+            colTp[i] = colSum > 0 ? (double) mtx[i][i] / colSum : 0;
+            int tp = mtx[i][i];
+            int fp = colSum - tp;
+            int fn = rowSum - tp;
+            double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0;
+            double recall    = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0;
+            f1[i] = (precision + recall) > 0
+                    ? 2.0 * precision * recall / (precision + recall) : 0;
+        }
+
+        this.matrix = mtx;
+        this.totalCells = total;
+        this.totalAgreements = agreements;
+        this.displayRowTpRate = rowTp;
+        this.displayColTpRate = colTp;
+        this.displayF1 = f1;
+
+        // Summary line.
+        double overallRate = total > 0 ? (double) agreements / total * 100 : 0;
+        double macroF1 = 0;
+        for (double f : f1) macroF1 += f;
+        macroF1 = n > 0 ? macroF1 / n : 0;
+        String agreementWord = (m == Mode.INTER_MODEL) ? "Agreement" : "Correct";
+        String disagreementWord = (m == Mode.INTER_MODEL) ? "Disagreement" : "Misclassified";
+        String summary = String.format(
+                "Total: %,d cells | %s: %,d (%.1f%%) | %s: %,d (%.1f%%) | Macro F1: %.3f",
+                total, agreementWord, agreements, overallRate,
+                disagreementWord, total - agreements, 100 - overallRate, macroF1);
+        if (m != Mode.INTER_MODEL) {
+            summary += "  \u00b7  cells with a ground-truth label only";
+        }
+        summaryLabel.setText(summary);
+
+        drawMatrix();
+    }
+
     private void drawMatrix() {
         GraphicsContext gc = canvas.getGraphicsContext2D();
         int n = classNames.size();
@@ -239,20 +395,9 @@ public class ConfusionMatrixView {
             }
         }
 
-        // ── Per-model TP rates (for margins) ────────────────────────────────
-        // Model 1 TP% (right margin): TP / row_sum for each class
-        double[] model1TpRate = new double[n];
-        // Model 2 TP% (bottom margin): TP / col_sum for each class
-        double[] model2TpRate = new double[n];
-        for (int i = 0; i < n; i++) {
-            int rowSum = 0, colSum = 0;
-            for (int j = 0; j < n; j++) {
-                rowSum += matrix[i][j];
-                colSum += matrix[j][i];
-            }
-            model1TpRate[i] = rowSum > 0 ? (double) matrix[i][i] / rowSum : 0;
-            model2TpRate[i] = colSum > 0 ? (double) matrix[i][i] / colSum : 0;
-        }
+        // ── Per-model TP rates (for margins) — computed in applyMode() ─────
+        double[] model1TpRate = displayRowTpRate;
+        double[] model2TpRate = displayColTpRate;
 
         double gridLeft = LABEL_MARGIN;
         double gridTop = HEADER_HEIGHT + LABEL_MARGIN;
@@ -263,14 +408,14 @@ public class ConfusionMatrixView {
         gc.setFill(Color.BLACK);
 
         // X axis title
-        gc.fillText("Model 2 (LightGBM)",
+        gc.fillText(colAxisTitle,
                 gridLeft + n * CELL_SIZE / 2.0, HEADER_HEIGHT / 2.0 + 4);
 
         // Y axis title (rotated)
         gc.save();
         gc.translate(14, gridTop + n * CELL_SIZE / 2.0);
         gc.rotate(-90);
-        gc.fillText("Model 1 (XGBoost)", 0, 0);
+        gc.fillText(rowAxisTitle, 0, 0);
         gc.restore();
 
         gc.setFont(LABEL_FONT);
@@ -372,7 +517,7 @@ public class ConfusionMatrixView {
         for (int i = 0; i < n; i++) {
             double y = gridTop + i * CELL_SIZE + CELL_SIZE / 2.0 + 4;
             gc.setFill(Color.DARKRED);
-            gc.fillText(String.format("%.2f", f1Scores[i]), f1X, y);
+            gc.fillText(String.format("%.2f", displayF1[i]), f1X, y);
         }
 
         // F1 column header
