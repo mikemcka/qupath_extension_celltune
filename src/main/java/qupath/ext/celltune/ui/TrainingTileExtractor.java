@@ -163,12 +163,29 @@ public final class TrainingTileExtractor implements AutoCloseable {
                 if (progress != null) progress.accept(Math.min(processed, total));
                 continue;
             }
-            openImageData.add(imageData);
 
-            ImageServer<BufferedImage> server = imageData.getServer();
-            ImageData.ImageType imageType = imageData.getImageType();
-            int serverW = server.getWidth();
-            int serverH = server.getHeight();
+            // getServer() lazy-opens the underlying file and may throw a
+            // RuntimeException (e.g. when the source TIFF has been moved or
+            // deleted). Treat it the same as readImageData failure: skip
+            // every cell from this image instead of aborting the whole
+            // review session.
+            ImageServer<BufferedImage> server;
+            int serverW;
+            int serverH;
+            ImageData.ImageType imageType;
+            try {
+                server = imageData.getServer();
+                imageType = imageData.getImageType();
+                serverW = server.getWidth();
+                serverH = server.getHeight();
+            } catch (Exception ex) {
+                logger.warn("Could not open ImageServer for '{}' (file moved or deleted?): {}",
+                        imageName, ex.getMessage());
+                processed += ids.size();
+                if (progress != null) progress.accept(Math.min(processed, total));
+                continue;
+            }
+            openImageData.add(imageData);
 
             // Index detections by ID for fast cell lookup.
             Map<String, PathObject> detById = new LinkedHashMap<>();
