@@ -63,6 +63,14 @@ public class ReviewController {
     private String currentTileCellId;
     /** Project entry that was open when the review session started; restored on close in tile mode. */
     private final ProjectImageEntry<BufferedImage> initialEntry;
+    /**
+     * Snapshot of project entry references taken when the review session started.
+     * Used to detect and remove any entries that QuPath's ProjectBrowser may have
+     * auto-added in response to {@code viewer.setImageData(...)} being called with
+     * a CroppedImageServer-backed ImageData (entries shaped like
+     * "crop_1.ome.tiff (x, y, w, h)"). Identity-based to avoid relying on names.
+     */
+    private final java.util.Set<ProjectImageEntry<BufferedImage>> initialEntrySnapshot = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     /**
      * Background single-thread executor used to prefetch the next image's data so that
@@ -146,6 +154,14 @@ public class ReviewController {
             initial = qupath.getProject().getEntry(qupath.getImageData());
         }
         this.initialEntry = initial;
+
+        // Snapshot project entries BEFORE we touch the viewer, so we can later
+        // identify any tile-derived entries QuPath's ProjectBrowser auto-added.
+        if (qupath.getProject() != null) {
+            @SuppressWarnings("unchecked")
+            var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            initialEntrySnapshot.addAll(allEntries);
+        }
 
         String defaultImageName = currentImageName();
 
@@ -473,6 +489,12 @@ public class ReviewController {
             if (oldTile != null) {
                 try { oldTile.close(); } catch (Exception ignored) { }
             }
+
+            // Remove any tile-derived project entries that QuPath's ProjectBrowser
+            // auto-added while we were swapping CroppedImageServer ImageData into the
+            // viewer. They are temporary review artifacts the user does not want
+            // persisted.
+            removeAutoAddedTileEntries();
         }
     }
 
@@ -666,6 +688,49 @@ public class ReviewController {
             try { oldTile.close(); } catch (Exception ignored) { }
         }
         return true;
+    }
+
+    /**
+     * Remove any project entries that QuPath added while the review session was
+     * active. Compares against {@link #initialEntrySnapshot} taken before the
+     * first {@code viewer.setImageData(tile)} call; anything new must be a
+     * tile-derived auto-added entry (named like {@code crop_1.ome.tiff (x, y, w, h)}).
+     */
+    private void removeAutoAddedTileEntries() {
+        var project = qupath.getProject();
+        if (project == null) return;
+        try {
+            @SuppressWarnings("unchecked")
+            var current = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            List<ProjectImageEntry<BufferedImage>> toRemove = new ArrayList<>();
+            for (var entry : current) {
+                if (entry == null) continue;
+                if (!initialEntrySnapshot.contains(entry)) {
+                    toRemove.add(entry);
+                }
+            }
+            if (toRemove.isEmpty()) return;
+            for (var entry : toRemove) {
+                try {
+                    project.removeImage(entry, true);
+                    logger.info("Removed auto-added tile project entry: {}", entry.getImageName());
+                } catch (Exception ex) {
+                    logger.warn("Failed to remove auto-added tile entry '{}': {}",
+                            entry.getImageName(), ex.getMessage());
+                }
+            }
+            try {
+                project.syncChanges();
+            } catch (Exception ex) {
+                logger.warn("Failed to sync project after removing tile entries: {}", ex.getMessage());
+            }
+            // Refresh the project browser so removed entries disappear from the UI.
+            javafx.application.Platform.runLater(() -> {
+                try { qupath.refreshProject(); } catch (Exception ignored) { }
+            });
+        } catch (Exception ex) {
+            logger.warn("Failed to scan project for auto-added tile entries: {}", ex.getMessage());
+        }
     }
 
     private void rebuildCurrentImageCellCache() {
