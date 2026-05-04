@@ -68,6 +68,7 @@ public class ClassificationPanel extends VBox {
     private final ProgressBar progressBar = new ProgressBar(0);
     private final Button trainButton = new Button();
     private final Button confusionsButton = new Button();
+    private final Button metricsButton = new Button();
     private final Button sampleButton = new Button();
     private final Button reviewButton = new Button();
     private final CheckBox showFeatureImportanceCheckBox =
@@ -204,6 +205,13 @@ public class ClassificationPanel extends VBox {
         confusionsButton.setDisable(true);
         confusionsButton.setOnAction(e -> doShowConfusions());
 
+        metricsButton.setText("Training Metrics");
+        metricsButton.setMaxWidth(Double.MAX_VALUE);
+        metricsButton.setDisable(true);
+        metricsButton.setTooltip(new javafx.scene.control.Tooltip(
+                "Per-class precision/recall/F1 from an 80/20 stratified split, computed during training."));
+        metricsButton.setOnAction(e -> doShowTrainingMetrics());
+
         sampleButton.setText(STRINGS.getString("classify.sample.button"));
         sampleButton.setMaxWidth(Double.MAX_VALUE);
         sampleButton.setDisable(true);
@@ -214,8 +222,9 @@ public class ClassificationPanel extends VBox {
         reviewButton.setDisable(true);
         reviewButton.setOnAction(e -> doEnterReview());
 
-        HBox actionRow1 = new HBox(6, confusionsButton, sampleButton);
+        HBox actionRow1 = new HBox(6, confusionsButton, metricsButton, sampleButton);
         HBox.setHgrow(confusionsButton, Priority.ALWAYS);
+        HBox.setHgrow(metricsButton, Priority.ALWAYS);
         HBox.setHgrow(sampleButton, Priority.ALWAYS);
 
         // ── Separator ──
@@ -764,6 +773,8 @@ public class ClassificationPanel extends VBox {
                     confusionsButton.setDisable(false);
                     sampleButton.setDisable(false);
 
+                    metricsButton.setDisable(!classifier.hasTrainValMetrics());
+
                     // Auto-show feature importance if checkbox is selected
                     if (showFeatureImportanceCheckBox.isSelected()) {
                         doShowFeatureImportance();
@@ -814,6 +825,19 @@ public class ClassificationPanel extends VBox {
         }, "CellTune-Training");
         trainThread.setDaemon(true);
         trainThread.start();
+    }
+
+    private void doShowTrainingMetrics() {
+        if (classifier == null || !classifier.hasTrainValMetrics()) {
+            Dialogs.showInfoNotification(STRINGS.getString("name"),
+                    "No training metrics available. Train first (need \u2265 20 labelled cells).");
+            return;
+        }
+        new TrainingMetricsView(qupath.getStage(),
+                classifier.getModel1TrainMetrics(),
+                classifier.getModel1ValMetrics(),
+                classifier.getModel2TrainMetrics(),
+                classifier.getModel2ValMetrics()).show();
     }
 
     private void doShowConfusions() {

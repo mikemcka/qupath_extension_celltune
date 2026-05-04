@@ -86,6 +86,12 @@ public class DualModelClassifier {
     private List<String> classNames;
     private List<String> featureNames;
 
+    // ── Training/validation metrics from 80/20 stratified split ─────────────────
+    private TrainingMetrics model1TrainMetrics;
+    private TrainingMetrics model1ValMetrics;
+    private TrainingMetrics model2TrainMetrics;
+    private TrainingMetrics model2ValMetrics;
+
     // ── Public API ──────────────────────────────────────────────────────────────
 
     /**
@@ -294,6 +300,10 @@ public class DualModelClassifier {
         }
 
         // ── 1c. Resample full dataset if requested ──────────────────────────
+        // Keep references to the pre-resampling data so the train/val metrics
+        // step below can do an honest 80/20 split on real (non-synthetic) samples.
+        List<float[]> realTrainRows = trainRows;
+        List<Integer> realTrainLabels = trainLabels;
         if (strategy != ResamplingStrategy.NONE) {
             Resampler.Result resampled = Resampler.apply(
                     trainRows, trainLabels, nClasses, strategy, out);
@@ -340,6 +350,34 @@ public class DualModelClassifier {
                 mdl2Eta    = tuneResult.lgbParams().eta();
                 mdl2Sub    = tuneResult.lgbParams().subsample();
             }
+        }
+
+        // ── 1e. Train/validation metrics (80/20 stratified split) ──────────
+        // Always run when there are enough labelled samples so users get an
+        // honest, sklearn-style classification report for both models. Trains
+        // *evaluation copies* on the 80% only using the chosen final
+        // hyperparameters/round counts — these get overwritten below when the
+        // final models are retrained on the full dataset.
+        if (nRealSamples >= 20) {
+            updateStatus("Computing training/validation metrics\u2026",
+                    earlyStop ? 0.12 : 0.08);
+            out.accept("Computing training/validation metrics on 80/20 stratified split\u2026");
+            try {
+                computeTrainValMetrics(realTrainRows, realTrainLabels, nRealSamples,
+                        nClasses, nFeatures, strategy,
+                        mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub,
+                        mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub,
+                        out);
+            } catch (Exception ex) {
+                logger.warn("Failed to compute training/validation metrics", ex);
+                out.accept("Note: train/val metrics computation failed: " + ex.getMessage());
+            }
+        } else {
+            this.model1TrainMetrics = null;
+            this.model1ValMetrics   = null;
+            this.model2TrainMetrics = null;
+            this.model2ValMetrics   = null;
+            out.accept("Skipping train/val metrics (need \u2265 20 labelled samples).");
         }
 
         // ── 2. Train Model 1 ───────────────────────────────────────────────
@@ -990,5 +1028,107 @@ public class DualModelClassifier {
                 yield rf != null ? rf.getLastDevice() : "unknown";
             }
         };
+    }
+
+    // ── Train/validation metrics ────────────────────────────────────────────────
+
+    /** @return per-class precision/recall/F1 for Model 1 on the 80% train portion (may be null). */
+    public TrainingMetrics getModel1TrainMetrics() { return model1TrainMetrics; }
+    /** @return per-class precision/recall/F1 for Model 1 on the 20% held-out validation portion (may be null). */
+    public TrainingMetrics getModel1ValMetrics()   { return model1ValMetrics; }
+    /** @return per-class precision/recall/F1 for Model 2 on the 80% train portion (may be null). */
+    public TrainingMetrics getModel2TrainMetrics() { return model2TrainMetrics; }
+    /** @return per-class precision/recall/F1 for Model 2 on the 20% held-out validation portion (may be null). */
+    public TrainingMetrics getModel2ValMetrics()   { return model2ValMetrics; }
+
+    /** @return true if any train/val metrics are available. */
+    public boolean hasTrainValMetrics() {
+        return model1TrainMetrics != null || model1ValMetrics != null
+                || model2TrainMetrics != null || model2ValMetrics != null;
+    }
+
+    /**
+     * Compute per-class train and validation metrics for both models on a fresh
+     * 80/20 stratified split of the real (pre-resampling) labelled data.
+     * <p>Trains evaluation copies on the 80% only using the chosen final
+     * hyperparameters; these copies overwrite any prior model state and are
+     * themselves overwritten by the final full-data training step that runs
+     * immediately after.
+     */
+    private void computeTrainValMetrics(List<float[]> realRows,
+                                        List<Integer> realLabels,
+                                        int nRealSamples,
+                                        int nClasses,
+                                        int nFeatures,
+                                        ResamplingStrategy strategy,
+                                        int mdl1Rounds, int mdl1Depth, float mdl1Eta, float mdl1Sub,
+                                        int mdl2Rounds, int mdl2Depth, float mdl2Eta, float mdl2Sub,
+                                        Consumer<String> out) throws Exception {
+        int[] realIntLabels = new int[nRealSamples];
+        for (int i = 0; i < nRealSamples; i++) realIntLabels[i] = realLabels.get(i);
+
+        int[][] split = stratifiedSplit(realIntLabels, nClasses, 0.8, new Random(42));
+        int valSize = split[1].length;
+        if (valSize == 0 || split[0].length == 0) {
+            out.accept("Skipping metrics: stratified split produced empty fold.");
+            return;
+        }
+
+        // Build 80% train (eligible for resampling) and 20% val (real only).
+        List<float[]> evTrainRows = new ArrayList<>(split[0].length);
+        List<Integer> evTrainLabelsList = new ArrayList<>(split[0].length);
+        for (int idx : split[0]) {
+            evTrainRows.add(realRows.get(idx));
+            evTrainLabelsList.add(realLabels.get(idx));
+        }
+        if (strategy != ResamplingStrategy.NONE) {
+            Resampler.Result res = Resampler.apply(
+                    evTrainRows, evTrainLabelsList, nClasses, strategy, s -> {});
+            evTrainRows = res.rows();
+            evTrainLabelsList = res.labels();
+        }
+
+        int evTrainSize = evTrainRows.size();
+        float[] evTrainData = new float[evTrainSize * nFeatures];
+        float[] evTrainLabels = new float[evTrainSize];
+        for (int i = 0; i < evTrainSize; i++) {
+            System.arraycopy(evTrainRows.get(i), 0, evTrainData, i * nFeatures, nFeatures);
+            evTrainLabels[i] = evTrainLabelsList.get(i);
+        }
+        float[] evValData = new float[valSize * nFeatures];
+        float[] evValLabels = new float[valSize];
+        for (int i = 0; i < valSize; i++) {
+            System.arraycopy(realRows.get(split[1][i]), 0, evValData, i * nFeatures, nFeatures);
+            evValLabels[i] = realLabels.get(split[1][i]);
+        }
+
+        // ── Eval Model 1 ────────────────────────────────────────────────────
+        trainModel(model1Type, true, evTrainData, evTrainLabels, evTrainSize, nFeatures,
+                mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub);
+        float[][] m1TrainProba = predictModel(model1Type, true, evTrainData, evTrainSize, nFeatures);
+        float[][] m1ValProba   = predictModel(model1Type, true, evValData, valSize, nFeatures);
+        this.model1TrainMetrics = TrainingMetrics.compute(
+                "Model 1 (" + model1Type + ") \u2014 Train (80%)",
+                classNames, evTrainLabels, m1TrainProba);
+        this.model1ValMetrics = TrainingMetrics.compute(
+                "Model 1 (" + model1Type + ") \u2014 Validation (20%)",
+                classNames, evValLabels, m1ValProba);
+
+        // ── Eval Model 2 ────────────────────────────────────────────────────
+        trainModel(model2Type, false, evTrainData, evTrainLabels, evTrainSize, nFeatures,
+                mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub);
+        float[][] m2TrainProba = predictModel(model2Type, false, evTrainData, evTrainSize, nFeatures);
+        float[][] m2ValProba   = predictModel(model2Type, false, evValData, valSize, nFeatures);
+        this.model2TrainMetrics = TrainingMetrics.compute(
+                "Model 2 (" + model2Type + ") \u2014 Train (80%)",
+                classNames, evTrainLabels, m2TrainProba);
+        this.model2ValMetrics = TrainingMetrics.compute(
+                "Model 2 (" + model2Type + ") \u2014 Validation (20%)",
+                classNames, evValLabels, m2ValProba);
+
+        out.accept(String.format(
+                "Macro F1: M1 train=%.3f val=%.3f | M2 train=%.3f val=%.3f",
+                model1TrainMetrics.macroF1(), model1ValMetrics.macroF1(),
+                model2TrainMetrics.macroF1(), model2ValMetrics.macroF1()));
     }
 }
