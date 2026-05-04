@@ -83,8 +83,10 @@ public class FeatureImportanceView {
         Label classLabel = new Label("Class:");
         ComboBox<String> classCombo = new ComboBox<>();
         classCombo.getItems().addAll(shapResult.classNames());
-        classCombo.setValue(shapResult.classNames().get(0));
-        classCombo.setOnAction(e -> {
+        classCombo.setValue(shapResult.classNames().get(0));        // Cap the visible-row count so the popup never spills off the bottom of
+        // the screen when a project has many cell classes. JavaFX's default is
+        // 10 but the popup itself is not auto-clipped to screen on every WM.
+        classCombo.setVisibleRowCount(Math.min(10, Math.max(3, shapResult.classNames().size())));        classCombo.setOnAction(e -> {
             selectedClassIdx = shapResult.classNames().indexOf(classCombo.getValue());
             drawChart();
         });

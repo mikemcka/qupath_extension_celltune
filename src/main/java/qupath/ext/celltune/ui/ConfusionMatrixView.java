@@ -148,15 +148,32 @@ public class ConfusionMatrixView {
         bottom.setAlignment(Pos.CENTER);
 
         BorderPane root = new BorderPane();
-        root.setCenter(canvas);
+        // Wrap the canvas in a ScrollPane so large class counts (which produce
+        // a very tall canvas) don't push the window off the bottom of the
+        // screen. Cap the scene to ~85% of screen height/width so the matrix
+        // remains usable on smaller displays.
+        javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(canvas);
+        scroll.setFitToWidth(false);
+        scroll.setFitToHeight(false);
+        scroll.setPannable(true);
+        scroll.setHbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scroll.setVbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        root.setCenter(scroll);
         root.setBottom(bottom);
         root.setPadding(new Insets(8));
 
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
-        stage.setTitle("CellTune — Inter-Model Confusion Matrix");
-        stage.setScene(new Scene(root));
-        stage.setResizable(false);
+        stage.setTitle("CellTune \u2014 Inter-Model Confusion Matrix");
+
+        var screen = javafx.stage.Screen.getPrimary().getVisualBounds();
+        double maxW = screen.getWidth() * 0.85;
+        double maxH = screen.getHeight() * 0.85;
+        // Add a small slack for ScrollPane chrome and padding.
+        double sceneW = Math.min(maxW, canvasWidth + 40);
+        double sceneH = Math.min(maxH, canvasHeight + 80);
+        stage.setScene(new Scene(root, sceneW, sceneH));
+        stage.setResizable(true);
     }
 
     /** Show the confusion matrix window. */
