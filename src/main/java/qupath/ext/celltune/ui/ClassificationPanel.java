@@ -71,6 +71,8 @@ public class ClassificationPanel extends VBox {
     private final Button metricsButton = new Button();
     private final Button sampleButton = new Button();
     private final Button reviewButton = new Button();
+    private final CheckBox currentImageOnlyCheckBox =
+            new CheckBox("Sample current image only");
     private final CheckBox showFeatureImportanceCheckBox =
             new CheckBox("Show top 10 feature importance after training");
     private final Label labelCountLabel = new Label("Labels: 0");
@@ -222,6 +224,11 @@ public class ClassificationPanel extends VBox {
         reviewButton.setDisable(true);
         reviewButton.setOnAction(e -> doEnterReview());
 
+        currentImageOnlyCheckBox.setSelected(false);
+        currentImageOnlyCheckBox.setTooltip(new javafx.scene.control.Tooltip(
+                "When checked, sampling and review only consider cells from the currently open image.\n"
+              + "Default (unchecked) pools predictions from every project image so review covers all FOVs."));
+
         HBox actionRow1 = new HBox(6, confusionsButton, metricsButton, sampleButton);
         HBox.setHgrow(confusionsButton, Priority.ALWAYS);
         HBox.setHgrow(metricsButton, Priority.ALWAYS);
@@ -250,6 +257,7 @@ public class ClassificationPanel extends VBox {
                 statusLabel,
                 new Separator(),
                 actionRow1,
+                currentImageOnlyCheckBox,
                 reviewButton,
                 sep,
                 populationPanel
@@ -1280,6 +1288,10 @@ public class ClassificationPanel extends VBox {
         }
 
         if (project != null) {
+            if (currentImageOnlyCheckBox.isSelected()) {
+                if (progressCallback != null) progressCallback.accept(0, 0);
+                return new SamplingContext(pooled, cellToImage);
+            }
             @SuppressWarnings("unchecked")
             var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
             List<String> otherNames = entries.stream()
