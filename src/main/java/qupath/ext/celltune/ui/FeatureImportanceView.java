@@ -83,10 +83,27 @@ public class FeatureImportanceView {
         Label classLabel = new Label("Class:");
         ComboBox<String> classCombo = new ComboBox<>();
         classCombo.getItems().addAll(shapResult.classNames());
-        classCombo.setValue(shapResult.classNames().get(0));        // Cap the visible-row count so the popup never spills off the bottom of
-        // the screen when a project has many cell classes. JavaFX's default is
-        // 10 but the popup itself is not auto-clipped to screen on every WM.
-        classCombo.setVisibleRowCount(Math.min(10, Math.max(3, shapResult.classNames().size())));        classCombo.setOnAction(e -> {
+        classCombo.setValue(shapResult.classNames().get(0));
+        // Conservative starting cap; refined dynamically when the popup opens
+        // so the dropdown never extends past the bottom of the screen.
+        classCombo.setVisibleRowCount(Math.min(8, Math.max(3, shapResult.classNames().size())));
+        classCombo.showingProperty().addListener((obs, was, isNow) -> {
+            if (!isNow) return;
+            try {
+                var screenBounds = javafx.stage.Screen.getPrimary().getVisualBounds();
+                var comboBounds = classCombo.localToScreen(classCombo.getBoundsInLocal());
+                if (comboBounds == null) return;
+                double availablePx = screenBounds.getMaxY() - comboBounds.getMaxY() - 24;
+                int rowPx = 26; // approx ComboBox cell height incl. padding
+                int maxRows = Math.max(3, (int) (availablePx / rowPx));
+                int desired = Math.min(maxRows, shapResult.classNames().size());
+                if (desired != classCombo.getVisibleRowCount()) {
+                    classCombo.setVisibleRowCount(desired);
+                }
+            } catch (Exception ignored) {
+            }
+        });
+        classCombo.setOnAction(e -> {
             selectedClassIdx = shapResult.classNames().indexOf(classCombo.getValue());
             drawChart();
         });
