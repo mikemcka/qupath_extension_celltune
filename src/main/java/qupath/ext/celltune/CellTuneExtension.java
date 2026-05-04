@@ -34,6 +34,7 @@ import qupath.ext.celltune.ui.ImageSelectionPane;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
+import qupath.ext.celltune.ui.TrainingTileExtractor;
 import qupath.ext.celltune.ui.ProjectPredictionSummaryView;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
@@ -2045,9 +2046,69 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         // Build controller and UI components
+        // Pre-extract training tiles around each sampled cell so review avoids
+        // costly switches between large project images. Cell IDs round-trip via
+        // lastSampledCellImageMap (see persistReviewedLabelsByImage).
+        final PopulationSet finalReviewPredictions = reviewPredictions;
+        launchTrainingTileReview(qupath, finalReviewPredictions);
+    }
+
+    private void launchTrainingTileReview(QuPathGUI qupath, PopulationSet reviewPredictions) {
+        var progressStage = new javafx.stage.Stage();
+        progressStage.setTitle(EXTENSION_NAME + " \u2014 Preparing review tiles");
+        progressStage.initOwner(qupath.getStage());
+        progressStage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        progressStage.setResizable(false);
+        var bar = new javafx.scene.control.ProgressBar(0);
+        bar.setPrefWidth(360);
+        var status = new javafx.scene.control.Label("Extracting cell tiles\u2026");
+        status.setMaxWidth(360);
+        status.setWrapText(true);
+        var box = new javafx.scene.layout.VBox(8, status, bar);
+        box.setPadding(new javafx.geometry.Insets(15));
+        progressStage.setScene(new javafx.scene.Scene(box));
+        progressStage.setOnCloseRequest(ev -> ev.consume());
+        progressStage.show();
+
+        final int total = lastSampledCellIds == null ? 0 : lastSampledCellIds.size();
+        final List<String> cellIds = lastSampledCellIds;
+        final Map<String, String> imageMap = lastSampledCellImageMap;
+        Thread t = new Thread(() -> {
+            TrainingTileExtractor extractor;
+            try {
+                extractor = TrainingTileExtractor.extract(qupath, cellIds, imageMap,
+                        done -> javafx.application.Platform.runLater(() -> {
+                            if (total > 0) {
+                                bar.setProgress((double) done / total);
+                                status.setText(String.format("Extracting tiles: %d / %d cells\u2026", done, total));
+                            }
+                        }));
+            } catch (Exception e) {
+                final Exception err = e;
+                javafx.application.Platform.runLater(() -> {
+                    progressStage.close();
+                    Dialogs.showErrorMessage(EXTENSION_NAME,
+                            "Failed to prepare review tiles: " + err.getMessage());
+                });
+                return;
+            }
+            final TrainingTileExtractor finalExtractor = extractor;
+            javafx.application.Platform.runLater(() -> {
+                progressStage.close();
+                showTileReviewStage(qupath, reviewPredictions, finalExtractor);
+            });
+        }, "celltune-tile-extract");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void showTileReviewStage(QuPathGUI qupath,
+                                     PopulationSet reviewPredictions,
+                                     TrainingTileExtractor extractor) {
         var reviewController = new ReviewController(qupath, lastSampledCellIds,
-                reviewPredictions, lastSampledCellImageMap);
+                reviewPredictions, lastSampledCellImageMap, extractor.getPreps());
         if (reviewController.size() == 0) {
+            extractor.close();
             Dialogs.showErrorMessage(EXTENSION_NAME,
                     "Could not resolve sampled cells in project images.");
             return;
@@ -2087,6 +2148,7 @@ public class CellTuneExtension implements QuPathExtension {
                 Dialogs.showInfoNotification(EXTENSION_NAME,
                         String.format("Review complete: %d labels merged.", outputLabels.size()));
             }
+            extractor.close();
         });
 
         stage.show();

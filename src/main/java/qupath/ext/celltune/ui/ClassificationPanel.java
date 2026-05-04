@@ -1034,9 +1034,66 @@ public class ClassificationPanel extends VBox {
     }
 
     private void launchReviewStage(PopulationSet reviewPredictions) {
+        // Automated review pre-extracts a small training-image tile around each sampled
+        // cell so the user labels via in-memory crops instead of switching between full
+        // 20k\u00d720k project images. Cell IDs round-trip to the original images via the
+        // cellId\u2192imageName map (see persistReviewedLabelsByImage).
+        extractTrainingTilesAsync(extractor -> launchReviewStageWithTiles(reviewPredictions, extractor));
+    }
+
+    private void extractTrainingTilesAsync(Consumer<TrainingTileExtractor> onReady) {
+        var stage = new javafx.stage.Stage();
+        stage.setTitle(STRINGS.getString("name") + " \u2014 Preparing review tiles");
+        stage.initOwner(qupath.getStage());
+        stage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        stage.setResizable(false);
+        var bar = new ProgressBar(0);
+        bar.setPrefWidth(360);
+        var status = new Label("Extracting cell tiles\u2026");
+        status.setMaxWidth(360);
+        status.setWrapText(true);
+        var box = new VBox(8, status, bar);
+        box.setPadding(new Insets(15));
+        stage.setScene(new javafx.scene.Scene(box));
+        stage.setOnCloseRequest(e -> e.consume());
+        stage.show();
+
+        final int total = lastSampledCellIds == null ? 0 : lastSampledCellIds.size();
+        Thread t = new Thread(() -> {
+            TrainingTileExtractor extractor;
+            try {
+                extractor = TrainingTileExtractor.extract(qupath, lastSampledCellIds,
+                        lastSampledCellImageMap, done -> Platform.runLater(() -> {
+                            if (total > 0) {
+                                bar.setProgress((double) done / total);
+                                status.setText(String.format("Extracting tiles: %d / %d cells\u2026",
+                                        done, total));
+                            }
+                        }));
+            } catch (Exception e) {
+                final Exception err = e;
+                Platform.runLater(() -> {
+                    stage.close();
+                    Dialogs.showErrorMessage(STRINGS.getString("name"),
+                            "Failed to prepare review tiles: " + err.getMessage());
+                });
+                return;
+            }
+            Platform.runLater(() -> {
+                stage.close();
+                onReady.accept(extractor);
+            });
+        }, "celltune-tile-extract");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void launchReviewStageWithTiles(PopulationSet reviewPredictions,
+                                             TrainingTileExtractor extractor) {
         var reviewController = new ReviewController(qupath, lastSampledCellIds,
-                reviewPredictions, lastSampledCellImageMap);
+                reviewPredictions, lastSampledCellImageMap, extractor.getPreps());
         if (reviewController.size() == 0) {
+            extractor.close();
             Dialogs.showErrorMessage(STRINGS.getString("name"),
                     "Could not resolve sampled cells in project images.");
             return;
@@ -1071,6 +1128,7 @@ public class ClassificationPanel extends VBox {
                 Dialogs.showInfoNotification(STRINGS.getString("name"),
                         String.format("Review complete: %d labels merged.", outputLabels.size()));
             }
+            extractor.close();
         });
 
         stage.show();

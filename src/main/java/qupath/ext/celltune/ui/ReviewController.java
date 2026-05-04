@@ -54,6 +54,16 @@ public class ReviewController {
     private final Map<String, PathObject> currentImageCellCache = new LinkedHashMap<>();
     private String cachedImageName;
 
+    /** When non-null/non-empty, navigation displays small training tiles instead of switching project images. */
+    private final Map<String, TrainingTileExtractor.TilePrep> tilePreps;
+    private final boolean tileMode;
+    /** Currently-displayed tile ImageData (held so we can close it on swap). */
+    private qupath.lib.images.ImageData<BufferedImage> currentTileImageData;
+    /** Cell ID currently shown as a tile, used to avoid rebuilding when re-entering the same cell. */
+    private String currentTileCellId;
+    /** Project entry that was open when the review session started; restored on close in tile mode. */
+    private final ProjectImageEntry<BufferedImage> initialEntry;
+
     /**
      * Background single-thread executor used to prefetch the next image's data so that
      * its tile cache is warm before the user switches to it. Daemon thread so it never
@@ -85,7 +95,7 @@ public class ReviewController {
     public ReviewController(QuPathGUI qupath,
                             List<String> cellIds,
                             PopulationSet predictions) {
-        this(qupath, cellIds, predictions, Map.of());
+        this(qupath, cellIds, predictions, Map.of(), null);
     }
 
     /**
@@ -100,12 +110,42 @@ public class ReviewController {
                             List<String> cellIds,
                             PopulationSet predictions,
                             Map<String, String> cellImageMap) {
+        this(qupath, cellIds, predictions, cellImageMap, null);
+    }
+
+    /**
+     * Create a review controller, optionally backed by pre-extracted training tiles.
+     *
+     * <p>When {@code tilePreps} is non-null and non-empty, navigation no longer switches
+     * QuPath project images; instead each cell is shown in a small
+     * {@link qupath.lib.images.servers.CroppedImageServer}-backed ImageData.
+     * Cells without a corresponding prep fall back to the project-image flow.
+     *
+     * @param qupath        QuPath GUI instance
+     * @param cellIds       ordered cell IDs from sampler
+     * @param predictions   prediction set containing sampled cells
+     * @param cellImageMap  cellId → image name mapping
+     * @param tilePreps     optional pre-extracted training tiles, keyed by cellId
+     */
+    public ReviewController(QuPathGUI qupath,
+                            List<String> cellIds,
+                            PopulationSet predictions,
+                            Map<String, String> cellImageMap,
+                            Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
         this.qupath = qupath;
         this.predictions = predictions;
         this.outputLabels = new LabelStore("ReviewOutput");
         this.cellIdToImageName = new LinkedHashMap<>();
         this.entryByImageName = new LinkedHashMap<>();
         this.reviewItems = new ArrayList<>();
+        this.tilePreps = tilePreps;
+        this.tileMode = tilePreps != null && !tilePreps.isEmpty();
+
+        ProjectImageEntry<BufferedImage> initial = null;
+        if (qupath.getProject() != null && qupath.getImageData() != null) {
+            initial = qupath.getProject().getEntry(qupath.getImageData());
+        }
+        this.initialEntry = initial;
 
         String defaultImageName = currentImageName();
 
@@ -410,6 +450,30 @@ public class ReviewController {
         sessionClosed = true;
         ACTIVE_REVIEW_SESSIONS.updateAndGet(value -> Math.max(0, value - 1));
         prefetchExecutor.shutdownNow();
+
+        if (tileMode) {
+            // Drop the displayed tile and restore the original project image so the
+            // user is returned to the QuPath state they started from.
+            var oldTile = currentTileImageData;
+            currentTileImageData = null;
+            currentTileCellId = null;
+            if (oldTile != null) {
+                try { oldTile.setChanged(false); } catch (Exception ignored) { }
+            }
+            try {
+                if (initialEntry != null) {
+                    qupath.openImageEntry(initialEntry);
+                } else {
+                    var viewer = qupath.getViewer();
+                    if (viewer != null) viewer.resetImageData();
+                }
+            } catch (Exception ex) {
+                logger.debug("Could not restore original image after tile review: {}", ex.getMessage());
+            }
+            if (oldTile != null) {
+                try { oldTile.close(); } catch (Exception ignored) { }
+            }
+        }
     }
 
     private ReviewItem getCurrentItem() {
@@ -420,6 +484,9 @@ public class ReviewController {
     }
 
     private boolean ensureImageOpen(String targetImageName) {
+        if (tileMode) {
+            return ensureTileOpenForCurrentItem();
+        }
         if (targetImageName == null || targetImageName.isBlank()) {
             return qupath.getImageData() != null;
         }
@@ -492,6 +559,9 @@ public class ReviewController {
      * thread maximum time to load the next image's data.
      */
     private void prefetchNextImageIfNeeded() {
+        if (tileMode) {
+            return; // tiles are pre-extracted; nothing to do
+        }
         if (sessionClosed || prefetchExecutor.isShutdown()) {
             return;
         }
@@ -535,6 +605,10 @@ public class ReviewController {
     }
 
     private PathObject resolveCellInCurrentImage(String cellId) {
+        if (tileMode) {
+            var prep = tilePreps == null ? null : tilePreps.get(cellId);
+            return prep == null ? null : prep.highlightCell();
+        }
         var imageData = qupath.getImageData();
         if (imageData == null || cellId == null) {
             return null;
@@ -547,6 +621,51 @@ public class ReviewController {
         }
 
         return currentImageCellCache.get(cellId);
+    }
+
+    /**
+     * Tile-mode equivalent of {@link #ensureImageOpen(String)}: builds a fresh
+     * tile ImageData (CroppedImageServer + mini hierarchy) for the current cell
+     * and swaps it into the active viewer, replacing whatever was previously shown.
+     */
+    private boolean ensureTileOpenForCurrentItem() {
+        ReviewItem item = getCurrentItem();
+        if (item == null) return false;
+        if (tilePreps == null) return false;
+        var prep = tilePreps.get(item.cellId);
+        if (prep == null) {
+            logger.warn("No training tile available for cell {} (image '{}')", item.cellId, item.imageName);
+            return false;
+        }
+        if (item.cellId.equals(currentTileCellId) && currentTileImageData != null) {
+            return true; // already showing this tile
+        }
+
+        var viewer = qupath.getViewer();
+        if (viewer == null) return false;
+
+        clearHighlightMarker();
+        var newData = TrainingTileExtractor.buildTileImageData(prep);
+        try {
+            // Mark the prior ImageData clean so QuPath does not prompt.
+            var prior = viewer.getImageData();
+            if (prior != null) {
+                try { prior.setChanged(false); } catch (Exception ignored) { }
+            }
+            viewer.setImageData(newData);
+        } catch (java.io.IOException ex) {
+            logger.warn("Failed to set training tile ImageData: {}", ex.getMessage());
+            return false;
+        }
+
+        // Close the previously-shown tile ImageData (we don't reuse it; reopening rebuilds).
+        var oldTile = currentTileImageData;
+        currentTileImageData = newData;
+        currentTileCellId = item.cellId;
+        if (oldTile != null && oldTile != newData) {
+            try { oldTile.close(); } catch (Exception ignored) { }
+        }
+        return true;
     }
 
     private void rebuildCurrentImageCellCache() {
