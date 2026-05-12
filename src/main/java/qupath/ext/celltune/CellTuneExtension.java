@@ -1616,6 +1616,10 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     private SamplingContext buildSamplingContext(QuPathGUI qupath) {
+        return buildSamplingContext(qupath, false);
+    }
+
+    private SamplingContext buildSamplingContext(QuPathGUI qupath, boolean currentImageOnly) {
         PopulationSet pooled = new PopulationSet("Pred_ALL");
         Map<String, String> cellToImage = new LinkedHashMap<>();
 
@@ -1641,7 +1645,7 @@ public class CellTuneExtension implements QuPathExtension {
             }
         }
 
-        if (project != null) {
+        if (project != null && !currentImageOnly) {
             @SuppressWarnings("unchecked")
             var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
             for (var entry : entries) {
@@ -1996,7 +2000,37 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
 
-        SamplingContext samplingContext = buildSamplingContext(qupath);
+        // Ask the user whether to pool predictions across the project or to
+        // restrict sampling to the currently open image.
+        boolean currentImageOnly = false;
+        {
+            var imgData = qupath.getImageData();
+            String currentName = null;
+            if (imgData != null && qupath.getProject() != null) {
+                var entry = qupath.getProject().getEntry(imgData);
+                if (entry != null) currentName = entry.getImageName();
+            }
+            if (currentName != null) {
+                var allBtn = new javafx.scene.control.ButtonType("All project images",
+                        javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+                var currentBtn = new javafx.scene.control.ButtonType("Current image only",
+                        javafx.scene.control.ButtonBar.ButtonData.OTHER);
+                var cancelBtn = new javafx.scene.control.ButtonType("Cancel",
+                        javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+                var alert = new javafx.scene.control.Alert(
+                        javafx.scene.control.Alert.AlertType.CONFIRMATION,
+                        "Sample disagreement cells from which images?",
+                        allBtn, currentBtn, cancelBtn);
+                alert.setTitle("Enter Review Mode");
+                alert.setHeaderText("Current image: " + currentName);
+                alert.initOwner(qupath.getStage());
+                var choice = alert.showAndWait();
+                if (choice.isEmpty() || choice.get() == cancelBtn) return;
+                currentImageOnly = (choice.get() == currentBtn);
+            }
+        }
+
+        SamplingContext samplingContext = buildSamplingContext(qupath, currentImageOnly);
         long disagreeCount = samplingContext.predictions().getDisagreementCount();
         if (disagreeCount == 0) {
             Dialogs.showInfoNotification(EXTENSION_NAME,

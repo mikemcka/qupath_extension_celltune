@@ -43,6 +43,9 @@ public class ReviewToolbar extends HBox {
     // Status widgets
     private final Label indexLabel = new Label();
     private final Circle statusDot = new Circle(6);
+    /** Shows the project image the current cell was sampled from — lets the
+     *  user visually verify that review is pulling from multiple images. */
+    private final Label imageNameLabel = new Label();
 
     public ReviewToolbar(ReviewController controller,
                          CellTypeTable cellTypeTable,
@@ -97,7 +100,11 @@ public class ReviewToolbar extends HBox {
         statusDot.setFill(Color.WHITE);
         statusDot.setStroke(Color.GRAY);
         indexLabel.setStyle("-fx-font-family: monospace;");
-        statusBox.getChildren().addAll(indexLabel, statusDot);
+        imageNameLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #555;");
+        imageNameLabel.setMaxWidth(260);
+        imageNameLabel.setMinWidth(0);
+        imageNameLabel.setEllipsisString("\u2026");
+        statusBox.getChildren().addAll(imageNameLabel, indexLabel, statusDot);
 
         // Right-click on index → jump-to-index dialog
         indexLabel.setOnMouseClicked(event -> {
@@ -110,8 +117,21 @@ public class ReviewToolbar extends HBox {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
+        // ── Done button — closes the review stage (triggers setOnHidden, which
+        //     merges reviewed labels back into the main LabelStore). ──
+        Button doneBtn = new Button("Done");
+        doneBtn.setStyle("-fx-font-weight: bold;");
+        doneBtn.setOnAction(e -> {
+            var scene = getScene();
+            if (scene != null && scene.getWindow() != null) {
+                scene.getWindow().hide();
+            }
+        });
+
+        Separator sep3 = new Separator(javafx.geometry.Orientation.VERTICAL);
+
         getChildren().addAll(prevBtn, nextBtn, skipBtn, sep1,
-                predictionBox, allClassesMenu, sep2, spacer, statusBox);
+                predictionBox, allClassesMenu, sep2, spacer, statusBox, sep3, doneBtn);
 
         // ── Auto-advance on first show ──────────────────────────────────
         controller.next();
@@ -130,10 +150,17 @@ public class ReviewToolbar extends HBox {
             indexLabel.setText(String.format("(%d/%d)", total, total));
             statusDot.setFill(Color.WHITE);
             predictionBox.getChildren().clear();
+            imageNameLabel.setText("");
             return;
         }
 
         indexLabel.setText(String.format("(%d/%d)", idx + 1, total));
+
+        // Show which source image the current cell was sampled from.
+        String src = controller.getCurrentCellImageName();
+        imageNameLabel.setText(src == null || src.isBlank() ? "" : src);
+        imageNameLabel.setTooltip(
+                (src == null || src.isBlank()) ? null : new Tooltip("Source image: " + src));
 
         // Rebuild the prediction buttons for the current cell
         updatePredictionButtons();
@@ -258,6 +285,28 @@ public class ReviewToolbar extends HBox {
         alert.setContentText(String.format(
                 "Review complete. %d / %d cells labelled.",
                 controller.getLabelledCount(), controller.size()));
+
+        // Anchor the alert to the Review Mode window so it stays on top
+        // (without an owner it can be hidden behind the toolbar window).
+        javafx.stage.Window owner = null;
+        if (getScene() != null) {
+            owner = getScene().getWindow();
+        }
+        if (owner != null) {
+            alert.initOwner(owner);
+            alert.initModality(javafx.stage.Modality.WINDOW_MODAL);
+            // Place it near the top-right of the owning window, away from
+            // the toolbar buttons on the left.
+            double targetX = owner.getX() + Math.max(40, owner.getWidth() - 460);
+            double targetY = owner.getY() + 80;
+            alert.setX(targetX);
+            alert.setY(targetY);
+        }
+        alert.setOnShown(e -> {
+            javafx.stage.Stage stage = (javafx.stage.Stage) alert.getDialogPane().getScene().getWindow();
+            stage.setAlwaysOnTop(true);
+            stage.toFront();
+        });
         alert.showAndWait();
     }
 }

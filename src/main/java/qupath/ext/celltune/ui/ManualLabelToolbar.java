@@ -15,10 +15,8 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
-import qupath.lib.roi.ROIs;
 
 import java.util.*;
 
@@ -62,7 +60,18 @@ public class ManualLabelToolbar {
 
     // Currently selected detections (may be more than one)
     private List<PathObject> selectedCells = new ArrayList<>();
-    private PathObject highlightMarker = null;
+
+    // O(1) lookup table for auto-advance: PathObject → index in the detection list.
+    // Lazily built per image so dense images (50k+ cells) don't pay an O(N) indexOf
+    // scan on every click. Invalidated whenever the active image changes.
+    private List<PathObject> detectionCache = null;
+    private java.util.IdentityHashMap<PathObject, Integer> detectionIndex = null;
+    private qupath.lib.images.ImageData<?> detectionCacheImageData = null;
+
+    // Magenta selection ring — painted as a viewer-level overlay so updating it
+    // does NOT fire hierarchy events (no detection-overlay repaint storm).
+    private final SelectionHighlightOverlay highlightOverlay = new SelectionHighlightOverlay();
+    private qupath.lib.gui.viewer.QuPathViewer highlightViewer = null;
 
     // Optional: predictions for cells (may be null)
     private final PopulationSet predictions;
@@ -124,8 +133,18 @@ public class ManualLabelToolbar {
         // ── Auto-advance checkbox ───────────────────────────────────────────
         autoAdvance.setSelected(false);
 
+        // ── Done button ─────────────────────────────────────────────────────
+        // Closes the panel (triggers setOnHidden, which saves labels and syncs state).
+        Button doneBtn = new Button("Done");
+        doneBtn.setStyle("-fx-font-weight: bold;");
+        doneBtn.setOnAction(e -> stage.close());
+        Region doneSpacer = new Region();
+        HBox.setHgrow(doneSpacer, Priority.ALWAYS);
+        HBox doneRow = new HBox(8, autoAdvance, doneSpacer, doneBtn);
+        doneRow.setAlignment(Pos.CENTER_LEFT);
+
         // ── Layout ──────────────────────────────────────────────────────────
-        VBox root = new VBox(8, statusRow, predictionBox, buttonRow, autoAdvance);
+        VBox root = new VBox(8, statusRow, predictionBox, buttonRow, doneRow);
         root.setPadding(new Insets(10));
         stage.setScene(new Scene(root));
         stage.sizeToScene();
@@ -133,8 +152,17 @@ public class ManualLabelToolbar {
         // ── Listen for cell selection changes ───────────────────────────────
         installSelectionListener();
 
-        // ── Cleanup on close ────────────────────────────────────────────────
-        stage.setOnHidden(e -> removeSelectionListener());
+        // ── Install lightweight selection-ring overlay on the active viewer ──
+        highlightViewer = qupath.getViewer();
+        highlightOverlay.installOn(highlightViewer);
+
+        // ── Cleanup on close ─────────────────────────────────────────────
+        stage.setOnHidden(e -> {
+            removeSelectionListener();
+            highlightOverlay.uninstallFrom(highlightViewer);
+            if (highlightViewer != null) highlightViewer.repaint();
+            highlightViewer = null;
+        });
 
         stage.show();
     }
@@ -165,18 +193,18 @@ public class ManualLabelToolbar {
                             ? cell.getPathClass().getName() : "unlabelled";
                     selectedCellLabel.setText("Selected: " + id + " (" + cls + ")");
                     statusDot.setFill(cell.getPathClass() != null ? Color.LIMEGREEN : Color.WHITE);
-                    updateSelectionHighlight(cell);
                     updatePredictionButtons(cell);
+                    updateHighlightRing(cell);
                 } else if (selectedCells.size() > 1) {
                     selectedCellLabel.setText(selectedCells.size() + " cells selected");
                     statusDot.setFill(Color.LIMEGREEN);
-                    clearSelectionHighlight();
                     updatePredictionButtons(null);
+                    updateHighlightRing(null);
                 } else {
                     selectedCellLabel.setText("Select a detection cell in the viewer");
                     statusDot.setFill(Color.WHITE);
-                    clearSelectionHighlight();
                     updatePredictionButtons(null);
+                    updateHighlightRing(null);
                 }
             });
         };
@@ -228,47 +256,27 @@ public class ManualLabelToolbar {
             imageData.getHierarchy().getSelectionModel()
                     .removePathObjectSelectionListener(selectionListener);
         }
-        clearSelectionHighlight();
         selectionListener = null;
     }
 
-    private void updateSelectionHighlight(PathObject cell) {
-        var imageData = qupath.getImageData();
-        if (imageData == null || cell == null || cell.getROI() == null
-                || selectedCells.size() > 1) {
-            clearSelectionHighlight();
-            return;
-        }
-
-        var hierarchy = imageData.getHierarchy();
-        if (highlightMarker != null) {
-            hierarchy.removeObject(highlightMarker, false);
-            highlightMarker = null;
-        }
-
-        var roi = cell.getROI();
-        double cx = roi.getCentroidX();
-        double cy = roi.getCentroidY();
-        double r = Math.max(roi.getBoundsWidth(), roi.getBoundsHeight()) * 0.8;
-        if (r < 15) r = 15;
-
-        var highlightRoi = ROIs.createEllipseROI(
-                cx - r, cy - r, r * 2, r * 2, roi.getImagePlane());
-        var highlightClass = PathClass.fromString("CellTune-Highlight",
-                (255 << 16) | (0 << 8) | 255);
-        highlightMarker = PathObjects.createAnnotationObject(highlightRoi, highlightClass);
-        highlightMarker.setLocked(true);
-        hierarchy.addObject(highlightMarker);
+    /**
+     * Show or clear the magenta selection ring drawn by
+     * {@link SelectionHighlightOverlay}. Repaints only the overlay layer
+     * — no hierarchy event, no detection-overlay rebuild.
+     */
+    private void updateHighlightRing(PathObject cell) {
+        if (highlightViewer == null) return;
+        highlightOverlay.setTargetRoi(cell != null ? cell.getROI() : null);
+        highlightViewer.repaint();
     }
 
-    private void clearSelectionHighlight() {
-        if (highlightMarker == null) return;
-        var imageData = qupath.getImageData();
-        if (imageData != null) {
-            imageData.getHierarchy().removeObject(highlightMarker, false);
-        }
-        highlightMarker = null;
-    }
+    // NOTE: A previous version added a magenta ellipse annotation around the
+    // selected cell as an extra visual hint. That added two hierarchy
+    // structure-changed events per click (add + remove of the annotation),
+    // each of which forced QuPath to repaint every detection in the image
+    // — the dominant cost on images with tens of thousands of cells.
+    // QuPath's own selection rendering already outlines the selected cell,
+    // so the extra annotation was redundant and has been removed.
 
     // ── Class buttons ───────────────────────────────────────────────────────
 
@@ -372,10 +380,14 @@ public class ManualLabelToolbar {
         if (imageData == null || selectedCells.isEmpty()) return;
         PathObject currentCell = selectedCells.get(0);
 
-        var detections = new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
-        int idx = detections.indexOf(currentCell);
-        if (idx >= 0 && idx + 1 < detections.size()) {
-            PathObject next = detections.get(idx + 1);
+        ensureDetectionCache(imageData);
+        if (detectionCache == null) return;
+
+        Integer idxBoxed = detectionIndex.get(currentCell);
+        if (idxBoxed == null) return;
+        int idx = idxBoxed;
+        if (idx + 1 < detectionCache.size()) {
+            PathObject next = detectionCache.get(idx + 1);
             imageData.getHierarchy().getSelectionModel().setSelectedObject(next);
 
             // Centre viewer on the next cell
@@ -386,6 +398,26 @@ public class ManualLabelToolbar {
                         next.getROI().getCentroidY());
             }
         }
+    }
+
+    /**
+     * Lazily build the (PathObject → index) lookup for the current image's
+     * detections. Cheap to rebuild only when the active image changes. The
+     * cache assumes the detection list is stable during a labelling session
+     * — if cells are added/removed externally, auto-advance may skip; users
+     * can recover by re-clicking a cell in the viewer.
+     */
+    private void ensureDetectionCache(qupath.lib.images.ImageData<?> imageData) {
+        if (detectionCacheImageData == imageData && detectionCache != null) {
+            return;
+        }
+        var dets = imageData.getHierarchy().getDetectionObjects();
+        detectionCache = new ArrayList<>(dets);
+        detectionIndex = new java.util.IdentityHashMap<>(detectionCache.size() * 2);
+        for (int i = 0; i < detectionCache.size(); i++) {
+            detectionIndex.put(detectionCache.get(i), i);
+        }
+        detectionCacheImageData = imageData;
     }
 
     private void updateLabelCount() {

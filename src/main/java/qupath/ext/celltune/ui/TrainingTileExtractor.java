@@ -4,8 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
-import qupath.lib.images.servers.CroppedImageServer;
 import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.WrappedBufferedImageServer;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
@@ -13,6 +13,7 @@ import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.ImageRegion;
+import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.interfaces.ROI;
 
 import java.awt.image.BufferedImage;
@@ -21,6 +22,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntConsumer;
 
 /**
@@ -59,6 +65,15 @@ public final class TrainingTileExtractor implements AutoCloseable {
         final List<PathObject> contextObjects;   // already translated to tile coords
         final PathObject highlightCell;          // member of contextObjects, in tile coords
         final ImageData.ImageType imageType;
+        /**
+         * Tile pixels pre-rendered at full resolution during extraction. Wrapping
+         * this with a {@link WrappedBufferedImageServer} (see
+         * {@link TrainingTileExtractor#buildTileImageData}) avoids paying the
+         * per-tile disk read cost when the user navigates between cells in the
+         * review UI. May be {@code null} if pre-render failed for this tile, in
+         * which case display will be skipped.
+         */
+        final BufferedImage tilePixels;
 
         TilePrep(String cellId,
                  String imageName,
@@ -66,7 +81,8 @@ public final class TrainingTileExtractor implements AutoCloseable {
                  ImageRegion cropRegion,
                  List<PathObject> contextObjects,
                  PathObject highlightCell,
-                 ImageData.ImageType imageType) {
+                 ImageData.ImageType imageType,
+                 BufferedImage tilePixels) {
             this.cellId = cellId;
             this.imageName = imageName;
             this.sourceImageData = sourceImageData;
@@ -74,6 +90,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
             this.contextObjects = contextObjects;
             this.highlightCell = highlightCell;
             this.imageType = imageType;
+            this.tilePixels = tilePixels;
         }
 
         public String cellId() { return cellId; }
@@ -83,6 +100,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
         public List<PathObject> contextObjects() { return contextObjects; }
         public ImageData<BufferedImage> sourceImageData() { return sourceImageData; }
         public ImageData.ImageType imageType() { return imageType; }
+        public BufferedImage tilePixels() { return tilePixels; }
     }
 
     private final Map<String, TilePrep> preps = new LinkedHashMap<>();
@@ -131,6 +149,19 @@ public final class TrainingTileExtractor implements AutoCloseable {
             }
         }
 
+        // Reuse the ImageData that's already open in QuPath for the currently
+        // selected image — opening a fresh server for a 20k\u00d720k pyramidal TIFF
+        // is one of the biggest costs in the whole extraction pipeline, so we
+        // skip it when we can. The viewer's hierarchy is the same one the user
+        // sees, so reads stay consistent with what's on screen.
+        ImageData<BufferedImage> liveImageData = qupath.getImageData();
+        String liveImageName = null;
+        if (liveImageData != null) {
+            var entry = project.getEntry(liveImageData);
+            if (entry != null) liveImageName = entry.getImageName();
+        }
+        final String liveImageNameFinal = liveImageName;
+
         // Group cells by image so each ImageData is opened at most once.
         Map<String, List<String>> idsByImage = new LinkedHashMap<>();
         for (String id : cellIds) {
@@ -140,123 +171,212 @@ public final class TrainingTileExtractor implements AutoCloseable {
             idsByImage.computeIfAbsent(img, k -> new ArrayList<>()).add(id);
         }
 
-        int processed = 0;
-        int total = cellIds.size();
+        final int total = cellIds.size();
+        final AtomicInteger processed = new AtomicInteger();
 
-        for (var groupEntry : idsByImage.entrySet()) {
-            String imageName = groupEntry.getKey();
-            List<String> ids = groupEntry.getValue();
-            ProjectImageEntry<BufferedImage> entry = entryByName.get(imageName);
-            if (entry == null) {
-                logger.warn("Project entry not found for image '{}'; skipping {} cell(s)", imageName, ids.size());
-                processed += ids.size();
-                if (progress != null) progress.accept(Math.min(processed, total));
-                continue;
-            }
+        // One worker thread per CPU, capped at 8 so we don't thrash a slow disk
+        // or blow through OS file-handle limits on huge projects.
+        int workers = Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors()));
+        ExecutorService pool = Executors.newFixedThreadPool(workers, r -> {
+            Thread t = new Thread(r, "celltune-tile-prep");
+            t.setDaemon(true);
+            return t;
+        });
 
-            ImageData<BufferedImage> imageData;
-            try {
-                imageData = entry.readImageData();
-            } catch (IOException ex) {
-                logger.warn("Could not read ImageData for '{}': {}", imageName, ex.getMessage());
-                processed += ids.size();
-                if (progress != null) progress.accept(Math.min(processed, total));
-                continue;
-            }
+        // Collected preps appended in source order. We populate a parallel array
+        // by index and then drain into the LinkedHashMap to preserve the
+        // original cellId ordering chosen by the sampler.
+        TilePrep[] flatPreps = new TilePrep[total];
 
-            // getServer() lazy-opens the underlying file and may throw a
-            // RuntimeException (e.g. when the source TIFF has been moved or
-            // deleted). Treat it the same as readImageData failure: skip
-            // every cell from this image instead of aborting the whole
-            // review session.
-            ImageServer<BufferedImage> server;
-            int serverW;
-            int serverH;
-            ImageData.ImageType imageType;
-            try {
-                server = imageData.getServer();
-                imageType = imageData.getImageType();
-                serverW = server.getWidth();
-                serverH = server.getHeight();
-            } catch (Exception ex) {
-                logger.warn("Could not open ImageServer for '{}' (file moved or deleted?): {}",
-                        imageName, ex.getMessage());
-                processed += ids.size();
-                if (progress != null) progress.accept(Math.min(processed, total));
-                continue;
-            }
-            openImageData.add(imageData);
-
-            // Index detections by ID for fast cell lookup.
-            Map<String, PathObject> detById = new LinkedHashMap<>();
-            for (PathObject det : imageData.getHierarchy().getDetectionObjects()) {
-                detById.put(det.getID().toString(), det);
-            }
-
-            for (String cellId : ids) {
-                PathObject originalCell = detById.get(cellId);
-                if (originalCell == null) {
-                    logger.warn("Cell {} not found in image '{}'", cellId, imageName);
-                    processed++;
-                    if (progress != null) progress.accept(Math.min(processed, total));
-                    continue;
-                }
-                ROI cellRoi = originalCell.getROI();
-                if (cellRoi == null) {
-                    processed++;
-                    if (progress != null) progress.accept(Math.min(processed, total));
+        try {
+            for (var groupEntry : idsByImage.entrySet()) {
+                String imageName = groupEntry.getKey();
+                List<String> ids = groupEntry.getValue();
+                ProjectImageEntry<BufferedImage> entry = entryByName.get(imageName);
+                if (entry == null) {
+                    logger.warn("Project entry not found for image '{}'; skipping {} cell(s)",
+                            imageName, ids.size());
+                    processed.addAndGet(ids.size());
+                    if (progress != null) progress.accept(Math.min(processed.get(), total));
                     continue;
                 }
 
-                ImageRegion region = computeCropRegion(cellRoi, serverW, serverH);
-
-                // Collect context detections inside the crop and translate to tile coords.
-                ImagePlane tilePlane = ImagePlane.getPlaneWithChannel(0, 0, 0);
-                List<PathObject> ctx = new ArrayList<>();
-                PathObject highlight = null;
-                double dx = -region.getX();
-                double dy = -region.getY();
-
-                for (PathObject det : imageData.getHierarchy().getAllDetectionsForRegion(region)) {
-                    ROI r = det.getROI();
-                    if (r == null) continue;
-                    ROI translated;
+                ImageData<BufferedImage> imageData;
+                boolean isLive = liveImageNameFinal != null && liveImageNameFinal.equals(imageName);
+                if (isLive) {
+                    imageData = liveImageData;
+                } else {
                     try {
-                        translated = r.translate(dx, dy);
-                    } catch (Exception ex) {
+                        imageData = entry.readImageData();
+                    } catch (IOException ex) {
+                        logger.warn("Could not read ImageData for '{}': {}", imageName, ex.getMessage());
+                        processed.addAndGet(ids.size());
+                        if (progress != null) progress.accept(Math.min(processed.get(), total));
                         continue;
                     }
-                    PathClass pc = det.getPathClass();
-                    PathObject copy;
-                    if (det.isCell() && det.getROI() != null) {
-                        // Approximate cell objects with detection objects in the tile;
-                        // we only need them for visual context.
-                        copy = PathObjects.createDetectionObject(translated, pc);
-                    } else {
-                        copy = PathObjects.createDetectionObject(translated, pc);
-                    }
-                    ctx.add(copy);
-                    if (det == originalCell) {
-                        highlight = copy;
-                    }
                 }
 
-                if (highlight == null) {
-                    // Defensive: ensure the sampled cell is always in the tile, even if
-                    // getAllDetectionsForRegion missed it.
-                    ROI translatedCellRoi = cellRoi.translate(dx, dy);
-                    highlight = PathObjects.createDetectionObject(translatedCellRoi, originalCell.getPathClass());
-                    ctx.add(highlight);
+                final ImageServer<BufferedImage> server;
+                final int serverW;
+                final int serverH;
+                final ImageData.ImageType imageType;
+                try {
+                    server = imageData.getServer();
+                    imageType = imageData.getImageType();
+                    serverW = server.getWidth();
+                    serverH = server.getHeight();
+                } catch (Exception ex) {
+                    logger.warn("Could not open ImageServer for '{}' (file moved or deleted?): {}",
+                            imageName, ex.getMessage());
+                    if (!isLive) {
+                        try { imageData.close(); } catch (Exception ignored) {}
+                    }
+                    processed.addAndGet(ids.size());
+                    if (progress != null) progress.accept(Math.min(processed.get(), total));
+                    continue;
+                }
+                if (!isLive) {
+                    // We only register non-live ImageData with the close list \u2014 the
+                    // viewer owns the live one.
+                    openImageData.add(imageData);
                 }
 
-                preps.put(cellId, new TilePrep(cellId, imageName, imageData, region, ctx, highlight, imageType));
-                processed++;
-                if (progress != null) progress.accept(Math.min(processed, total));
+                // Index detections by ID for fast cell lookup.
+                final Map<String, PathObject> detById = new LinkedHashMap<>();
+                for (PathObject det : imageData.getHierarchy().getDetectionObjects()) {
+                    detById.put(det.getID().toString(), det);
+                }
+                final var hierarchy = imageData.getHierarchy();
+
+                // Submit per-cell tasks for parallel pixel reads. We use the
+                // ordinal position in the global cellIds list to write into
+                // flatPreps so insertion order is preserved.
+                List<Future<?>> futures = new ArrayList<>(ids.size());
+                for (final String cellId : ids) {
+                    final int outputIndex = cellIds.indexOf(cellId);
+                    futures.add(pool.submit(() -> {
+                        try {
+                            TilePrep prep = buildPrepForCell(
+                                    cellId, imageName, imageData, hierarchy,
+                                    detById, server, serverW, serverH, imageType);
+                            if (prep != null && outputIndex >= 0 && outputIndex < flatPreps.length) {
+                                flatPreps[outputIndex] = prep;
+                            }
+                        } catch (Throwable t) {
+                            logger.warn("Tile prep failed for cell {} in '{}': {}",
+                                    cellId, imageName, t.toString());
+                        } finally {
+                            int done = processed.incrementAndGet();
+                            if (progress != null) progress.accept(Math.min(done, total));
+                        }
+                    }));
+                }
+                // Wait for this image's cells to finish before moving on — keeps
+                // the active hierarchy/server scoped per image.
+                for (Future<?> f : futures) {
+                    try { f.get(); } catch (Exception ignored) {}
+                }
             }
+        } finally {
+            pool.shutdown();
+            try {
+                pool.awaitTermination(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // Drain in source order into the ordered map.
+        for (int i = 0; i < flatPreps.length; i++) {
+            TilePrep p = flatPreps[i];
+            if (p != null) preps.put(p.cellId, p);
         }
 
         logger.info("TrainingTileExtractor: built {} tile(s) from {} source image(s)",
                 preps.size(), openImageData.size());
+    }
+
+    /**
+     * Build a single {@link TilePrep} for one cell. Safe to call from worker
+     * threads as long as {@link qupath.lib.objects.hierarchy.PathObjectHierarchy}
+     * reads are guarded — we synchronize on the hierarchy when calling
+     * {@code getAllDetectionsForRegion}. ImageServer reads are thread-safe in
+     * QuPath 0.7 (the tile cache is concurrent), so pixel reads run truly in
+     * parallel.
+     */
+    private static TilePrep buildPrepForCell(String cellId,
+                                              String imageName,
+                                              ImageData<BufferedImage> imageData,
+                                              qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
+                                              Map<String, PathObject> detById,
+                                              ImageServer<BufferedImage> server,
+                                              int serverW,
+                                              int serverH,
+                                              ImageData.ImageType imageType) {
+        PathObject originalCell = detById.get(cellId);
+        if (originalCell == null) {
+            logger.warn("Cell {} not found in image '{}'", cellId, imageName);
+            return null;
+        }
+        ROI cellRoi = originalCell.getROI();
+        if (cellRoi == null) return null;
+
+        ImageRegion region = computeCropRegion(cellRoi, serverW, serverH);
+
+        // Collect context detections inside the crop and translate to tile coords.
+        // Hierarchy reads are synchronized so we don't race with another
+        // worker on the same image.
+        @SuppressWarnings("unused")
+        ImagePlane tilePlane = ImagePlane.getPlaneWithChannel(0, 0, 0);
+        List<PathObject> ctx = new ArrayList<>();
+        PathObject highlight = null;
+        double dx = -region.getX();
+        double dy = -region.getY();
+
+        java.util.Collection<PathObject> detectionsInRegion;
+        synchronized (hierarchy) {
+            detectionsInRegion = new ArrayList<>(hierarchy.getAllDetectionsForRegion(region));
+        }
+
+        for (PathObject det : detectionsInRegion) {
+            ROI r = det.getROI();
+            if (r == null) continue;
+            ROI translated;
+            try {
+                translated = r.translate(dx, dy);
+            } catch (Exception ex) {
+                continue;
+            }
+            PathClass pc = det.getPathClass();
+            PathObject copy = PathObjects.createDetectionObject(translated, pc);
+            ctx.add(copy);
+            if (det == originalCell) {
+                highlight = copy;
+            }
+        }
+
+        if (highlight == null) {
+            // Defensive: ensure the sampled cell is always in the tile, even if
+            // getAllDetectionsForRegion missed it.
+            ROI translatedCellRoi = cellRoi.translate(dx, dy);
+            highlight = PathObjects.createDetectionObject(translatedCellRoi, originalCell.getPathClass());
+            ctx.add(highlight);
+        }
+
+        // Pre-render the tile pixels at full resolution. This is the single
+        // most expensive step per cell on a big pyramidal TIFF — doing it now
+        // (in parallel across cells) means the review UI never blocks on disk
+        // when the user clicks Next.
+        BufferedImage tilePixels = null;
+        try {
+            RegionRequest req = RegionRequest.createInstance(server.getPath(), 1.0, region);
+            tilePixels = server.readRegion(req);
+        } catch (Exception ex) {
+            logger.warn("Could not pre-render tile pixels for cell {} in '{}': {}",
+                    cellId, imageName, ex.getMessage());
+        }
+
+        return new TilePrep(cellId, imageName, imageData, region, ctx, highlight, imageType, tilePixels);
     }
 
     private static ImageRegion computeCropRegion(ROI cellRoi, int serverW, int serverH) {
@@ -288,19 +408,41 @@ public final class TrainingTileExtractor implements AutoCloseable {
     }
 
     /**
-     * Build a fresh ImageData wrapping a CroppedImageServer for the given prep.
-     * The returned ImageData is independent of any other tile's ImageData and
-     * may be passed to {@code QuPathViewer.setImageData(...)}.
+     * Build a fresh ImageData for the given prep, ready for the review viewer.
+     *
+     * <p>Uses the pre-rendered {@link TilePrep#tilePixels} (built during
+     * extraction) wrapped in a {@link WrappedBufferedImageServer}. The result
+     * is an in-memory image server — opening it is essentially free, so
+     * switching between cells in the review UI does not touch disk.
+     *
+     * <p>Falls back to a cropped-from-source view if pre-rendered pixels are
+     * unavailable (e.g. the pre-render step failed earlier).
      */
     public static ImageData<BufferedImage> buildTileImageData(TilePrep prep) {
-        ImageServer<BufferedImage> source = prep.sourceImageData.getServer();
-        CroppedImageServer cropped = new CroppedImageServer(source, prep.cropRegion);
+        ImageServer<BufferedImage> tileServer;
+        if (prep.tilePixels != null) {
+            // Cheap path: pixels already in memory.
+            String name = String.format("%s @ (%d,%d,%dx%d)",
+                    prep.imageName,
+                    prep.cropRegion.getX(), prep.cropRegion.getY(),
+                    prep.cropRegion.getWidth(), prep.cropRegion.getHeight());
+            // Preserve the source server's channel metadata so the channel
+            // selector shows real biomarker names (DAPI, CD3, ...) instead of
+            // generic "Channel 1..N" labels.
+            var sourceServer = prep.sourceImageData.getServer();
+            var channels = sourceServer.getMetadata().getChannels();
+            tileServer = new WrappedBufferedImageServer(name, prep.tilePixels, channels);
+        } else {
+            // Slow fallback: read region on demand from the underlying server.
+            ImageServer<BufferedImage> source = prep.sourceImageData.getServer();
+            tileServer = new qupath.lib.images.servers.CroppedImageServer(source, prep.cropRegion);
+        }
 
         var hierarchy = new qupath.lib.objects.hierarchy.PathObjectHierarchy();
         hierarchy.addObjects(prep.contextObjects);
 
         ImageData.ImageType type = prep.imageType == null ? ImageData.ImageType.UNSET : prep.imageType;
-        return new ImageData<>(cropped, hierarchy, type);
+        return new ImageData<>(tileServer, hierarchy, type);
     }
 
     @Override

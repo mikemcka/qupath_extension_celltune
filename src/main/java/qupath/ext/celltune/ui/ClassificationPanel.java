@@ -69,7 +69,6 @@ public class ClassificationPanel extends VBox {
     private final Button trainButton = new Button();
     private final Button confusionsButton = new Button();
     private final Button metricsButton = new Button();
-    private final Button sampleButton = new Button();
     private final Button reviewButton = new Button();
     private final CheckBox currentImageOnlyCheckBox =
             new CheckBox("Sample current image only");
@@ -214,10 +213,9 @@ public class ClassificationPanel extends VBox {
                 "Per-class precision/recall/F1 from an 80/20 stratified split, computed during training."));
         metricsButton.setOnAction(e -> doShowTrainingMetrics());
 
-        sampleButton.setText(STRINGS.getString("classify.sample.button"));
-        sampleButton.setMaxWidth(Double.MAX_VALUE);
-        sampleButton.setDisable(true);
-        sampleButton.setOnAction(e -> doSampleAndReview());
+        // sampleButton was a separate "Sample for Review" entry point; the
+        // current workflow goes straight from training through Enter Review
+        // Mode, so the button is no longer wired into the panel layout.
 
         reviewButton.setText(STRINGS.getString("menu.review").replace("...", ""));
         reviewButton.setMaxWidth(Double.MAX_VALUE);
@@ -229,10 +227,9 @@ public class ClassificationPanel extends VBox {
                 "When checked, sampling and review only consider cells from the currently open image.\n"
               + "Default (unchecked) pools predictions from every project image so review covers all FOVs."));
 
-        HBox actionRow1 = new HBox(6, confusionsButton, metricsButton, sampleButton);
+        HBox actionRow1 = new HBox(6, confusionsButton, metricsButton);
         HBox.setHgrow(confusionsButton, Priority.ALWAYS);
         HBox.setHgrow(metricsButton, Priority.ALWAYS);
-        HBox.setHgrow(sampleButton, Priority.ALWAYS);
 
         // ── Separator ──
         Separator sep = new Separator();
@@ -779,7 +776,6 @@ public class ClassificationPanel extends VBox {
                                     : ""));
                     trainButton.setDisable(false);
                     confusionsButton.setDisable(false);
-                    sampleButton.setDisable(false);
 
                     metricsButton.setDisable(!classifier.hasTrainValMetrics());
 

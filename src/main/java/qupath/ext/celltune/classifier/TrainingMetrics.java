@@ -20,6 +20,11 @@ import java.util.List;
  * @param macroF1       unweighted mean of per-class F1
  * @param weightedF1    support-weighted mean of per-class F1
  * @param total         total number of evaluated samples
+ * @param confusionMatrix square matrix [nClasses][nClasses] where
+ *                       {@code confusionMatrix[trueIdx][predIdx]} is the
+ *                       count of samples whose true class index is
+ *                       {@code trueIdx} and whose predicted class index is
+ *                       {@code predIdx}. Rows sum to {@code support[i]}.
  */
 public record TrainingMetrics(
         String label,
@@ -31,7 +36,8 @@ public record TrainingMetrics(
         double accuracy,
         double macroF1,
         double weightedF1,
-        int total) {
+        int total,
+        int[][] confusionMatrix) {
 
     /**
      * Compute per-class metrics from raw probabilities.
@@ -97,7 +103,7 @@ public record TrainingMetrics(
 
         return new TrainingMetrics(label, List.copyOf(classNames),
                 precision, recall, f1, support,
-                accuracy, macroF1, weightedF1, n);
+                accuracy, macroF1, weightedF1, n, cm);
     }
 
     /**

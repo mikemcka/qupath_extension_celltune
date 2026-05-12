@@ -47,11 +47,7 @@ public class ConfusionMatrixView {
     /** Display modes for the confusion matrix. */
     public enum Mode {
         /** Rows = Model 1 (XGBoost), Columns = Model 2 (LightGBM). Inter-model agreement. */
-        INTER_MODEL,
-        /** Rows = Ground Truth labels, Columns = Model 1 (XGBoost) predictions. */
-        GT_VS_M1,
-        /** Rows = Ground Truth labels, Columns = Model 2 (LightGBM) predictions. */
-        GT_VS_M2
+        INTER_MODEL
     }
 
     private final Stage stage;
@@ -194,33 +190,13 @@ public class ConfusionMatrixView {
         root.setBottom(bottom);
         root.setPadding(new Insets(8));
 
-        // ── Mode toggle (only when ground-truth labels are available) ──────
-        boolean hasLabels = labelStore != null && labelStore.size() > 0;
-        if (hasLabels) {
-            Label modeLbl = new Label("View:");
-            javafx.scene.control.ComboBox<Mode> modeCombo = new javafx.scene.control.ComboBox<>();
-            modeCombo.getItems().addAll(Mode.INTER_MODEL, Mode.GT_VS_M1, Mode.GT_VS_M2);
-            modeCombo.setConverter(new javafx.util.StringConverter<>() {
-                @Override public String toString(Mode m) {
-                    if (m == null) return "";
-                    return switch (m) {
-                        case INTER_MODEL -> "Inter-Model (XGBoost vs LightGBM)";
-                        case GT_VS_M1    -> "Ground Truth vs Model 1 (XGBoost)";
-                        case GT_VS_M2    -> "Ground Truth vs Model 2 (LightGBM)";
-                    };
-                }
-                @Override public Mode fromString(String s) { return null; }
-            });
-            modeCombo.getSelectionModel().select(Mode.INTER_MODEL);
-            modeCombo.setOnAction(ev -> {
-                Mode selected = modeCombo.getValue();
-                if (selected != null && selected != mode) applyMode(selected);
-            });
-            HBox modeBar = new HBox(8, modeLbl, modeCombo);
-            modeBar.setAlignment(Pos.CENTER_LEFT);
-            modeBar.setPadding(new Insets(4, 8, 4, 8));
-            root.setTop(modeBar);
-        }
+        // Inter-model is the only remaining view here. Ground-truth vs model
+        // confusion matrices used to live behind a dropdown; they were removed
+        // because they were computed on the full labelled set (training data
+        // included) and therefore gave optimistic, training-set-contaminated
+        // numbers. The honest version lives in ValidationConfusionMatrixView,
+        // which is reachable from the Training Metrics dialog and uses only
+        // the held-out 20% validation split.
 
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
@@ -282,49 +258,26 @@ public class ConfusionMatrixView {
      * Falls back to INTER_MODEL when GT modes are requested but no labels exist.
      */
     private void applyMode(Mode requested) {
-        Mode m = requested;
-        boolean hasLabels = labelStore != null && labelStore.size() > 0;
-        if ((m == Mode.GT_VS_M1 || m == Mode.GT_VS_M2) && !hasLabels) {
-            m = Mode.INTER_MODEL;
-        }
-        this.mode = m;
+        // Only INTER_MODEL is supported now. The ground-truth modes were
+        // removed because they evaluated on the full labelled set (training
+        // data included) — see ValidationConfusionMatrixView for the honest,
+        // held-out version.
+        this.mode = Mode.INTER_MODEL;
 
         int n = classNames.size();
         int[][] mtx = new int[n][n];
-        int total = 0;
-        int agreements = 0;
+        int total;
+        int agreements;
 
-        if (m == Mode.INTER_MODEL) {
-            // Re-use the inter-model snapshot.
-            for (int i = 0; i < n; i++) {
-                System.arraycopy(interModelMatrix[i], 0, mtx[i], 0, n);
-            }
-            total = interModelTotal;
-            agreements = interModelAgreements;
-            rowAxisTitle = "Model 1 (XGBoost)";
-            colAxisTitle = "Model 2 (LightGBM)";
-            stage.setTitle("CellTune \u2014 Inter-Model Confusion Matrix");
-        } else {
-            // Ground truth (rows) vs predictions (cols).
-            boolean useM1 = (m == Mode.GT_VS_M1);
-            var labels = labelStore.getAllLabels();
-            for (CellPrediction pred : predALL.getAll().values()) {
-                String gt = labels.get(pred.getCellId());
-                if (gt == null) continue;
-                int row = classNames.indexOf(gt);
-                String predLabel = useM1 ? pred.getModel1Label() : pred.getModel2Label();
-                int col = classNames.indexOf(predLabel);
-                if (row < 0 || col < 0) continue;
-                mtx[row][col]++;
-                total++;
-                if (row == col) agreements++;
-            }
-            rowAxisTitle = "Ground Truth";
-            colAxisTitle = useM1 ? "Model 1 (XGBoost)" : "Model 2 (LightGBM)";
-            stage.setTitle("CellTune \u2014 " + (useM1
-                    ? "Ground Truth vs Model 1 (XGBoost)"
-                    : "Ground Truth vs Model 2 (LightGBM)"));
+        // Re-use the inter-model snapshot.
+        for (int i = 0; i < n; i++) {
+            System.arraycopy(interModelMatrix[i], 0, mtx[i], 0, n);
         }
+        total = interModelTotal;
+        agreements = interModelAgreements;
+        rowAxisTitle = "Model 1 (XGBoost)";
+        colAxisTitle = "Model 2 (LightGBM)";
+        stage.setTitle("CellTune \u2014 Inter-Model Confusion Matrix");
 
         // Per-row / per-col TP rates and per-class F1.
         double[] rowTp = new double[n];
@@ -359,15 +312,10 @@ public class ConfusionMatrixView {
         double macroF1 = 0;
         for (double f : f1) macroF1 += f;
         macroF1 = n > 0 ? macroF1 / n : 0;
-        String agreementWord = (m == Mode.INTER_MODEL) ? "Agreement" : "Correct";
-        String disagreementWord = (m == Mode.INTER_MODEL) ? "Disagreement" : "Misclassified";
         String summary = String.format(
-                "Total: %,d cells | %s: %,d (%.1f%%) | %s: %,d (%.1f%%) | Macro F1: %.3f",
-                total, agreementWord, agreements, overallRate,
-                disagreementWord, total - agreements, 100 - overallRate, macroF1);
-        if (m != Mode.INTER_MODEL) {
-            summary += "  \u00b7  cells with a ground-truth label only";
-        }
+                "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%) | Macro F1: %.3f",
+                total, agreements, overallRate,
+                total - agreements, 100 - overallRate, macroF1);
         summaryLabel.setText(summary);
 
         drawMatrix();

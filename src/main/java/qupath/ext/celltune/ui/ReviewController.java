@@ -7,10 +7,8 @@ import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.ProjectImageEntry;
-import qupath.lib.roi.ROIs;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -93,8 +91,11 @@ public class ReviewController {
     private volatile qupath.lib.images.ImageData<BufferedImage> prefetchedImageData;
 
     private int currentIndex = -1;
-    private PathObject highlightMarker;
-    private qupath.lib.objects.hierarchy.PathObjectHierarchy highlightHierarchy;
+    // Lightweight viewer overlay used to draw a magenta selection ring around the
+    // current cell. Painting through a custom overlay avoids the hierarchy-event
+    // and full detection-overlay repaint that a PathObject highlight would trigger.
+    private final SelectionHighlightOverlay highlightOverlay = new SelectionHighlightOverlay();
+    private qupath.lib.gui.viewer.QuPathViewer highlightViewer;
     private boolean sessionClosed;
 
     /**
@@ -421,23 +422,16 @@ public class ReviewController {
         var hierarchy = imageData.getHierarchy();
         hierarchy.getSelectionModel().setSelectedObject(cell);
 
-        clearHighlightMarker();
-
-        double cx = roi.getCentroidX();
-        double cy = roi.getCentroidY();
-        double r = Math.max(roi.getBoundsWidth(), roi.getBoundsHeight()) * 0.8;
-        if (r < 15) {
-            r = 15;
+        // Lightweight magenta ring via custom viewer overlay — no hierarchy event,
+        // no detection-overlay rebuild. Replaces the previous PathObject-based
+        // highlight marker, which was the dominant cost on dense images.
+        if (highlightViewer != viewer) {
+            if (highlightViewer != null) highlightOverlay.uninstallFrom(highlightViewer);
+            highlightOverlay.installOn(viewer);
+            highlightViewer = viewer;
         }
-
-        var highlightRoi = ROIs.createEllipseROI(
-                cx - r, cy - r, r * 2, r * 2, roi.getImagePlane());
-        var highlightClass = PathClass.fromString("CellTune-Highlight",
-                (255 << 16) | (0 << 8) | 255);
-        highlightMarker = PathObjects.createAnnotationObject(highlightRoi, highlightClass);
-        highlightMarker.setLocked(true);
-        hierarchy.addObject(highlightMarker);
-        highlightHierarchy = hierarchy;
+        highlightOverlay.setTargetRoi(roi);
+        viewer.repaint();
 
         logger.debug("Navigated to cell {} in image '{}' ({}/{})",
                 item.cellId, item.imageName, currentIndex + 1, reviewItems.size());
@@ -452,11 +446,11 @@ public class ReviewController {
     }
 
     private void clearHighlightMarker() {
-        if (highlightMarker != null && highlightHierarchy != null) {
-            highlightHierarchy.removeObject(highlightMarker, false);
+        if (highlightViewer != null) {
+            highlightOverlay.uninstallFrom(highlightViewer);
+            highlightViewer.repaint();
         }
-        highlightMarker = null;
-        highlightHierarchy = null;
+        highlightViewer = null;
     }
 
     private void closeSession() {
