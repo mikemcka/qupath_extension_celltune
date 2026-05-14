@@ -47,6 +47,7 @@ public class ReviewController {
     private final PopulationSet predictions;
     private final LabelStore outputLabels;
     private final Map<String, String> cellIdToImageName;
+    private final Map<String, List<String>> cellIdToAnnotationNames;
     private final Map<String, ProjectImageEntry<BufferedImage>> entryByImageName;
 
     private final Map<String, PathObject> currentImageCellCache = new LinkedHashMap<>();
@@ -104,7 +105,7 @@ public class ReviewController {
     public ReviewController(QuPathGUI qupath,
                             List<String> cellIds,
                             PopulationSet predictions) {
-        this(qupath, cellIds, predictions, Map.of(), null);
+        this(qupath, cellIds, predictions, Map.of(), Map.of(), null);
     }
 
     /**
@@ -119,7 +120,18 @@ public class ReviewController {
                             List<String> cellIds,
                             PopulationSet predictions,
                             Map<String, String> cellImageMap) {
-        this(qupath, cellIds, predictions, cellImageMap, null);
+        this(qupath, cellIds, predictions, cellImageMap, Map.of(), null);
+    }
+
+    /**
+     * 5-arg constructor without sample-time annotation map.
+     */
+    public ReviewController(QuPathGUI qupath,
+                            List<String> cellIds,
+                            PopulationSet predictions,
+                            Map<String, String> cellImageMap,
+                            Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
+        this(qupath, cellIds, predictions, cellImageMap, Map.of(), tilePreps);
     }
 
     /**
@@ -130,21 +142,30 @@ public class ReviewController {
      * {@link qupath.lib.images.servers.CroppedImageServer}-backed ImageData.
      * Cells without a corresponding prep fall back to the project-image flow.
      *
-     * @param qupath        QuPath GUI instance
-     * @param cellIds       ordered cell IDs from sampler
-     * @param predictions   prediction set containing sampled cells
-     * @param cellImageMap  cellId → image name mapping
-     * @param tilePreps     optional pre-extracted training tiles, keyed by cellId
+     * @param qupath              QuPath GUI instance
+     * @param cellIds             ordered cell IDs from sampler
+     * @param predictions         prediction set containing sampled cells
+     * @param cellImageMap        cellId → image name mapping
+     * @param cellAnnotationMap   cellId → list of enclosing annotation labels, captured
+     *                            at sample time. May be empty. When non-empty, takes
+     *                            precedence over live hierarchy lookups in
+     *                            {@link #getCurrentCellAnnotationNames()}.
+     * @param tilePreps           optional pre-extracted training tiles, keyed by cellId
      */
     public ReviewController(QuPathGUI qupath,
                             List<String> cellIds,
                             PopulationSet predictions,
                             Map<String, String> cellImageMap,
+                            Map<String, List<String>> cellAnnotationMap,
                             Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
         this.qupath = qupath;
         this.predictions = predictions;
         this.outputLabels = new LabelStore("ReviewOutput");
         this.cellIdToImageName = new LinkedHashMap<>();
+        this.cellIdToAnnotationNames = new LinkedHashMap<>();
+        if (cellAnnotationMap != null) {
+            this.cellIdToAnnotationNames.putAll(cellAnnotationMap);
+        }
         this.entryByImageName = new LinkedHashMap<>();
         this.reviewItems = new ArrayList<>();
         this.tilePreps = tilePreps;
@@ -274,6 +295,64 @@ public class ReviewController {
             return null;
         }
         return predictions.get(cellId);
+    }
+
+    /**
+     * @return ordered list of annotation labels in the currently open image
+     *         whose ROI contains the current cell's centroid. The label is
+     *         the annotation's explicit name, falling back to its PathClass
+     *         name. Empty list if no current cell, no image open, or no
+     *         enclosing labelled annotations.
+     */
+    public List<String> getCurrentCellAnnotationNames() {
+        // Prefer the sample-time geometric map: it works even when the cell
+        // PathObject can't be resolved (e.g. hierarchy not loaded, image swap
+        // in flight, or annotations not yet resolved into parent/child).
+        String cellId = getCurrentCellId();
+        if (cellId != null) {
+            List<String> captured = cellIdToAnnotationNames.get(cellId);
+            if (captured != null && !captured.isEmpty()) {
+                return captured;
+            }
+        }
+
+        // Fallback: live hierarchy lookup (used for non-filtered cross-image
+        // pools where we did not pre-compute annotation membership).
+        PathObject cell = getCurrentCell();
+        if (cell == null || cell.getROI() == null) return List.of();
+        var imageData = qupath.getImageData();
+        if (imageData == null) return List.of();
+
+        double cx = cell.getROI().getCentroidX();
+        double cy = cell.getROI().getCentroidY();
+
+        List<String> names = new ArrayList<>();
+        for (PathObject anno : imageData.getHierarchy().getAnnotationObjects()) {
+            var aroi = anno.getROI();
+            if (aroi == null) continue;
+            String label = annotationLabel(anno);
+            if (label == null) continue;
+            if (aroi.contains(cx, cy)) {
+                names.add(label);
+            }
+        }
+        if (names.isEmpty()) {
+            logger.debug("No enclosing annotation for cell {} in image {} (centroid {},{})",
+                    cellId, getCurrentCellImageName(), cx, cy);
+        }
+        return names;
+    }
+
+    /** Display label: explicit name, else PathClass name, else null. */
+    private static String annotationLabel(PathObject anno) {
+        String name = anno.getName();
+        if (name != null && !name.isBlank()) return name;
+        var pc = anno.getPathClass();
+        if (pc != null) {
+            String pcName = pc.getName();
+            if (pcName != null && !pcName.isBlank()) return pcName;
+        }
+        return null;
     }
 
     /** @return review output labels */

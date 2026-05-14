@@ -15,7 +15,8 @@ import java.util.ResourceBundle;
  *
  * <p>When enabled and a {@link CellTypeTable} is loaded, this sets the
  * channel visibility based on the predicted cell type's associated markers
- * (up to 3) each time the reviewer advances to a new cell.
+ * (up to {@link CellTypeTable#MAX_MARKERS}) each time the reviewer advances
+ * to a new cell.
  *
  * <p>When disabled — or when no CellTypeTable is loaded — the viewer's
  * channel settings are left untouched (the user switches manually).

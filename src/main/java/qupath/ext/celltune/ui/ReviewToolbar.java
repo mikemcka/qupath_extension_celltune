@@ -46,6 +46,10 @@ public class ReviewToolbar extends HBox {
     /** Shows the project image the current cell was sampled from — lets the
      *  user visually verify that review is pulling from multiple images. */
     private final Label imageNameLabel = new Label();
+    /** Shows the names of annotations in the current image whose ROI contains
+     *  the current cell's centroid. Empty when the cell isn't inside any
+     *  named annotation. */
+    private final Label annotationLabel = new Label();
 
     public ReviewToolbar(ReviewController controller,
                          CellTypeTable cellTypeTable,
@@ -104,7 +108,11 @@ public class ReviewToolbar extends HBox {
         imageNameLabel.setMaxWidth(260);
         imageNameLabel.setMinWidth(0);
         imageNameLabel.setEllipsisString("\u2026");
-        statusBox.getChildren().addAll(imageNameLabel, indexLabel, statusDot);
+        annotationLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #0d47a1; -fx-font-weight: bold;");
+        annotationLabel.setMaxWidth(Double.MAX_VALUE);
+        annotationLabel.setMinWidth(Region.USE_PREF_SIZE);
+        annotationLabel.setEllipsisString("\u2026");
+        statusBox.getChildren().addAll(annotationLabel, imageNameLabel, indexLabel, statusDot);
 
         // Right-click on index → jump-to-index dialog
         indexLabel.setOnMouseClicked(event -> {
@@ -151,6 +159,8 @@ public class ReviewToolbar extends HBox {
             statusDot.setFill(Color.WHITE);
             predictionBox.getChildren().clear();
             imageNameLabel.setText("");
+            annotationLabel.setText("");
+            annotationLabel.setTooltip(null);
             return;
         }
 
@@ -161,6 +171,17 @@ public class ReviewToolbar extends HBox {
         imageNameLabel.setText(src == null || src.isBlank() ? "" : src);
         imageNameLabel.setTooltip(
                 (src == null || src.isBlank()) ? null : new Tooltip("Source image: " + src));
+
+        // Show annotation(s) (if any) containing this cell's centroid.
+        java.util.List<String> annoNames = controller.getCurrentCellAnnotationNames();
+        if (annoNames.isEmpty()) {
+            annotationLabel.setText("");
+            annotationLabel.setTooltip(null);
+        } else {
+            String joined = String.join(", ", annoNames);
+            annotationLabel.setText("\u25C6 " + joined);
+            annotationLabel.setTooltip(new Tooltip("Inside annotation(s): " + joined));
+        }
 
         // Rebuild the prediction buttons for the current cell
         updatePredictionButtons();

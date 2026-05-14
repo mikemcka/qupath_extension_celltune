@@ -9,6 +9,7 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
+import javafx.scene.text.Text;
 import javafx.scene.text.TextAlignment;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -24,20 +25,21 @@ import java.util.*;
  * split counts are shown (same across classes).
  * <p>
  * A class selector allows switching between cell types. The top
- * {@value #MAX_BARS} features are displayed sorted by importance.
+ * {@value #MAX_BARS} features are displayed sorted by importance. The window
+ * is resizable; the chart and feature-name column adapt to the available
+ * width so long feature names are not cut off.
  */
 public class FeatureImportanceView {
 
     private static final int MAX_BARS     = 10;
     private static final int BAR_HEIGHT   = 22;
     private static final int BAR_GAP      = 4;
-    private static final int LEFT_MARGIN  = 215;   // space for feature names
     private static final int RIGHT_MARGIN = 70;    // space for value labels
     private static final int TOP_MARGIN   = 20;
     private static final int BOTTOM_MARGIN = 32;
-    private static final int CHART_WIDTH  = 370;
-
-    private static final int CANVAS_WIDTH = LEFT_MARGIN + CHART_WIDTH + RIGHT_MARGIN;
+    private static final int MIN_CHART_WIDTH = 200;
+    private static final int MIN_LEFT_MARGIN = 80;
+    private static final int LEFT_PADDING = 12;    // gap between name and bar
 
     private static final Font BAR_FONT  = Font.font("SansSerif", 11);
     private static final Font AXIS_FONT = Font.font("SansSerif", 10);
@@ -57,6 +59,7 @@ public class FeatureImportanceView {
     private final Stage stage;
     private final ShapResult shapResult;
     private final Canvas canvas;
+    private final Pane canvasHolder;
     private int selectedClassIdx = 0;
 
     /**
@@ -71,13 +74,22 @@ public class FeatureImportanceView {
         int nBars       = Math.min(MAX_BARS, shapResult.featureNames().size());
         int canvasHeight = TOP_MARGIN + nBars * (BAR_HEIGHT + BAR_GAP) + BOTTOM_MARGIN;
 
-        canvas = new Canvas(CANVAS_WIDTH, canvasHeight);
+        canvas = new Canvas(700, canvasHeight);
+        canvasHolder = new Pane(canvas);
+        canvasHolder.setStyle("-fx-background-color: white;");
+        // Bind canvas size to holder so the chart redraws when the window resizes.
+        canvas.widthProperty().bind(canvasHolder.widthProperty());
+        canvas.heightProperty().bind(canvasHolder.heightProperty());
+        canvas.widthProperty().addListener((obs, o, n) -> drawChart());
+        canvas.heightProperty().addListener((obs, o, n) -> drawChart());
 
         stage = new Stage();
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
         stage.setTitle("Feature Importance (SHAP)");
-        stage.setResizable(false);
+        stage.setResizable(true);
+        stage.setMinWidth(420);
+        stage.setMinHeight(canvasHeight + 90);
 
         // ── Class selector ──────────────────────────────────────────────────
         Label classLabel = new Label("Class:");
@@ -119,15 +131,14 @@ public class FeatureImportanceView {
         HBox subtitleRow = new HBox(subtitle);
         subtitleRow.setPadding(new Insets(0, 10, 6, 10));
 
-        // ── Canvas padding wrapper ───────────────────────────────────────────
-        HBox canvasWrapper = new HBox(canvas);
-        canvasWrapper.setPadding(new Insets(0, 6, 4, 6));
-
-        // ── Root layout ─────────────────────────────────────────────────────
-        VBox root = new VBox(topRow, subtitleRow, canvasWrapper);
+        // ── Root layout — canvas grows to fill remaining space ──────────────
+        VBox root = new VBox(topRow, subtitleRow, canvasHolder);
         root.setStyle("-fx-background-color: white;");
+        VBox.setVgrow(canvasHolder, Priority.ALWAYS);
 
-        Scene scene = new Scene(root);
+        // Pick an initial scene width wide enough for the longest feature name.
+        int initialWidth = computeInitialWidth();
+        Scene scene = new Scene(root, initialWidth, canvasHeight + 60);
         stage.setScene(scene);
 
         drawChart();
@@ -140,10 +151,42 @@ public class FeatureImportanceView {
 
     // ── Rendering ───────────────────────────────────────────────────────────────
 
+    /** Measure a string's rendered width with the bar font. */
+    private static double measureText(String s, Font font) {
+        Text t = new Text(s);
+        t.setFont(font);
+        return t.getLayoutBounds().getWidth();
+    }
+
+    /** Pick a sensible initial scene width: widest top-feature name + chart + margins. */
+    private int computeInitialWidth() {
+        // Take the maximum width across all classes' top features so resizing
+        // between classes doesn't immediately clip.
+        double maxNameWidth = 0;
+        List<String> names = shapResult.featureNames();
+        int nFeatures = names.size();
+        for (int c = 0; c < shapResult.classNames().size(); c++) {
+            double[] importance = shapResult.meanAbsShap()[c];
+            Integer[] order = new Integer[nFeatures];
+            for (int i = 0; i < nFeatures; i++) order[i] = i;
+            Arrays.sort(order, (a, b) -> Double.compare(importance[b], importance[a]));
+            int nBars = Math.min(MAX_BARS, nFeatures);
+            for (int i = 0; i < nBars; i++) {
+                double w = measureText(names.get(order[i]), BAR_FONT);
+                if (w > maxNameWidth) maxNameWidth = w;
+            }
+        }
+        int left = (int) Math.max(MIN_LEFT_MARGIN, maxNameWidth + LEFT_PADDING + 4);
+        // Cap initial size so it isn't ridiculous on small screens; user can resize.
+        int chart = 380;
+        return Math.min(1400, left + chart + RIGHT_MARGIN + 24);
+    }
+
     private void drawChart() {
         GraphicsContext gc = canvas.getGraphicsContext2D();
         double w = canvas.getWidth();
         double h = canvas.getHeight();
+        if (w <= 0 || h <= 0) return;
         int c = selectedClassIdx;
 
         // Background
@@ -163,9 +206,20 @@ public class FeatureImportanceView {
         double maxVal = importance[order[0]];
         if (maxVal <= 0) maxVal = 1.0;
 
-        Color barColor = CLASS_COLORS[c % CLASS_COLORS.length];
-
+        // Compute dynamic left margin from the widest visible feature name.
         gc.setFont(BAR_FONT);
+        double maxNameWidth = 0;
+        for (int i = 0; i < nBars; i++) {
+            double tw = measureText(names.get(order[i]), BAR_FONT);
+            if (tw > maxNameWidth) maxNameWidth = tw;
+        }
+        double leftMargin = Math.max(MIN_LEFT_MARGIN, maxNameWidth + LEFT_PADDING);
+        // Cap left margin so the chart still has minimum width.
+        double maxLeft = Math.max(MIN_LEFT_MARGIN, w - RIGHT_MARGIN - MIN_CHART_WIDTH);
+        if (leftMargin > maxLeft) leftMargin = maxLeft;
+        double chartWidth = Math.max(MIN_CHART_WIDTH, w - leftMargin - RIGHT_MARGIN);
+
+        Color barColor = CLASS_COLORS[c % CLASS_COLORS.length];
 
         for (int i = 0; i < nBars; i++) {
             int    fIdx  = order[i];
@@ -174,7 +228,7 @@ public class FeatureImportanceView {
             double ratio = val / maxVal;
 
             double y      = TOP_MARGIN + i * (BAR_HEIGHT + BAR_GAP);
-            double barLen = ratio * CHART_WIDTH;
+            double barLen = ratio * chartWidth;
 
             // Alternating row background
             if (i % 2 == 1) {
@@ -185,23 +239,29 @@ public class FeatureImportanceView {
             // Bar — opacity scales with relative importance
             Color fill = barColor.deriveColor(0, 1, 1, 0.30 + 0.70 * ratio);
             gc.setFill(fill);
-            gc.fillRect(LEFT_MARGIN, y + 2, barLen, BAR_HEIGHT - 4);
+            gc.fillRect(leftMargin, y + 2, barLen, BAR_HEIGHT - 4);
 
-            // Feature name (right-aligned, truncated to fit)
-            String display = name.length() > 35 ? name.substring(0, 32) + "\u2026" : name;
+            // Feature name (right-aligned). If the dynamic margin was capped
+            // and the name is wider than available space, ellipsise as a last
+            // resort so layout doesn't overlap.
+            double availableForName = leftMargin - LEFT_PADDING + 6;
+            String display = name;
+            if (measureText(display, BAR_FONT) > availableForName) {
+                display = ellipsise(display, availableForName, BAR_FONT);
+            }
             gc.setFill(Color.BLACK);
             gc.setTextAlign(TextAlignment.RIGHT);
-            gc.fillText(display, LEFT_MARGIN - 6, y + BAR_HEIGHT - 6);
+            gc.fillText(display, leftMargin - 6, y + BAR_HEIGHT - 6);
 
             // Value label — inside bar if wide enough, otherwise outside
             String valStr = String.format("%.4f", val);
             gc.setTextAlign(TextAlignment.LEFT);
             if (barLen > 48) {
                 gc.setFill(Color.WHITE);
-                gc.fillText(valStr, LEFT_MARGIN + barLen - 46, y + BAR_HEIGHT - 6);
+                gc.fillText(valStr, leftMargin + barLen - 46, y + BAR_HEIGHT - 6);
             } else {
                 gc.setFill(Color.rgb(80, 80, 80));
-                gc.fillText(valStr, LEFT_MARGIN + barLen + 4, y + BAR_HEIGHT - 6);
+                gc.fillText(valStr, leftMargin + barLen + 4, y + BAR_HEIGHT - 6);
             }
         }
 
@@ -210,14 +270,27 @@ public class FeatureImportanceView {
         gc.setLineWidth(1);
         double axisTop    = TOP_MARGIN;
         double axisBottom = TOP_MARGIN + nBars * (BAR_HEIGHT + BAR_GAP);
-        gc.strokeLine(LEFT_MARGIN, axisTop, LEFT_MARGIN, axisBottom);
+        gc.strokeLine(leftMargin, axisTop, leftMargin, axisBottom);
 
         // X-axis label
         gc.setFill(Color.rgb(120, 120, 120));
         gc.setFont(AXIS_FONT);
         gc.setTextAlign(TextAlignment.CENTER);
         gc.fillText("mean |SHAP value|  (average impact on model output)",
-                LEFT_MARGIN + CHART_WIDTH / 2.0,
+                leftMargin + chartWidth / 2.0,
                 axisBottom + 20);
+    }
+
+    /** Truncate {@code s} with an ellipsis so it fits within {@code maxWidth}. */
+    private static String ellipsise(String s, double maxWidth, Font font) {
+        if (measureText(s, font) <= maxWidth) return s;
+        String ellipsis = "\u2026";
+        int lo = 0, hi = s.length();
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (measureText(s.substring(0, mid) + ellipsis, font) <= maxWidth) lo = mid;
+            else hi = mid - 1;
+        }
+        return s.substring(0, lo) + ellipsis;
     }
 }

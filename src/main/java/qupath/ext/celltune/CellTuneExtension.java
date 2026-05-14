@@ -218,8 +218,17 @@ public class CellTuneExtension implements QuPathExtension {
         imageDataListener = (obs, oldData, newData) -> handleImageChange(qupath, oldData, newData);
         qupath.imageDataProperty().addListener(imageDataListener);
 
-        // Dock into QuPath's analysis pane
-        dockPane = new javafx.scene.control.TitledPane(EXTENSION_NAME, classificationPanel);
+        // Dock into QuPath's analysis pane. Wrap the panel in a ScrollPane so
+        // the user can reach widgets that exceed the tab's visible height.
+        javafx.scene.control.ScrollPane scrollPane =
+                new javafx.scene.control.ScrollPane(classificationPanel);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setHbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.setVbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.setPannable(false);
+        scrollPane.getStyleClass().add("celltune-dock-scroll");
+
+        dockPane = new javafx.scene.control.TitledPane(EXTENSION_NAME, scrollPane);
         dockPane.setCollapsible(true);
         dockPane.setExpanded(false);
         dockTab = new javafx.scene.control.Tab(EXTENSION_NAME, dockPane);
@@ -2140,7 +2149,7 @@ public class CellTuneExtension implements QuPathExtension {
                                      PopulationSet reviewPredictions,
                                      TrainingTileExtractor extractor) {
         var reviewController = new ReviewController(qupath, lastSampledCellIds,
-                reviewPredictions, lastSampledCellImageMap, extractor.getPreps());
+                reviewPredictions, lastSampledCellImageMap, Map.of(), extractor.getPreps());
         if (reviewController.size() == 0) {
             extractor.close();
             Dialogs.showErrorMessage(EXTENSION_NAME,

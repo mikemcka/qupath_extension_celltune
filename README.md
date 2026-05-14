@@ -8,10 +8,14 @@ No Python dependency is required. Everything runs inside QuPath using Java/JavaF
 
 - **Dual-model disagreement detection** — two models are trained on the same labels; cells where they disagree are flagged for review. Model types are configurable: **XGBoost**, **LightGBM**, or **Random Forest**. The default pairing is XGBoost + LightGBM. Both boosted models attempt GPU (CUDA) training automatically and fall back to CPU if unavailable.
 - **6-tier weighted uncertainty sampling** — the review sample is built in six priority tiers: **Tier 0 (FOV balance):** disagreement cells are grouped by field of view and sampled proportionally so that no single FOV dominates the review queue. **Tier 1 (confusion-weighted):** remaining disagreement cells weighted by confusion severity (`w = 2 - agreementRate[i] - agreementRate[j]`). **Tier 2 (low-confidence agreement):** cells where both models agree but confidence is below 60%. **Tier 3 (boundary):** cells near the decision boundary (confidence between 60–75%). **Tier 4 (random disagreement):** any remaining disagreement cells sampled uniformly. **Tier 5 (exploration):** agreement cells sampled uniformly to guard against rare cell types that both models confidently misclassify.
-- **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override. When the averaged probability prediction differs from both individual models, an additional "Avg" button appears. Entering review mode prompts for how many cells to sample each time, and if switching to a new image with a trained classifier, predictions are automatically applied before review begins.
+- **Interactive review mode** — navigate cell-by-cell through sampled disagreements; for each cell the toolbar shows the top prediction from each model (XGBoost & LightGBM) with confidence percentages as clickable buttons, plus an "All Classes" dropdown populated from the QuPath project class list for manual override. When the averaged probability prediction differs from both individual models, an additional "Avg" button appears. Entering review mode prompts for how many cells to sample each time, and if switching to a new image with a trained classifier, predictions are automatically applied before review begins. The toolbar also displays the **name(s) of the annotation region(s)** that the current cell falls inside (bold dark blue, e.g. `◆ Tumour, Stroma`), so the spatial context is visible without leaving review.
+- **Annotation-keyword sampling filter** — an optional comma-separated keyword field in the Classification Panel restricts the review sampling pool to cells whose centroid lies inside an annotation whose name (or PathClass, as a fallback) contains one of the keywords. Matching is case-insensitive substring. The filter applies per-image across the whole project — each image's hierarchy is loaded in parallel (capped at `min(4, cores/2)` threads via a `ForkJoinPool`) so review pools can mix cells from many images that all sit inside, e.g., `tumour` or `stroma` annotations. Leaving the field empty disables filtering and samples from the full prediction pool.
+- **Sample-time annotation capture** — for every cell entering the sampling pool, the extension geometrically tests its centroid against the loaded annotations (current image always; other images when the keyword filter is active) and stores the resulting cell → annotation-label map alongside the cell → image map. Review-mode display reads from this captured map, so the annotation badge shows correctly even when annotations have not been resolved as parent objects in the QuPath hierarchy or when the cell's source image has just been swapped in.
 - **Confusion matrix visualisation** — Canvas-based inter-model confusion plot with per-class agreement rates, per-class F1 scores, macro F1, and PNG export
 - **Manual Label Mode** — floating toolbar for direct cell labelling outside Review Mode. Click cells in the viewer and assign classes via buttons or an "All Classes" dropdown. Labels are written to the ground-truth LabelStore. Optional auto-advance selects the next detection automatically.
-- **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane. Includes boosting rounds and depth spinners, resampling strategy, auto-tune, and early stopping options.
+- **Docked sidebar panel** — Train, plot confusions, sample, and review all from a single panel docked in QuPath's analysis pane. Includes boosting rounds and depth spinners, resampling strategy, auto-tune, and early stopping options. The panel is wrapped in a vertical scroll pane so all controls remain reachable on short displays.
+- **Resizable feature importance window** — the SHAP / split-count bar chart resizes with the window and computes its left margin dynamically from measured feature-name widths, so long feature names are never truncated.
+- **Auto-channel switching for up to 5 markers** — the marker table now supports up to 5 channels per cell type (previously 3). The CSV header is generated dynamically (`Marker1…Marker5`).
 - **Model type selectors** — choose **Model 1** and **Model 2** independently from XGBoost, LightGBM, or Random Forest in the training confirmation dialog. Default pairing is XGBoost + LightGBM.
 - **Multi-image training data pooling** — optionally pool labelled cells from all project images into a single training set. A "Pool labels from all images" checkbox appears in the Classification Panel and training confirmation dialog. When enabled, the extension opens each project image, collects annotation-based labels (landmarks) plus persisted review and manual labels, extracts features using the same column ordering, and adds them as supplementary training rows. Per-image labels are automatically saved to `<project>/celltune/image-labels/` after training, review, and manual labelling sessions.
 - **Resampling strategies** — address class imbalance before training with a selectable strategy: **SMOTE** (synthetic minority oversampling via k-NN interpolation), **ADASYN** (adaptive synthetic sampling weighted toward harder boundary examples), **Tomek links** (remove majority-class samples forming mutual nearest-neighbour pairs with minority samples), or combinations (**SMOTE + Tomek**, **ADASYN + Tomek**). A dropdown appears in both the Classification Panel and the training confirmation dialog. Training logs report the original and resampled class distributions.
@@ -112,13 +116,14 @@ Default flagging reasons:
 
 ### Marker Table Format
 
-A simple CSV with up to 3 marker columns:
+A simple CSV with up to 5 marker columns. Trailing columns may be left blank.
 
 ```csv
-CellType,Marker1,Marker2,Marker3
-CD4T,CD4,CD3,
-Bcell,CD20,,
-Macrophage,CD68,CD163,CD11b
+CellType,Marker1,Marker2,Marker3,Marker4,Marker5
+CD4T,CD4,CD3,,,
+Bcell,CD20,,,,
+Macrophage,CD68,CD163,CD11b,,
+Treg,CD4,CD25,FOXP3,CD3,
 ```
 
 ### Image Switching Improvements
@@ -131,6 +136,16 @@ When the active-learning sampler returns cells from images other than the one cu
 - **Background prefetch of the next image.** Once the user lands on a cell, if the next reviewable cell lives in a different image, a daemon thread starts reading that image's data so QuPath's tile cache is warm by the time the user navigates there. Failures are non-fatal and do not block the review thread.
 
 These changes are in [`ReviewController.java`](src/main/java/qupath/ext/celltune/ui/ReviewController.java) and the openSelectedImage handler in [`ProjectPredictionSummaryView.java`](src/main/java/qupath/ext/celltune/ui/ProjectPredictionSummaryView.java).
+
+### Annotation-Based Review
+
+In addition to the dual-model uncertainty signal, review sampling can be **spatially scoped** by annotation regions:
+
+- **Keyword filter.** A "Specify annotations" text field in the Classification Panel accepts a comma-separated list of keywords. When non-empty, only cells whose centroid lies inside an annotation whose name — or PathClass, as a fallback for unnamed annotations — contains one of those keywords (case-insensitive substring) are eligible for sampling. Useful for, e.g., reviewing only cells inside `tumour` / `stroma` regions across the whole project.
+- **Cross-image parallelism.** When the filter is active and cross-image sampling is enabled, each project image's hierarchy is read in parallel via a bounded `ForkJoinPool` (capped at `min(4, cores/2)` threads). `readImageData()` returns an independent `ImageData` per call, so per-thread state is isolated. JSON prediction files are still loaded with `parallelStream()` separately.
+- **Annotation badge in the toolbar.** During review, the toolbar shows a bold dark-blue label naming the annotation(s) that geometrically contain the current cell (e.g. `◆ Tumour, Stroma`). The label is populated from a cell → annotation map captured at **sampling time**, while the source hierarchy was guaranteed loaded. This means the badge stays correct even when annotations have not been resolved as parent objects in the QuPath hierarchy, when the cell's source image has just been opened, or when the cell PathObject cannot be looked up. If no captured entry exists for a cell (e.g. non-filtered cross-image pools), the toolbar falls back to a live hierarchy lookup.
+
+The capture happens in `mapCellsToContainingAnnotations()` in [`ClassificationPanel.java`](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java); display and fallback live in `getCurrentCellAnnotationNames()` in [`ReviewController.java`](src/main/java/qupath/ext/celltune/ui/ReviewController.java) and `refreshStatus()` in [`ReviewToolbar.java`](src/main/java/qupath/ext/celltune/ui/ReviewToolbar.java).
 
 ## Building from Source
 

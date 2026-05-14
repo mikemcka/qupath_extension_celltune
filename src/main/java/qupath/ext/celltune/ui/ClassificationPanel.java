@@ -49,6 +49,7 @@ public class ClassificationPanel extends VBox {
     private double[] lastAgreementRates;
     private List<String> lastSampledCellIds;
     private Map<String, String> lastSampledCellImageMap = Map.of();
+    private Map<String, List<String>> lastSampledCellAnnotationsMap = Map.of();
     private PopulationSet lastSampledPredictions;
     private FeatureNormalizer featureNormalizer;
     private List<GroundTruthIO.TrainingRow> importedTrainingRows;
@@ -72,6 +73,7 @@ public class ClassificationPanel extends VBox {
     private final Button reviewButton = new Button();
     private final CheckBox currentImageOnlyCheckBox =
             new CheckBox("Sample current image only");
+    private final TextField annotationKeywordField = new TextField();
     private final CheckBox showFeatureImportanceCheckBox =
             new CheckBox("Show top 10 feature importance after training");
     private final Label labelCountLabel = new Label("Labels: 0");
@@ -227,6 +229,14 @@ public class ClassificationPanel extends VBox {
                 "When checked, sampling and review only consider cells from the currently open image.\n"
               + "Default (unchecked) pools predictions from every project image so review covers all FOVs."));
 
+        annotationKeywordField.setPromptText("Filter by annotation keywords (comma-separated, e.g. Tumour)");
+        annotationKeywordField.setTooltip(new javafx.scene.control.Tooltip(
+                "Optional. Comma-separated keywords matched (case-insensitive substring) against\n"
+              + "annotation names. Across every project image (unless 'Sample current image only'\n"
+              + "is checked), only cells whose centroid falls inside an annotation whose name\n"
+              + "contains one of the keywords are eligible for sampling/review.\n"
+              + "Leave blank to sample all cells."));
+
         HBox actionRow1 = new HBox(6, confusionsButton, metricsButton);
         HBox.setHgrow(confusionsButton, Priority.ALWAYS);
         HBox.setHgrow(metricsButton, Priority.ALWAYS);
@@ -255,6 +265,7 @@ public class ClassificationPanel extends VBox {
                 new Separator(),
                 actionRow1,
                 currentImageOnlyCheckBox,
+                buildAnnotationFilterBox(),
                 reviewButton,
                 sep,
                 populationPanel
@@ -322,6 +333,7 @@ public class ClassificationPanel extends VBox {
         this.lastSampledCellIds = ids;
         if (ids == null || ids.isEmpty()) {
             this.lastSampledCellImageMap = Map.of();
+            this.lastSampledCellAnnotationsMap = Map.of();
             this.lastSampledPredictions = null;
         }
         reviewButton.setDisable(ids == null || ids.isEmpty());
@@ -1119,7 +1131,7 @@ public class ClassificationPanel extends VBox {
     private void launchReviewStageWithTiles(PopulationSet reviewPredictions,
                                              TrainingTileExtractor extractor) {
         var reviewController = new ReviewController(qupath, lastSampledCellIds,
-                reviewPredictions, lastSampledCellImageMap, extractor.getPreps());
+                reviewPredictions, lastSampledCellImageMap, lastSampledCellAnnotationsMap, extractor.getPreps());
         if (reviewController.size() == 0) {
             extractor.close();
             Dialogs.showErrorMessage(STRINGS.getString("name"),
@@ -1227,10 +1239,14 @@ public class ClassificationPanel extends VBox {
     private static final class SamplingContext {
         private final PopulationSet predictions;
         private final Map<String, String> cellToImage;
+        private final Map<String, List<String>> cellToAnnotations;
 
-        private SamplingContext(PopulationSet predictions, Map<String, String> cellToImage) {
+        private SamplingContext(PopulationSet predictions,
+                                Map<String, String> cellToImage,
+                                Map<String, List<String>> cellToAnnotations) {
             this.predictions = predictions;
             this.cellToImage = cellToImage;
+            this.cellToAnnotations = cellToAnnotations;
         }
 
         private PopulationSet predictions() {
@@ -1239,6 +1255,10 @@ public class ClassificationPanel extends VBox {
 
         private Map<String, String> cellToImage() {
             return cellToImage;
+        }
+
+        private Map<String, List<String>> cellToAnnotations() {
+            return cellToAnnotations;
         }
     }
 
@@ -1259,6 +1279,10 @@ public class ClassificationPanel extends VBox {
             java.util.function.BiConsumer<Integer, Integer> progressCallback) {
         PopulationSet pooled = new PopulationSet("Pred_ALL");
         Map<String, String> cellToImage = new LinkedHashMap<>();
+        // Per-cell annotation names captured at sample time, while we still
+        // have the source hierarchy loaded. Lets review-mode display annotation
+        // membership for cross-image cells without re-resolving hierarchies.
+        Map<String, List<String>> cellToAnnotations = new LinkedHashMap<>();
 
         var project = qupath.getProject();
         var imageData = qupath.getImageData();
@@ -1271,13 +1295,31 @@ public class ClassificationPanel extends VBox {
         }
         final String currentImageNameFinal = currentImageName;
 
+        // Build optional annotation-keyword filter. When keywords are present,
+        // only cells whose centroid lies inside an annotation whose name (or
+        // PathClass) contains one of the keywords are eligible.
+        List<String> annotationKeywords = parseAnnotationKeywords();
+        boolean annotationFilterActive = !annotationKeywords.isEmpty();
+
+        // Resolve current image's allowed-cells map (and annotation names per
+        // cell). For the current image we always compute it because the
+        // hierarchy is free — we just need to walk annotations once.
+        Map<String, List<String>> currentImageAnnotations = (imageData != null)
+                ? mapCellsToContainingAnnotations(imageData, annotationKeywords)
+                : Map.of();
+        Set<String> currentImageFilterIds = annotationFilterActive
+                ? currentImageAnnotations.keySet()
+                : null;
+
         if (predAll != null && predAll.size() > 0) {
-            addPredictionsToSamplingPool(pooled, predAll, currentImageNameFinal, cellToImage);
+            addPredictionsToSamplingPool(pooled, predAll, currentImageNameFinal,
+                    cellToImage, currentImageFilterIds, currentImageAnnotations, cellToAnnotations);
         } else if (project != null && currentImageNameFinal != null) {
             try {
                 var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageNameFinal);
                 if (loadedCurrent != null && loadedCurrent.size() > 0) {
-                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageNameFinal, cellToImage);
+                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageNameFinal,
+                            cellToImage, currentImageFilterIds, currentImageAnnotations, cellToAnnotations);
                 }
             } catch (Exception ignored) {
             }
@@ -1286,10 +1328,14 @@ public class ClassificationPanel extends VBox {
         if (project != null) {
             if (currentImageOnlyCheckBox.isSelected()) {
                 if (progressCallback != null) progressCallback.accept(0, 0);
-                return new SamplingContext(pooled, cellToImage);
+                return new SamplingContext(pooled, cellToImage, cellToAnnotations);
             }
             @SuppressWarnings("unchecked")
             var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            Map<String, ProjectImageEntry<BufferedImage>> entryByName = new LinkedHashMap<>();
+            for (var e : entries) {
+                if (e != null && e.getImageName() != null) entryByName.put(e.getImageName(), e);
+            }
             List<String> otherNames = entries.stream()
                     .filter(e -> e != null && e.getImageName() != null)
                     .map(ProjectImageEntry::getImageName)
@@ -1313,31 +1359,182 @@ public class ClassificationPanel extends VBox {
                     })
                     .collect(Collectors.toList());
 
+            // When the filter is active, load each image's hierarchy in
+            // parallel (capped) and capture both filter IDs and the
+            // cell→annotation-names map. readImageData() returns a fresh
+            // ImageData per call so per-thread instances are independent.
+            Map<String, Map<String, List<String>>> annotationsByImage;
+            if (annotationFilterActive) {
+                int hierarchyThreads = Math.max(1, Math.min(4,
+                        Runtime.getRuntime().availableProcessors() / 2));
+                java.util.concurrent.ForkJoinPool hierPool =
+                        new java.util.concurrent.ForkJoinPool(hierarchyThreads);
+                try {
+                    annotationsByImage = hierPool.submit(() -> loaded.parallelStream()
+                            .filter(e -> e.getValue() != null && e.getValue().size() > 0)
+                            .map(e -> {
+                                var entry = entryByName.get(e.getKey());
+                                if (entry == null) return null;
+                                try {
+                                    var otherImageData = entry.readImageData();
+                                    Map<String, List<String>> m =
+                                            mapCellsToContainingAnnotations(otherImageData, annotationKeywords);
+                                    return m.isEmpty()
+                                            ? null
+                                            : new AbstractMap.SimpleEntry<>(e.getKey(), m);
+                                } catch (Exception ex) {
+                                    return null;
+                                }
+                            })
+                            .filter(java.util.Objects::nonNull)
+                            .collect(Collectors.toMap(
+                                    Map.Entry::getKey,
+                                    Map.Entry::getValue,
+                                    (a, b) -> a,
+                                    LinkedHashMap::new))
+                    ).get();
+                } catch (Exception ex) {
+                    annotationsByImage = Map.of();
+                } finally {
+                    hierPool.shutdown();
+                }
+            } else {
+                annotationsByImage = null;
+            }
+
             // Merge serially to keep dedup/order deterministic.
             for (var e : loaded) {
-                if (e.getValue() != null && e.getValue().size() > 0) {
-                    addPredictionsToSamplingPool(pooled, e.getValue(), e.getKey(), cellToImage);
+                PopulationSet ps = e.getValue();
+                if (ps == null || ps.size() == 0) continue;
+                Set<String> allowedIds = null;
+                Map<String, List<String>> annoMap = null;
+                if (annotationFilterActive) {
+                    annoMap = annotationsByImage.get(e.getKey());
+                    if (annoMap == null) continue; // no matching annotations in this image
+                    allowedIds = annoMap.keySet();
                 }
+                addPredictionsToSamplingPool(pooled, ps, e.getKey(),
+                        cellToImage, allowedIds, annoMap, cellToAnnotations);
             }
         }
 
-        return new SamplingContext(pooled, cellToImage);
+        return new SamplingContext(pooled, cellToImage, cellToAnnotations);
+    }
+
+    /** Build a small titled wrapper for the annotation keyword field. */
+    private VBox buildAnnotationFilterBox() {
+        Label title = new Label("Specify annotations");
+        title.setStyle("-fx-font-size: 11px; -fx-text-fill: #555;");
+        VBox box = new VBox(2, title, annotationKeywordField);
+        return box;
+    }
+
+    /** Parse the annotation-keyword text field into a non-null list of trimmed, non-empty keywords. */
+    private List<String> parseAnnotationKeywords() {
+        String raw = annotationKeywordField.getText();
+        if (raw == null || raw.isBlank()) return List.of();
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Return the set of detection IDs in {@code imageData} whose centroid lies
+     * inside any annotation whose name contains one of the keywords
+     * (case-insensitive substring match). Returns an empty set if no annotation
+     * matches — caller treats that as "no eligible cells".
+    /**
+     * Map detection IDs in {@code imageData} to the labels of all annotations
+     * (matched by keyword substring; empty keyword list means "all named
+     * annotations") whose ROI geometrically contains the detection's
+     * centroid. This is computed at sample time so review-mode display does
+     * not depend on hierarchy parent/child resolution. Returns an empty map
+     * if no eligible annotations exist.
+     */
+    private static Map<String, List<String>> mapCellsToContainingAnnotations(
+            qupath.lib.images.ImageData<BufferedImage> imageData,
+            List<String> keywords) {
+        var hierarchy = imageData.getHierarchy();
+        boolean filtering = keywords != null && !keywords.isEmpty();
+        List<String> lowerKeywords = filtering
+                ? keywords.stream().map(k -> k.toLowerCase(Locale.ROOT)).collect(Collectors.toList())
+                : List.of();
+
+        // (annotation, displayLabel) pairs we'll test centroids against.
+        List<Map.Entry<PathObject, String>> matchingAnnotations = new ArrayList<>();
+        for (PathObject anno : hierarchy.getAnnotationObjects()) {
+            if (anno.getROI() == null) continue;
+            String label = annotationDisplayLabel(anno);
+            if (label == null) continue;
+            if (filtering) {
+                String lower = label.toLowerCase(Locale.ROOT);
+                if (lowerKeywords.stream().noneMatch(lower::contains)) continue;
+            }
+            matchingAnnotations.add(new AbstractMap.SimpleEntry<>(anno, label));
+        }
+
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        if (matchingAnnotations.isEmpty()) return out;
+
+        for (PathObject det : hierarchy.getDetectionObjects()) {
+            var roi = det.getROI();
+            if (roi == null) continue;
+            double cx = roi.getCentroidX();
+            double cy = roi.getCentroidY();
+            List<String> names = null;
+            for (var pair : matchingAnnotations) {
+                if (pair.getKey().getROI().contains(cx, cy)) {
+                    if (names == null) names = new ArrayList<>(2);
+                    if (!names.contains(pair.getValue())) names.add(pair.getValue());
+                }
+            }
+            if (names != null) {
+                out.put(det.getID().toString(), names);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Display label for an annotation: explicit name if set, otherwise the
+     * PathClass name. Returns null only when both are absent.
+     */
+    static String annotationDisplayLabel(PathObject anno) {
+        String name = anno.getName();
+        if (name != null && !name.isBlank()) return name;
+        var pc = anno.getPathClass();
+        if (pc != null) {
+            String pcName = pc.getName();
+            if (pcName != null && !pcName.isBlank()) return pcName;
+        }
+        return null;
     }
 
     private static void addPredictionsToSamplingPool(PopulationSet pooled,
                                                      PopulationSet source,
                                                      String imageName,
-                                                     Map<String, String> cellToImage) {
+                                                     Map<String, String> cellToImage,
+                                                     Set<String> allowedCellIds,
+                                                     Map<String, List<String>> sourceAnnotations,
+                                                     Map<String, List<String>> cellToAnnotations) {
         if (source == null || source.size() == 0) return;
         String safeImageName = (imageName == null || imageName.isBlank()) ? "image" : imageName;
 
         for (var entry : source.getAll().entrySet()) {
             String cellId = entry.getKey();
             if (cellId == null || cellId.isBlank()) continue;
+            if (allowedCellIds != null && !allowedCellIds.contains(cellId)) continue;
             if (pooled.get(cellId) != null) continue;
 
             pooled.put(cellId, entry.getValue());
             cellToImage.put(cellId, safeImageName);
+            if (sourceAnnotations != null) {
+                List<String> annos = sourceAnnotations.get(cellId);
+                if (annos != null && !annos.isEmpty()) {
+                    cellToAnnotations.put(cellId, annos);
+                }
+            }
         }
     }
 
@@ -1364,10 +1561,15 @@ public class ClassificationPanel extends VBox {
         }
 
         lastSampledCellImageMap = new LinkedHashMap<>();
+        lastSampledCellAnnotationsMap = new LinkedHashMap<>();
         for (String id : lastSampledCellIds) {
             String imageName = samplingContext.cellToImage().get(id);
             if (imageName != null) {
                 lastSampledCellImageMap.put(id, imageName);
+            }
+            List<String> annos = samplingContext.cellToAnnotations().get(id);
+            if (annos != null && !annos.isEmpty()) {
+                lastSampledCellAnnotationsMap.put(id, annos);
             }
         }
         lastSampledPredictions = samplingContext.predictions();

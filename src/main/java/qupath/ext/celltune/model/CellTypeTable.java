@@ -33,7 +33,7 @@ import java.util.*;
 public class CellTypeTable {
 
     /** Maximum number of marker channels per cell type (for display). */
-    public static final int MAX_MARKERS = 3;
+    public static final int MAX_MARKERS = 5;
 
     private final Map<String, List<String>> table;               // cellType → display markers
     private final Map<String, String> primaryMarkers;            // cellType → primary expression
@@ -267,7 +267,11 @@ public class CellTypeTable {
                     writer.newLine();
                 }
             } else {
-                writer.write("CellType,Marker1,Marker2,Marker3");
+                StringBuilder header = new StringBuilder("CellType");
+                for (int i = 1; i <= MAX_MARKERS; i++) {
+                    header.append(",Marker").append(i);
+                }
+                writer.write(header.toString());
                 writer.newLine();
                 for (var entry : table.entrySet()) {
                     StringBuilder sb = new StringBuilder();
