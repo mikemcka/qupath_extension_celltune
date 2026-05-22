@@ -108,6 +108,16 @@ public class TrainingMetricsView {
     /** Rebuild the displayed text based on the train-rows checkbox state. */
     private void refresh(boolean includeTrain) {
         StringBuilder sb = new StringBuilder();
+        int trainCount = totalSupport(m1Train);
+        int valCount = totalSupport(m1Val);
+        int total = trainCount + valCount;
+        if (total > 0) {
+            sb.append(String.format(
+                    "Training data used: %d labelled cells (80%% train = %d, 20%% val = %d).%n",
+                    total, trainCount, valCount));
+            sb.append("If this disagrees with the sidebar label count, some labels were\n");
+            sb.append("dropped \u2014 see the training log for the WARN line.\n\n");
+        }
         sb.append("Held-out validation metrics from an 80/20 stratified split on labelled\n");
         sb.append("data. These are the honest, generalisation-quality F1 numbers.\n");
         if (includeTrain) {
@@ -128,6 +138,14 @@ public class TrainingMetricsView {
         if (m == null) return;
         sb.append(m.toFormattedReport());
         sb.append('\n');
+    }
+
+    /** Sum of per-class support — equals the total number of samples scored. */
+    private static int totalSupport(TrainingMetrics m) {
+        if (m == null || m.support() == null) return 0;
+        int sum = 0;
+        for (int s : m.support()) sum += s;
+        return sum;
     }
 
     // \u2500\u2500 CSV export \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

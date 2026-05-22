@@ -844,6 +844,10 @@ public class ClassificationPanel extends VBox {
                 Platform.runLater(() -> {
                     progressBar.progressProperty().unbind();
                     statusLabel.textProperty().unbind();
+                    progressBar.setProgress(1.0);
+                    statusLabel.setText("Training complete \u2014 " + predAll.size()
+                            + " cells classified, "
+                            + predAll.getDisagreementCount() + " disagreements.");
                     dlgProgressBar.progressProperty().unbind();
                     dlgStatusLabel.textProperty().unbind();
                     dlgProgressBar.setProgress(1.0);
@@ -855,6 +859,9 @@ public class ClassificationPanel extends VBox {
                                     : ""));
                     trainButton.setDisable(false);
                     confusionsButton.setDisable(false);
+                    // Enable Review Mode now that predictions exist; clicking it
+                    // will trigger uncertainty sampling on demand.
+                    reviewButton.setDisable(predAll == null || predAll.size() == 0);
 
                     metricsButton.setDisable(!classifier.hasTrainValMetrics());
 
@@ -1233,14 +1240,60 @@ public class ClassificationPanel extends VBox {
             var outputLabels = reviewController.getOutputLabels();
             if (outputLabels.size() > 0) {
                 if (labelStore == null) labelStore = new LabelStore("CellTune");
-                labelStore.mergeFrom(outputLabels);
+
+                // Pull in any cellId → imageName mappings that the review
+                // controller learned while labeling (e.g. manually-clicked
+                // context cells inside a tile, which weren't in the sampled
+                // queue). Without this, persistReviewedLabelsByImage would
+                // fall back to currentImageName and route those labels to the
+                // wrong file.
+                var reviewCellImageMap = reviewController.getCellImageMap();
+                if (reviewCellImageMap != null && !reviewCellImageMap.isEmpty()) {
+                    if (!(lastSampledCellImageMap instanceof LinkedHashMap)) {
+                        lastSampledCellImageMap = new LinkedHashMap<>(lastSampledCellImageMap);
+                    }
+                    for (var rEntry : reviewCellImageMap.entrySet()) {
+                        if (rEntry.getKey() != null && rEntry.getValue() != null) {
+                            lastSampledCellImageMap.putIfAbsent(rEntry.getKey(), rEntry.getValue());
+                        }
+                    }
+                }
+
+                // Split reviewed labels into current-image vs other-image so the
+                // in-memory store only ever holds labels for the current image's
+                // detections. Other-image labels still get persisted to disk and
+                // are picked up by the supplementary pooling loop on next train.
+                var currentImageData = qupath.getImageData();
+                java.util.Set<String> currentImageDetIds = new java.util.HashSet<>();
+                if (currentImageData != null) {
+                    for (var det : currentImageData.getHierarchy().getDetectionObjects()) {
+                        currentImageDetIds.add(det.getID().toString());
+                    }
+                }
+
+                int mergedToCurrent = 0;
+                int savedToOthers = 0;
+                for (var entry : outputLabels.getAllLabels().entrySet()) {
+                    if (currentImageDetIds.contains(entry.getKey())) {
+                        labelStore.setLabel(entry.getKey(), entry.getValue());
+                        mergedToCurrent++;
+                    } else {
+                        savedToOthers++;
+                    }
+                }
+
                 refreshStats();
                 if (onLabelStoreChanged != null) onLabelStoreChanged.accept(labelStore);
 
                 persistReviewedLabelsByImage(outputLabels);
 
+                final int mergedFinal = mergedToCurrent;
+                final int savedFinal = savedToOthers;
                 Dialogs.showInfoNotification(STRINGS.getString("name"),
-                        String.format("Review complete: %d labels merged.", outputLabels.size()));
+                        String.format(
+                                "Review complete: %d labels in current image, "
+                                        + "%d saved to other project images (pooled on next train).",
+                                mergedFinal, savedFinal));
             }
             extractor.close();
         });

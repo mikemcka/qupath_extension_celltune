@@ -153,17 +153,34 @@ public class DualModelClassifier {
         List<float[]> trainRows = new ArrayList<>();
         List<Integer> trainLabels = new ArrayList<>();
 
+        int droppedNoCell = 0;
+        int droppedUnknownClass = 0;
+        int totalStoredLabels = labelStore.getAllLabels().size();
         for (var entry : labelStore.getAllLabels().entrySet()) {
             String cellId = entry.getKey();
             String className = entry.getValue();
             PathObject cell = cellById.get(cellId);
-            if (cell == null) continue; // cell not in current image
+            if (cell == null) {
+                droppedNoCell++;
+                continue; // cell not in current image
+            }
 
             int classIdx = classNames.indexOf(className);
-            if (classIdx < 0) continue; // unknown class
+            if (classIdx < 0) {
+                droppedUnknownClass++;
+                continue; // unknown class
+            }
 
             trainRows.add(extractor.extractRow(cell));
             trainLabels.add(classIdx);
+        }
+
+        if (droppedNoCell > 0 || droppedUnknownClass > 0) {
+            out.accept("WARN: " + (droppedNoCell + droppedUnknownClass)
+                    + " of " + totalStoredLabels + " stored labels not used ("
+                    + droppedNoCell + " cell ID(s) not found in current image, "
+                    + droppedUnknownClass + " unknown class). "
+                    + "Re-segmenting after labelling clears these matches.");
         }
 
         int currentImageSamples = trainRows.size();

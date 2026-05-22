@@ -376,6 +376,15 @@ public class ReviewController {
         return outputLabels;
     }
 
+    /**
+     * @return live view of the cellId → source-image-name map, including any
+     *         entries added at label time for manually-clicked context cells
+     *         (cells inside a displayed tile that were never sampled).
+     */
+    public Map<String, String> getCellImageMap() {
+        return cellIdToImageName;
+    }
+
     /** @return true after advancing beyond last cell */
     public boolean isFinished() {
         return currentIndex >= reviewItems.size();
