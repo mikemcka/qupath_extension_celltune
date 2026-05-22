@@ -6,6 +6,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.FeaturePruner;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
@@ -88,6 +89,8 @@ public class ClassificationPanel extends VBox {
     private final ComboBox<ModelType> model2Combo = new ComboBox<>();
     private final CheckBox autoTuneCheckBox = new CheckBox("Auto-tune hyperparameters");
     private final CheckBox earlyStopCheckBox = new CheckBox("Early stopping");
+    private final CheckBox autoPruneCheckBox =
+            new CheckBox("Auto-prune features (drop near-constant & redundant)");
     private final PopulationPanel populationPanel = new PopulationPanel();
 
     // ── Binary mode banner (hidden by default) ──
@@ -187,6 +190,15 @@ public class ClassificationPanel extends VBox {
         showFeatureImportanceCheckBox.setTooltip(new Tooltip(
                 "After training, compute and display top 10 features by mean |SHAP| value per class"));
 
+        autoPruneCheckBox.setSelected(true);
+        autoPruneCheckBox.setTooltip(new Tooltip(
+                "Before training, examine the labelled cells and drop features that are\n"
+                        + "near-constant or highly correlated with another feature from the\n"
+                        + "same marker. Rare-marker guardrail keeps the best feature for any\n"
+                        + "marker that would otherwise be dropped entirely. The full\n"
+                        + "measurement set on disk is never touched — only the columns used\n"
+                        + "by this training run are reduced."));
+
         // ── Status row ──
         HBox statsRow = new HBox(12, labelCountLabel, predCountLabel, importedCountLabel);
         statsRow.setAlignment(Pos.CENTER_LEFT);
@@ -257,6 +269,7 @@ public class ClassificationPanel extends VBox {
                 autoTuneCheckBox,
                 earlyStopCheckBox,
                 showFeatureImportanceCheckBox,
+                autoPruneCheckBox,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -464,6 +477,38 @@ public class ClassificationPanel extends VBox {
             }
         }
 
+        // ── Auto-prune features against labelled cells (non-destructive) ───
+        // Runs every train so the kept set adapts as more labels are added.
+        // Pruning only filters this run's feature list; measurements on disk
+        // are untouched. Rare-marker guardrail is on by default.
+        String prunePreamble = null;
+        if (autoPruneCheckBox.isSelected() && featureNames.size() > 20
+                && labelStore.size() >= 10) {
+            List<PathObject> labelledCells = new ArrayList<>();
+            var labelMap = labelStore.getAllLabels();
+            for (PathObject cell : detections) {
+                if (labelMap.containsKey(cell.getID().toString())) {
+                    labelledCells.add(cell);
+                }
+            }
+            if (labelledCells.size() >= 10) {
+                int before = featureNames.size();
+                FeaturePruner.PruneResult pr = FeaturePruner.prune(
+                        labelledCells, featureNames,
+                        FeaturePruner.PruneOptions.defaults(), null);
+                if (!pr.keptFeatures().isEmpty()
+                        && pr.keptFeatures().size() < before) {
+                    featureNames = pr.keptFeatures();
+                    prunePreamble = String.format(
+                            "Auto-prune: %d → %d features (dropped %d near-constant, %d redundant; %d labelled cells)",
+                            before, pr.keptFeatures().size(),
+                            pr.droppedConstant(), pr.droppedWithinMarker(),
+                            labelledCells.size());
+                }
+            }
+        }
+        final String prunePreambleFinal = prunePreamble;
+
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
         extractor.setNormalizer(featureNormalizer);
         if (classifier == null) classifier = new DualModelClassifier();
@@ -507,6 +552,9 @@ public class ClassificationPanel extends VBox {
         progressBox.setPadding(new Insets(15));
         progressStage.setScene(new javafx.scene.Scene(progressBox));
         progressStage.show();
+        if (prunePreambleFinal != null) {
+            logArea.appendText(prunePreambleFinal + "\n");
+        }
 
         dlgProgressBar.progressProperty().bind(classifier.progressProperty());
         dlgStatusLabel.textProperty().bind(classifier.statusProperty());
