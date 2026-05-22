@@ -28,6 +28,11 @@ import javax.imageio.ImageIO;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import javafx.application.Platform;
+import javafx.scene.control.ComboBox;
+import javafx.scene.layout.Priority;
+import qupath.ext.celltune.io.ProjectStateManager;
+import qupath.lib.gui.QuPathGUI;
 
 /**
  * JavaFX window that renders an inter-model confusion matrix.
@@ -43,6 +48,7 @@ import java.util.*;
 public class ConfusionMatrixView {
 
     private static final Logger logger = LoggerFactory.getLogger(ConfusionMatrixView.class);
+    private static final String ALL_IMAGES_LABEL = "All Images (Combined)";
 
     /** Display modes for the confusion matrix. */
     public enum Mode {
@@ -57,6 +63,12 @@ public class ConfusionMatrixView {
     private final List<String> classNames;
     private final PopulationSet predALL;
     private final LabelStore labelStore;
+
+    // ── Image-selector state (set when project context is available) ─────────
+    private final QuPathGUI qupath;
+    private final String currentImageName;
+    private final Map<String, PopulationSet> predCache;
+    private PopulationSet currentDisplayPredAll;
 
     // Inter-model values are kept stable for external getters (used by the
     // uncertainty sampler) regardless of currently displayed mode.
@@ -91,7 +103,7 @@ public class ConfusionMatrixView {
      * Build and display the confusion matrix in inter-model mode (no ground-truth toggle).
      */
     public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames) {
-        this(owner, predALL, classNames, null);
+        this(owner, predALL, classNames, null, null, null);
     }
 
     /**
@@ -100,15 +112,36 @@ public class ConfusionMatrixView {
      * @param owner      parent stage
      * @param predALL    the Pred_ALL population set (contains all cell predictions)
      * @param classNames ordered class name list
-     * @param labelStore optional ground-truth label store; when non-null and non-empty,
-     *                   the dialog gets a toggle to switch between inter-model and
-     *                   ground-truth confusion matrices.
+     * @param labelStore optional ground-truth label store
      */
     public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames,
                                LabelStore labelStore) {
+        this(owner, predALL, classNames, labelStore, null, null);
+    }
+
+    /**
+     * Build and display the confusion matrix with image-selector dropdown.
+     * When {@code qupath} and {@code currentImageName} are supplied, a combo box
+     * appears at the top so the user can switch between images or view a combined
+     * matrix across all project images.
+     *
+     * @param owner            parent stage
+     * @param predALL          predictions for the currently open image
+     * @param classNames       ordered class name list
+     * @param labelStore       optional ground-truth label store
+     * @param qupath           QuPath GUI (for loading other images' predictions)
+     * @param currentImageName image name key for the supplied predALL
+     */
+    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames,
+                               LabelStore labelStore, QuPathGUI qupath, String currentImageName) {
         this.classNames = List.copyOf(classNames);
         this.predALL = predALL;
         this.labelStore = labelStore;
+        this.qupath = qupath;
+        this.currentImageName = currentImageName;
+        this.predCache = new LinkedHashMap<>();
+        this.currentDisplayPredAll = predALL;
+        if (currentImageName != null && predALL != null) predCache.put(currentImageName, predALL);
         int n = classNames.size();
         stage = new Stage();
 
@@ -188,6 +221,9 @@ public class ConfusionMatrixView {
         scroll.setVbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
         root.setCenter(scroll);
         root.setBottom(bottom);
+        if (qupath != null) {
+            root.setTop(buildImageSelector());
+        }
         root.setPadding(new Insets(8));
 
         // Inter-model is the only remaining view here. Ground-truth vs model
@@ -228,8 +264,9 @@ public class ConfusionMatrixView {
     }
 
     /**
-     * Get the per-class F1 score array.
-     * F1 treats diagonal as TP, row off-diagonal as FN, col off-diagonal as FP.
+     * Get the per-class Dice similarity coefficient array.
+     * Dice (= F1) treats diagonal as TP, row off-diagonal as FN, col off-diagonal as FP.
+     * This measures inter-model agreement per class, NOT ground-truth classification accuracy.
      */
     public double[] getF1Scores() {
         return f1Scores.clone();
@@ -269,12 +306,25 @@ public class ConfusionMatrixView {
         int total;
         int agreements;
 
-        // Re-use the inter-model snapshot.
-        for (int i = 0; i < n; i++) {
-            System.arraycopy(interModelMatrix[i], 0, mtx[i], 0, n);
+        // Build matrix from the currently selected image (or merged set).
+        total = 0;
+        agreements = 0;
+        PopulationSet src = currentDisplayPredAll;
+        if (src != null) {
+            for (CellPrediction pred : src.getAll().values()) {
+                int row = classNames.indexOf(pred.getModel1Label());
+                int col = classNames.indexOf(pred.getModel2Label());
+                if (row < 0 || col < 0) continue;
+                mtx[row][col]++;
+                total++;
+                if (row == col) agreements++;
+            }
+        } else {
+            // Fallback to canonical inter-model snapshot.
+            for (int i = 0; i < n; i++) System.arraycopy(interModelMatrix[i], 0, mtx[i], 0, n);
+            total = interModelTotal;
+            agreements = interModelAgreements;
         }
-        total = interModelTotal;
-        agreements = interModelAgreements;
         rowAxisTitle = "Model 1 (XGBoost)";
         colAxisTitle = "Model 2 (LightGBM)";
         stage.setTitle("CellTune \u2014 Inter-Model Confusion Matrix");
@@ -313,7 +363,7 @@ public class ConfusionMatrixView {
         for (double f : f1) macroF1 += f;
         macroF1 = n > 0 ? macroF1 / n : 0;
         String summary = String.format(
-                "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%) | Macro F1: %.3f",
+                "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%) | Macro Dice: %.3f",
                 total, agreements, overallRate,
                 total - agreements, 100 - overallRate, macroF1);
         summaryLabel.setText(summary);
@@ -468,9 +518,9 @@ public class ConfusionMatrixView {
             gc.fillText(String.format("%.2f", displayF1[i]), f1X, y);
         }
 
-        // F1 column header
+        // Dice column header
         gc.setFill(Color.DARKRED);
-        gc.fillText("F1", f1X, gridTop - 6);
+        gc.fillText("Dice", f1X, gridTop - 6);
 
         // ── Bottom margin: Model 2 TP% (per-class) ─────────────────────────
         double bottomY = gridTop + n * CELL_SIZE + 6;
@@ -510,6 +560,111 @@ public class ConfusionMatrixView {
             gc.fillText(classNames.get(j), 0, 0);
             gc.restore();
         }
+    }
+
+    // ── Image selector ───────────────────────────────────────────────────────
+
+    private HBox buildImageSelector() {
+        var combo = new ComboBox<String>();
+        combo.setMaxWidth(Double.MAX_VALUE);
+        combo.getItems().add(ALL_IMAGES_LABEL);
+        if (currentImageName != null) combo.getItems().add(currentImageName);
+
+        var project = qupath.getProject();
+        if (project != null) {
+            new Thread(() -> {
+                try {
+                    List<String> names = ProjectStateManager.listImagesWithPredictions(project);
+                    Platform.runLater(() -> {
+                        for (String name : names) {
+                            if (!combo.getItems().contains(name)) combo.getItems().add(name);
+                        }
+                        combo.setValue(currentImageName != null ? currentImageName : ALL_IMAGES_LABEL);
+                    });
+                } catch (Exception ex) {
+                    logger.warn("Failed to list images with predictions", ex);
+                }
+            }, "CMV-ImageListLoader").start();
+        } else {
+            combo.setValue(currentImageName != null ? currentImageName : ALL_IMAGES_LABEL);
+        }
+
+        combo.setOnAction(e -> {
+            String selected = combo.getValue();
+            if (selected == null) return;
+            loadAndDisplaySelection(selected);
+        });
+
+        var label = new Label("Image:");
+        label.setPadding(new Insets(0, 4, 0, 4));
+        var bar = new HBox(6, label, combo);
+        bar.setPadding(new Insets(6, 8, 2, 8));
+        HBox.setHgrow(combo, Priority.ALWAYS);
+        return bar;
+    }
+
+    private void loadAndDisplaySelection(String selected) {
+        if (ALL_IMAGES_LABEL.equals(selected)) {
+            var project = qupath.getProject();
+            if (project == null) return;
+            new Thread(() -> {
+                try {
+                    List<String> names = ProjectStateManager.listImagesWithPredictions(project);
+                    for (String name : names) {
+                        if (!predCache.containsKey(name)) {
+                            PopulationSet ps = ProjectStateManager.loadImagePredictions(project, name);
+                            if (ps != null) predCache.put(name, ps);
+                        }
+                    }
+                    PopulationSet merged = mergeAllCached();
+                    Platform.runLater(() -> {
+                        currentDisplayPredAll = merged;
+                        applyMode(Mode.INTER_MODEL);
+                        stage.setTitle("CellTune — Agreement Matrix — All Images");
+                    });
+                } catch (Exception ex) {
+                    logger.warn("Failed to merge predictions across images", ex);
+                }
+            }, "CMV-AllImagesLoader").start();
+        } else {
+            if (predCache.containsKey(selected)) {
+                currentDisplayPredAll = predCache.get(selected);
+                applyMode(Mode.INTER_MODEL);
+                stage.setTitle("CellTune — Agreement Matrix — " + selected);
+            } else {
+                var project = qupath.getProject();
+                if (project == null) return;
+                new Thread(() -> {
+                    try {
+                        PopulationSet ps = ProjectStateManager.loadImagePredictions(project, selected);
+                        if (ps != null) {
+                            predCache.put(selected, ps);
+                            Platform.runLater(() -> {
+                                currentDisplayPredAll = ps;
+                                applyMode(Mode.INTER_MODEL);
+                                stage.setTitle("CellTune — Agreement Matrix — " + selected);
+                            });
+                        }
+                    } catch (Exception ex) {
+                        logger.warn("Failed to load predictions for '{}'", selected, ex);
+                    }
+                }, "CMV-ImageLoader").start();
+            }
+        }
+    }
+
+    /** Merge all cached per-image predictions, prefixing cell IDs to avoid key collisions. */
+    private PopulationSet mergeAllCached() {
+        PopulationSet merged = new PopulationSet("Pred_ALL_merged");
+        for (Map.Entry<String, PopulationSet> entry : predCache.entrySet()) {
+            String imgName = entry.getKey();
+            PopulationSet ps = entry.getValue();
+            if (ps == null) continue;
+            for (Map.Entry<String, CellPrediction> cell : ps.getAll().entrySet()) {
+                merged.put(imgName + "|" + cell.getKey(), cell.getValue());
+            }
+        }
+        return merged;
     }
 
     // ── PNG export ──────────────────────────────────────────────────────────────

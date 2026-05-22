@@ -144,6 +144,9 @@ public class ReviewToolbar extends HBox {
         // ── Auto-advance on first show ──────────────────────────────────
         controller.next();
         channelSelector.applyForCurrentCell(controller);
+        // Refresh status whenever the user clicks a non-queue cell in the tile
+        // viewer so the manual-selection indicator updates immediately.
+        controller.setSelectionChangedCallback(this::refreshStatus);
         refreshStatus();
     }
 
@@ -165,6 +168,15 @@ public class ReviewToolbar extends HBox {
         }
 
         indexLabel.setText(String.format("(%d/%d)", idx + 1, total));
+
+        // Indicate when the user has clicked a non-queue cell that buttons
+        // will now label instead of the queue cell.
+        if (controller.isManualSelection()) {
+            indexLabel.setText(indexLabel.getText() + "  \u2192 clicked cell");
+            indexLabel.setStyle("-fx-font-family: monospace; -fx-text-fill: #d84315; -fx-font-weight: bold;");
+        } else {
+            indexLabel.setStyle("-fx-font-family: monospace;");
+        }
 
         // Show which source image the current cell was sampled from.
         String src = controller.getCurrentCellImageName();

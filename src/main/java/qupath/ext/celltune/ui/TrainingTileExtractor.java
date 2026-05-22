@@ -51,8 +51,8 @@ public final class TrainingTileExtractor implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(TrainingTileExtractor.class);
 
-    /** Total region size = bounding box * (1 + 2 * PADDING_FACTOR) → 4x bbox at PADDING_FACTOR=1.5. */
-    private static final double PADDING_FACTOR = 1.5;
+    /** Total region size = bounding box * (1 + 2 * PADDING_FACTOR) → 8x bbox at PADDING_FACTOR=3.5. */
+    private static final double PADDING_FACTOR = 3.5;
     /** Floor on tile size in pixels so tiny cells still get a usable view. */
     private static final int MIN_TILE_PX = 96;
 
@@ -75,6 +75,15 @@ public final class TrainingTileExtractor implements AutoCloseable {
          */
         final BufferedImage tilePixels;
 
+        /**
+         * Maps each context detection copy (including the {@link #highlightCell})
+         * back to the original cell's UUID string in the source image. Enables the
+         * review UI to identify cells the user manually clicks on inside the tile
+         * and label them via {@link qupath.ext.celltune.model.LabelStore}. Uses
+         * identity-based lookup since the copies have fresh UUIDs.
+         */
+        final Map<PathObject, String> contextOriginalCellIds;
+
         TilePrep(String cellId,
                  String imageName,
                  ImageData<BufferedImage> sourceImageData,
@@ -82,7 +91,8 @@ public final class TrainingTileExtractor implements AutoCloseable {
                  List<PathObject> contextObjects,
                  PathObject highlightCell,
                  ImageData.ImageType imageType,
-                 BufferedImage tilePixels) {
+                 BufferedImage tilePixels,
+                 Map<PathObject, String> contextOriginalCellIds) {
             this.cellId = cellId;
             this.imageName = imageName;
             this.sourceImageData = sourceImageData;
@@ -91,6 +101,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
             this.highlightCell = highlightCell;
             this.imageType = imageType;
             this.tilePixels = tilePixels;
+            this.contextOriginalCellIds = contextOriginalCellIds;
         }
 
         public String cellId() { return cellId; }
@@ -101,6 +112,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
         public ImageData<BufferedImage> sourceImageData() { return sourceImageData; }
         public ImageData.ImageType imageType() { return imageType; }
         public BufferedImage tilePixels() { return tilePixels; }
+        public Map<PathObject, String> contextOriginalCellIds() { return contextOriginalCellIds; }
     }
 
     private final Map<String, TilePrep> preps = new LinkedHashMap<>();
@@ -329,6 +341,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
         @SuppressWarnings("unused")
         ImagePlane tilePlane = ImagePlane.getPlaneWithChannel(0, 0, 0);
         List<PathObject> ctx = new ArrayList<>();
+        Map<PathObject, String> ctxToOrig = new java.util.IdentityHashMap<>();
         PathObject highlight = null;
         double dx = -region.getX();
         double dy = -region.getY();
@@ -350,6 +363,11 @@ public final class TrainingTileExtractor implements AutoCloseable {
             PathClass pc = det.getPathClass();
             PathObject copy = PathObjects.createDetectionObject(translated, pc);
             ctx.add(copy);
+            try {
+                ctxToOrig.put(copy, det.getID().toString());
+            } catch (Exception ignored) {
+                // Skip mapping if ID is unavailable; lookup will simply return null.
+            }
             if (det == originalCell) {
                 highlight = copy;
             }
@@ -361,6 +379,10 @@ public final class TrainingTileExtractor implements AutoCloseable {
             ROI translatedCellRoi = cellRoi.translate(dx, dy);
             highlight = PathObjects.createDetectionObject(translatedCellRoi, originalCell.getPathClass());
             ctx.add(highlight);
+            try {
+                ctxToOrig.put(highlight, originalCell.getID().toString());
+            } catch (Exception ignored) {
+            }
         }
 
         // Pre-render the tile pixels at full resolution. This is the single
@@ -376,7 +398,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
                     cellId, imageName, ex.getMessage());
         }
 
-        return new TilePrep(cellId, imageName, imageData, region, ctx, highlight, imageType, tilePixels);
+        return new TilePrep(cellId, imageName, imageData, region, ctx, highlight, imageType, tilePixels, ctxToOrig);
     }
 
     private static ImageRegion computeCropRegion(ROI cellRoi, int serverW, int serverH) {

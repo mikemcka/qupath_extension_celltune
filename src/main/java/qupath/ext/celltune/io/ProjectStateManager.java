@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.CompositeClassificationRule;
 import qupath.ext.celltune.classifier.ModelType;
+import qupath.ext.celltune.classifier.TrainingMetrics;
 import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.LabelStore;
@@ -81,6 +82,11 @@ public class ProjectStateManager {
         public Double arcsinhCofactor;
         public List<String> importedTrainingFeatureNames;
         public List<SavedTrainingRow> importedTrainingRows;
+        // Persisted per-model training/validation metrics (nullable until first training)
+        public TrainingMetrics model1TrainMetrics;
+        public TrainingMetrics model1ValMetrics;
+        public TrainingMetrics model2TrainMetrics;
+        public TrainingMetrics model2ValMetrics;
     }
 
     /**
@@ -221,6 +227,82 @@ public class ProjectStateManager {
                 state.name, statePath,
                 state.labels != null ? state.labels.size() : 0);
         return state;
+    }
+
+    /**
+     * Persist the user's selected feature list so it survives QuPath restarts.
+     * Merges into the existing state file (creating one if needed).
+     *
+     * @param project           target QuPath project
+     * @param selectedFeatures  feature names to persist, or {@code null}/empty to clear the selection
+     * @return path to the updated state file
+     * @throws IOException if reading/writing the state file fails
+     */
+    public static Path saveSelectedFeatures(Project<?> project,
+                                            List<String> selectedFeatures) throws IOException {
+        Path dir = getCellTuneDir(project);
+        Path statePath = dir.resolve(STATE_FILENAME);
+
+        SavedState state;
+        if (Files.exists(statePath)) {
+            try {
+                String json = Files.readString(statePath, StandardCharsets.UTF_8);
+                state = GSON.fromJson(json, SavedState.class);
+            } catch (Exception ex) {
+                logger.warn("Failed to read existing state for feature selection merge: {}",
+                        ex.getMessage());
+                state = new SavedState();
+            }
+            if (state == null) state = new SavedState();
+        } else {
+            state = new SavedState();
+        }
+
+        if (state.name == null || state.name.isBlank()) state.name = "CellTune";
+        state.timestamp = LocalDateTime.now().format(TIMESTAMP_FMT);
+        state.selectedFeatures =
+                (selectedFeatures == null || selectedFeatures.isEmpty())
+                        ? null
+                        : List.copyOf(selectedFeatures);
+
+        writeState(statePath, state);
+        logger.info("Saved selected features to {} ({} features)",
+                statePath,
+                state.selectedFeatures == null ? 0 : state.selectedFeatures.size());
+        return statePath;
+    }
+
+    /**
+     * Merge per-model train/validation metrics into an existing saved state.
+     * Called after {@link #saveState} so the metrics survive QuPath restarts.
+     *
+     * @return true if the file existed and was updated, false otherwise
+     */
+    public static boolean saveTrainingMetrics(Project<?> project,
+                                              TrainingMetrics m1Train,
+                                              TrainingMetrics m1Val,
+                                              TrainingMetrics m2Train,
+                                              TrainingMetrics m2Val) throws IOException {
+        Path outPath = getCellTuneDir(project).resolve(STATE_FILENAME);
+        if (!Files.exists(outPath)) {
+            logger.warn("Cannot save training metrics: no classifier state at {}", outPath);
+            return false;
+        }
+        SavedState state;
+        try {
+            String json = Files.readString(outPath, StandardCharsets.UTF_8);
+            state = GSON.fromJson(json, SavedState.class);
+        } catch (Exception ex) {
+            logger.warn("Failed to read existing state for metrics merge: {}", ex.getMessage());
+            return false;
+        }
+        if (state == null) return false;
+        state.model1TrainMetrics = m1Train;
+        state.model1ValMetrics = m1Val;
+        state.model2TrainMetrics = m2Train;
+        state.model2ValMetrics = m2Val;
+        writeState(outPath, state);
+        return true;
     }
 
     /**
@@ -702,6 +784,22 @@ public class ProjectStateManager {
         return predAll;
     }
 
+
+    /**
+     * List the names of all images in the project that have saved prediction files.
+     */
+    public static List<String> listImagesWithPredictions(Project<?> project) throws IOException {
+        Path dir = getCellTuneDir(project).resolve(IMAGE_PREDICTIONS_DIR);
+        if (!Files.exists(dir)) return List.of();
+        List<String> result = new ArrayList<>();
+        for (var entry : project.getImageList()) {
+            String name = entry.getImageName();
+            if (Files.exists(dir.resolve(sanitiseFileName(name) + ".json"))) {
+                result.add(name);
+            }
+        }
+        return result;
+    }
     // â”€â”€ Binary classifier persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**

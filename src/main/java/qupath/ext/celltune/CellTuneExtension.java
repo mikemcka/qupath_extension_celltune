@@ -383,6 +383,9 @@ public class CellTuneExtension implements QuPathExtension {
                                     ProjectStateManager.getModel2Type(state));
                             classifier = new DualModelClassifier();
                             classifier.loadFromState(classifierState);
+                            classifier.setTrainingMetrics(
+                                    state.model1TrainMetrics, state.model1ValMetrics,
+                                    state.model2TrainMetrics, state.model2ValMetrics);
                             logger.info("[CellTune] Restored trained classifier from saved state.");
                         }
                     }
@@ -1059,6 +1062,7 @@ public class CellTuneExtension implements QuPathExtension {
                 if (!chosen.isEmpty() && chosen.size() < allFeatureNames.size()) {
                     selectedFeatures = chosen;
                 }
+                persistSelectedFeatures(qupath);
                 syncPanelState();
             }
         }
@@ -1409,6 +1413,17 @@ public class CellTuneExtension implements QuPathExtension {
                             state.getRfModel1Bytes(), state.getRfModel2Bytes(),
                             state.getModel1Type(), state.getModel2Type(),
                             importedTrainingFeatureNames, importedTrainingRows);
+
+                    // Persist per-model train/val metrics for restoration on project re-open.
+                    try {
+                        ProjectStateManager.saveTrainingMetrics(project,
+                                classifier.getModel1TrainMetrics(),
+                                classifier.getModel1ValMetrics(),
+                                classifier.getModel2TrainMetrics(),
+                                classifier.getModel2ValMetrics());
+                    } catch (Exception ex) {
+                        logger.warn("Failed to persist training metrics: {}", ex.getMessage());
+                    }
 
                     // Save per-image labels for cross-image pooling
                     if (currentImageNameFinal != null) {
@@ -2213,7 +2228,14 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         List<String> classNames = classifier.getClassNames();
-        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames, labelStore);
+        String imgName = null;
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project != null && imageData != null) {
+            var entry = project.getEntry(imageData);
+            if (entry != null) imgName = entry.getImageName();
+        }
+        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames, labelStore, qupath, imgName);
         lastAgreementRates = view.getAgreementRates();
         view.show();
     }
@@ -3014,7 +3036,24 @@ public class CellTuneExtension implements QuPathExtension {
                 Dialogs.showInfoNotification(EXTENSION_NAME,
                         chosen.size() + " of " + allFeatures.size() + " features selected for training.");
             }
+            persistSelectedFeatures(qupath);
             syncPanelState();
+        }
+    }
+
+    /**
+     * Save the current {@link #selectedFeatures} list to the active project so
+     * it survives QuPath restarts. No-op when no project is open.
+     */
+    private void persistSelectedFeatures(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            return;
+        }
+        try {
+            ProjectStateManager.saveSelectedFeatures(project, selectedFeatures);
+        } catch (Exception ex) {
+            logger.warn("Failed to persist selected features: {}", ex.getMessage());
         }
     }
 
@@ -3203,6 +3242,9 @@ public class CellTuneExtension implements QuPathExtension {
                         ProjectStateManager.getModel2Type(savedState));
                 this.classifier = new DualModelClassifier();
                 this.classifier.loadFromState(cs);
+                this.classifier.setTrainingMetrics(
+                        savedState.model1TrainMetrics, savedState.model1ValMetrics,
+                        savedState.model2TrainMetrics, savedState.model2ValMetrics);
             }
         } catch (Exception ex) {
             logger.warn("Failed to load binary classifier state for '{}': {}", markerName, ex.getMessage());

@@ -67,32 +67,19 @@ public class XGBoostModel {
             Map<String, DMatrix> watches = new LinkedHashMap<>();
             watches.put("train", trainMat);
 
-            // Attempt GPU training, then deterministically fall back to CPU if unavailable.
-            boolean usingGpu = false;
-            try {
-                logger.info("XGBoost: attempting GPU (CUDA) training…");
-                usingGpu = attemptGpuTraining(trainMat, params, numRounds, watches);
-                if (usingGpu) {
-                    logger.info("XGBoost training: GPU (CUDA) — {} samples, {} features, {} classes, {} rounds",
-                            nSamples, nFeatures, nClasses, numRounds);
-                } else {
-                    params.put("device", "cpu");
-                    params.put("tree_method", "hist");
-                    booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-                    logger.info("XGBoost: CUDA unavailable in this runtime; using CPU");
-                    logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
-                            nSamples, nFeatures, nClasses, numRounds);
-                }
-            } catch (Exception gpuEx) {
-                logger.info("XGBoost GPU path failed ({}), falling back to CPU", gpuEx.getMessage());
-                params.put("device", "cpu");
-                params.put("tree_method", "hist");
-                booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-                logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
-                        nSamples, nFeatures, nClasses, numRounds);
-            }
+            // This build pins the CPU-only xgboost4j artifact (see build.gradle.kts:
+            // "ml.dmlc:xgboost4j_2.13"). The CUDA kernels are NOT shipped, so
+            // device=cuda is silently ignored by XGBoost and falls back to CPU
+            // without throwing — which previously caused us to mis-report GPU.
+            // Always train on CPU here. If/when a -gpu artifact is wired in,
+            // restore the probe-and-fallback logic.
+            params.put("device", "cpu");
+            params.put("tree_method", "hist");
+            booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
+            logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples, nFeatures, nClasses, numRounds);
 
-            this.lastDevice = usingGpu ? "GPU (CUDA)" : "CPU";
+            this.lastDevice = "CPU";
         } finally {
             trainMat.dispose();
         }
@@ -182,50 +169,6 @@ public class XGBoostModel {
         } catch (NumberFormatException e) {
             return Double.MAX_VALUE;
         }
-    }
-
-    /**
-     * Probe CUDA support with a tiny training run before launching the real fit.
-     * If probe succeeds, train on GPU; otherwise return false without throwing.
-     */
-    private boolean attemptGpuTraining(DMatrix trainMat,
-                                       Map<String, Object> params,
-                                       int numRounds,
-                                       Map<String, DMatrix> watches) throws XGBoostError {
-
-        DMatrix probeMat = null;
-        Booster probeBooster = null;
-        try {
-            float[] probeData = new float[]{1f, 2f, 3f, 4f};
-            probeMat = new DMatrix(probeData, 2, 2, Float.NaN);
-            probeMat.setLabel(new float[]{0f, 1f});
-
-            Map<String, Object> probeParams = new LinkedHashMap<>();
-            probeParams.put("max_depth", 1);
-            probeParams.put("eta", 0.3);
-            probeParams.put("subsample", 1.0);
-            probeParams.put("colsample_bytree", 1.0);
-            probeParams.put("objective", "binary:logistic");
-            probeParams.put("eval_metric", "logloss");
-            probeParams.put("seed", 42);
-            probeParams.put("nthread", 1);
-            probeParams.put("device", "cuda");
-            probeParams.put("tree_method", "hist");
-
-            probeBooster = XGBoost.train(probeMat, probeParams, 1,
-                    new LinkedHashMap<>(), null, null);
-        } catch (XGBoostError e) {
-            logger.info("XGBoost GPU probe failed — CUDA support unavailable: {}", e.getMessage());
-            return false;
-        } finally {
-            try { if (probeBooster != null) probeBooster.dispose(); } catch (Exception ignore) {}
-            try { if (probeMat != null) probeMat.dispose(); } catch (Exception ignore) {}
-        }
-
-        params.put("device", "cuda");
-        params.put("tree_method", "hist");
-        booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-        return true;
     }
 
     // ── Prediction ──────────────────────────────────────────────────────────────

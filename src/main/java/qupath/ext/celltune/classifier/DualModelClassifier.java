@@ -455,21 +455,25 @@ public class DualModelClassifier {
             updateStatus("Predicting… " + chunkEnd + "/" + totalCells, progress);
         }
 
-        // Apply PathClass assignments on the FX thread (queued before the hierarchy
-        // event that CellTuneExtension fires in its own Platform.runLater block).
-        Platform.runLater(() -> {
-            for (int i = 0; i < classifyObjects.size(); i++) {
-                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-            }
-        });
-
         // ── 5. Summary ─────────────────────────────────────────────────────
 
         out.accept("Predictions complete: " + totalCells + " cells, "
                 + disagreements + " disagreements ("
                 + String.format("%.1f%%", 100.0 * disagreements / totalCells) + ")");
 
-        updateStatus("Training complete", 1.0);
+        // Show "Training — please wait" BEFORE applying path classes.
+        // Nested runLater ensures the status label renders visually while the
+        // path-class loop is blocking the FX thread (which freezes the UI).
+        Platform.runLater(() -> {
+            status.set("Training \u2014 please wait");
+            progress.set(1.0);
+            Platform.runLater(() -> {
+                for (int i = 0; i < classifyObjects.size(); i++) {
+                    classifyObjects.get(i).setPathClass(classifyClasses.get(i));
+                }
+            });
+        });
+
         out.accept("Done.");
     }
 
@@ -1045,6 +1049,19 @@ public class DualModelClassifier {
     public boolean hasTrainValMetrics() {
         return model1TrainMetrics != null || model1ValMetrics != null
                 || model2TrainMetrics != null || model2ValMetrics != null;
+    }
+
+    /**
+     * Restore previously-computed metrics (e.g. after loading a saved classifier state).
+     */
+    public void setTrainingMetrics(TrainingMetrics m1Train,
+                                   TrainingMetrics m1Val,
+                                   TrainingMetrics m2Train,
+                                   TrainingMetrics m2Val) {
+        this.model1TrainMetrics = m1Train;
+        this.model1ValMetrics = m1Val;
+        this.model2TrainMetrics = m2Train;
+        this.model2ValMetrics = m2Val;
     }
 
     /**

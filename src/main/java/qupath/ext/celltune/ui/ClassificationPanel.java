@@ -320,13 +320,20 @@ public class ClassificationPanel extends VBox {
         this.labelStore = store;
         refreshStats();
     }
-    public void setClassifier(DualModelClassifier cls) { this.classifier = cls; }
+    public void setClassifier(DualModelClassifier cls) {
+        this.classifier = cls;
+        // Re-enable the "Training Metrics" button if the restored classifier has metrics.
+        metricsButton.setDisable(cls == null || !cls.hasTrainValMetrics());
+    }
     public void setFeatureNormalizer(FeatureNormalizer normalizer) { this.featureNormalizer = normalizer; }
     public void setSelectedFeatures(List<String> features) { this.selectedFeatures = features; }
     public void setCellTypeTable(CellTypeTable table) { this.cellTypeTable = table; }
     public void setPredAll(PopulationSet pa) {
         this.predAll = pa;
         refreshStats();
+        // Re-enable the "Agreement Confusion Matrix" button if predictions are present
+        // (e.g. after restoring per-image predictions on project re-open).
+        confusionsButton.setDisable(pa == null || pa.size() == 0);
     }
     public void setLastAgreementRates(double[] rates) { this.lastAgreementRates = rates; }
     public void setLastSampledCellIds(List<String> ids) {
@@ -670,6 +677,18 @@ public class ClassificationPanel extends VBox {
                             state.getModel1Type(), state.getModel2Type(),
                             importedFeatureNamesSnapshot, importedRowsSnapshot);
 
+                    // Persist per-model train/val metrics so the "Training Metrics" view
+                    // and confusion matrix are available after reopening the project.
+                    try {
+                        ProjectStateManager.saveTrainingMetrics(projectRef,
+                                classifier.getModel1TrainMetrics(),
+                                classifier.getModel1ValMetrics(),
+                                classifier.getModel2TrainMetrics(),
+                                classifier.getModel2ValMetrics());
+                    } catch (Exception ex) {
+                        System.err.println("[CellTune] Failed to persist training metrics: " + ex.getMessage());
+                    }
+
                     // Save per-image labels for cross-image pooling
                     var imgEntry = projectRef.getEntry(imageData);
                     if (imgEntry != null) {
@@ -870,7 +889,14 @@ public class ClassificationPanel extends VBox {
         }
 
         List<String> classNames = classifier.getClassNames();
-        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames, labelStore);
+        String imgName = null;
+        var project = qupath.getProject();
+        var imageData = qupath.getImageData();
+        if (project != null && imageData != null) {
+            var entry = project.getEntry(imageData);
+            if (entry != null) imgName = entry.getImageName();
+        }
+        var view = new ConfusionMatrixView(qupath.getStage(), predAll, classNames, labelStore, qupath, imgName);
         lastAgreementRates = view.getAgreementRates();
         if (onAgreementRatesChanged != null) onAgreementRatesChanged.accept(lastAgreementRates);
         view.show();

@@ -8,6 +8,8 @@ import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.hierarchy.PathObjectHierarchy;
+import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
 import qupath.lib.projects.ProjectImageEntry;
 
 import java.awt.image.BufferedImage;
@@ -98,6 +100,20 @@ public class ReviewController {
     private final SelectionHighlightOverlay highlightOverlay = new SelectionHighlightOverlay();
     private qupath.lib.gui.viewer.QuPathViewer highlightViewer;
     private boolean sessionClosed;
+
+    /**
+     * Cell ID of a detection the user clicked on inside the current tile,
+     * other than the queue cell. When non-null, {@link #labelAndNext(String)}
+     * labels this cell and stays on the same queue item (mirrors manual-label
+     * mode behavior). Cleared on every navigation event.
+     */
+    private String selectedManualCellId;
+    /** Selection listener installed on the current tile's hierarchy. */
+    private PathObjectSelectionListener tileSelectionListener;
+    /** Hierarchy the {@link #tileSelectionListener} is currently attached to. */
+    private PathObjectHierarchy listenedHierarchy;
+    /** Optional UI callback invoked when {@link #selectedManualCellId} changes. */
+    private Runnable selectionChangedCallback;
 
     /**
      * Backward-compatible constructor for current-image review batches.
@@ -369,6 +385,7 @@ public class ReviewController {
      * Move to next cell and navigate there.
      */
     public boolean next() {
+        clearManualSelection();
         if (currentIndex + 1 >= reviewItems.size()) {
             currentIndex = reviewItems.size();
             return false;
@@ -382,6 +399,7 @@ public class ReviewController {
      * Move to previous cell.
      */
     public boolean previous() {
+        clearManualSelection();
         if (currentIndex <= 0) {
             return false;
         }
@@ -397,15 +415,127 @@ public class ReviewController {
         if (index < 0 || index >= reviewItems.size()) {
             return false;
         }
+        clearManualSelection();
         currentIndex = index;
         navigateToCurrentCell();
         return true;
     }
 
     /**
-     * Assign label to current cell and advance.
+     * Register a callback to invoke whenever the manual selection state
+     * changes (user clicks a non-queue cell, or the manual selection is
+     * cleared on navigation / labeling). May be {@code null}.
+     */
+    public void setSelectionChangedCallback(Runnable callback) {
+        this.selectionChangedCallback = callback;
+    }
+
+    /** @return cell ID that the next {@link #labelAndNext(String)} call will label. */
+    public String getActiveLabelTargetCellId() {
+        return selectedManualCellId != null ? selectedManualCellId : getCurrentCellId();
+    }
+
+    /** @return true if the user clicked on a non-queue cell that is now the label target. */
+    public boolean isManualSelection() {
+        return selectedManualCellId != null;
+    }
+
+    private void clearManualSelection() {
+        if (selectedManualCellId != null) {
+            selectedManualCellId = null;
+            if (selectionChangedCallback != null) {
+                try { selectionChangedCallback.run(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private void installTileSelectionListener(qupath.lib.images.ImageData<BufferedImage> tileData,
+                                              TrainingTileExtractor.TilePrep prep) {
+        uninstallTileSelectionListener();
+        if (tileData == null || prep == null) return;
+        var hierarchy = tileData.getHierarchy();
+        var selModel = hierarchy.getSelectionModel();
+        final Map<PathObject, String> ctxToOrig = prep.contextOriginalCellIds();
+        final PathObject highlight = prep.highlightCell();
+        final String queueCellId = prep.cellId();
+        tileSelectionListener = (sourceObject, previousObject, allSelected) -> {
+            javafx.application.Platform.runLater(() -> {
+                if (sessionClosed) return;
+                PathObject selected = selModel.getSelectedObject();
+                String newManual = null;
+                if (selected != null && selected != highlight && selected.isDetection()) {
+                    String origId = ctxToOrig == null ? null : ctxToOrig.get(selected);
+                    if (origId != null && !origId.equals(queueCellId)) {
+                        newManual = origId;
+                    }
+                }
+                if (!java.util.Objects.equals(newManual, selectedManualCellId)) {
+                    selectedManualCellId = newManual;
+                    if (selectionChangedCallback != null) {
+                        try { selectionChangedCallback.run(); } catch (Exception ignored) {}
+                    }
+                }
+            });
+        };
+        selModel.addPathObjectSelectionListener(tileSelectionListener);
+        listenedHierarchy = hierarchy;
+    }
+
+    private void uninstallTileSelectionListener() {
+        if (tileSelectionListener != null && listenedHierarchy != null) {
+            try {
+                listenedHierarchy.getSelectionModel()
+                        .removePathObjectSelectionListener(tileSelectionListener);
+            } catch (Exception ignored) {
+            }
+        }
+        tileSelectionListener = null;
+        listenedHierarchy = null;
+    }
+
+    /**
+     * Assign label to the currently active target cell.
+     *
+     * <p>If the user has clicked on a non-queue cell inside the current tile
+     * ({@link #selectedManualCellId} is set), that cell is labeled and the
+     * review queue stays put — matching manual-label mode behavior. Otherwise
+     * the queue cell is labeled and review advances to the next item.
+     *
+     * @return {@code true} if the queue advanced and more items remain;
+     *         {@code true} also when only a manual cell was labeled (no advance);
+     *         {@code false} only when the queue cell was labeled and the queue
+     *         is now finished.
      */
     public boolean labelAndNext(String className) {
+        if (selectedManualCellId != null) {
+            String cellId = selectedManualCellId;
+            outputLabels.setLabel(cellId, className);
+            // Record imageName so persistReviewedLabelsByImage routes it correctly.
+            if (currentTileCellId != null && tilePreps != null) {
+                var prep = tilePreps.get(currentTileCellId);
+                if (prep != null && prep.imageName() != null) {
+                    cellIdToImageName.putIfAbsent(cellId, prep.imageName());
+                }
+            }
+            // Apply PathClass to the displayed copy for instant visual feedback.
+            if (listenedHierarchy != null) {
+                var selected = listenedHierarchy.getSelectionModel().getSelectedObject();
+                if (selected != null) {
+                    try {
+                        selected.setPathClass(PathClass.fromString(className));
+                    } catch (Exception ex) {
+                        logger.debug("Could not set PathClass on manually-selected tile cell: {}", ex.getMessage());
+                    }
+                }
+            }
+            // Clear manual selection so subsequent clicks default back to the queue cell.
+            selectedManualCellId = null;
+            if (selectionChangedCallback != null) {
+                try { selectionChangedCallback.run(); } catch (Exception ignored) {}
+            }
+            return true; // stay on same queue item — never finishes from a manual label
+        }
+
         String cellId = getCurrentCellId();
         if (cellId != null) {
             outputLabels.setLabel(cellId, className);
@@ -537,6 +667,7 @@ public class ReviewController {
             return;
         }
         sessionClosed = true;
+        uninstallTileSelectionListener();
         ACTIVE_REVIEW_SESSIONS.updateAndGet(value -> Math.max(0, value - 1));
         prefetchExecutor.shutdownNow();
 
@@ -747,6 +878,9 @@ public class ReviewController {
             if (prior != null) {
                 try { prior.setChanged(false); } catch (Exception ignored) { }
             }
+            // Detach selection listener from the prior tile's hierarchy before
+            // QuPath disposes it.
+            uninstallTileSelectionListener();
             viewer.setImageData(newData);
         } catch (java.io.IOException ex) {
             logger.warn("Failed to set training tile ImageData: {}", ex.getMessage());
@@ -760,6 +894,10 @@ public class ReviewController {
         if (oldTile != null && oldTile != newData) {
             try { oldTile.close(); } catch (Exception ignored) { }
         }
+
+        // Attach selection listener so clicks on context cells inside the new
+        // tile can be turned into manual labels.
+        installTileSelectionListener(newData, prep);
         return true;
     }
 
