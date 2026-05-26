@@ -907,6 +907,12 @@ public class ReviewController {
         // Attach selection listener so clicks on context cells inside the new
         // tile can be turned into manual labels.
         installTileSelectionListener(newData, prep);
+
+        // Proactively prune any tile-derived project entries that QuPath
+        // auto-added on prior swaps. Without this, every reviewed tile leaves
+        // a stale entry (and on-disk data folder) behind for the duration of
+        // the session — which can easily reach hundreds of folders.
+        removeAutoAddedTileEntries();
         return true;
     }
 
@@ -920,23 +926,49 @@ public class ReviewController {
         var project = qupath.getProject();
         if (project == null) return;
         try {
+            // Don't try to remove the entry that backs the currently-displayed
+            // ImageData — QuPath will recreate it (or worse, throw) if we yank
+            // it out from under the viewer.
+            ProjectImageEntry<BufferedImage> activeEntry = null;
+            try {
+                var activeData = qupath.getImageData();
+                if (activeData != null) activeEntry = project.getEntry(activeData);
+            } catch (Exception ignored) { }
+
             @SuppressWarnings("unchecked")
             var current = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
             List<ProjectImageEntry<BufferedImage>> toRemove = new ArrayList<>();
             for (var entry : current) {
                 if (entry == null) continue;
+                if (entry == activeEntry) continue;
                 if (!initialEntrySnapshot.contains(entry)) {
                     toRemove.add(entry);
                 }
             }
             if (toRemove.isEmpty()) return;
             for (var entry : toRemove) {
+                // Capture the on-disk path before removal so we can force-delete
+                // it if QuPath's move-to-trash fallback fails (common on network
+                // mounts where no system trash is available).
+                java.nio.file.Path entryPath = null;
+                try { entryPath = entry.getEntryPath(); } catch (Exception ignored) { }
+
                 try {
                     project.removeImage(entry, true);
                     logger.info("Removed auto-added tile project entry: {}", entry.getImageName());
                 } catch (Exception ex) {
                     logger.warn("Failed to remove auto-added tile entry '{}': {}",
                             entry.getImageName(), ex.getMessage());
+                }
+
+                // Force-delete the data folder if QuPath left it behind.
+                if (entryPath != null && java.nio.file.Files.exists(entryPath)) {
+                    try {
+                        deleteRecursively(entryPath);
+                    } catch (Exception ex) {
+                        logger.warn("Failed to force-delete tile entry path '{}': {}",
+                                entryPath, ex.getMessage());
+                    }
                 }
             }
             try {
@@ -950,6 +982,19 @@ public class ReviewController {
             });
         } catch (Exception ex) {
             logger.warn("Failed to scan project for auto-added tile entries: {}", ex.getMessage());
+        }
+    }
+
+    private static void deleteRecursively(java.nio.file.Path path) throws java.io.IOException {
+        if (!java.nio.file.Files.exists(path)) return;
+        try (var stream = java.nio.file.Files.walk(path)) {
+            stream.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try { java.nio.file.Files.deleteIfExists(p); }
+                        catch (java.io.IOException ex) {
+                            logger.debug("Could not delete {}: {}", p, ex.getMessage());
+                        }
+                    });
         }
     }
 
