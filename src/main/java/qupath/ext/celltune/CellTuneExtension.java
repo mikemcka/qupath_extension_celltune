@@ -1,9 +1,20 @@
 package qupath.ext.celltune;
 
+import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TextArea;
+import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.DualModelClassifier;
@@ -12,9 +23,7 @@ import qupath.ext.celltune.classifier.FeaturePruner;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
 import qupath.ext.celltune.classifier.UncertaintySampler;
-import qupath.ext.celltune.gating.AutoLandmarker;
 import qupath.ext.celltune.gating.GatingRule;
-import qupath.ext.celltune.io.AnnDataExporter;
 import qupath.ext.celltune.io.CellTableExporter;
 import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.io.MarkerTableImporter;
@@ -47,6 +56,7 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.objects.PathObjectTools;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 
 import java.awt.image.BufferedImage;
@@ -62,6 +72,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -70,6 +81,10 @@ import java.util.Map;
 import java.util.Random;
 import java.util.ResourceBundle;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * QuPath extension that provides CellTune-style active learning cell classification.
@@ -610,17 +625,9 @@ public class CellTuneExtension implements QuPathExtension {
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem exportAnnDataItem = new MenuItem("Export AnnData (CSV + H5AD script)");
-        exportAnnDataItem.setOnAction(e -> exportAnnData(qupath));
-        exportAnnDataItem.disableProperty().bind(enableExtensionProperty.not());
-
         MenuItem importMarkersItem = new MenuItem(resources.getString("menu.import.markers"));
         importMarkersItem.setOnAction(e -> importMarkerTable(qupath));
         importMarkersItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem autoLandmarkItem = new MenuItem("Auto Landmark (Gating)");
-        autoLandmarkItem.setOnAction(e -> runAutoLandmarking(qupath));
-        autoLandmarkItem.disableProperty().bind(enableExtensionProperty.not());
 
         MenuItem exportGtItem = new MenuItem(resources.getString("menu.export.groundtruth"));
         exportGtItem.setOnAction(e -> exportGroundTruth(qupath));
@@ -667,9 +674,7 @@ public class CellTuneExtension implements QuPathExtension {
                 projectSummaryItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,
-                autoLandmarkItem,
                 exportItem,
-                exportAnnDataItem,
                 new SeparatorMenuItem(),
                 exportGtItem,
                 importGtItem,
@@ -1670,117 +1675,194 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     private void exportCellTable(QuPathGUI qupath) {
-        if (qupath.getProject() == null) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
-            return;
-        }
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
             return;
         }
-        if (predAll == null || predAll.size() == 0) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, "No predictions available. Train a classifier first.");
-            return;
+        var project = qupath.getProject();
+
+        // Resolve current image name
+        String currentImageName = null;
+        if (project != null) {
+            var currentEntry = project.getEntry(imageData);
+            if (currentEntry != null) currentImageName = currentEntry.getImageName();
+        }
+        if (currentImageName == null || currentImageName.isBlank()) {
+            currentImageName = imageData.getServer().getMetadata().getName();
+        }
+        final String currentImageNameFinal = currentImageName;
+
+        // Build full list of project image names
+        List<String> allImageNames;
+        if (project != null) {
+            @SuppressWarnings("unchecked")
+            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            allImageNames = entries.stream()
+                    .map(ProjectImageEntry::getImageName)
+                    .filter(n -> n != null && !n.isBlank())
+                    .collect(java.util.stream.Collectors.toList());
+        } else {
+            allImageNames = List.of(currentImageNameFinal);
         }
 
-        FileChooser fc = new FileChooser();
-        fc.setTitle("Export Cell Table");
-        fc.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
-        var project = qupath.getProject();
+        // Show image selection dialog when the project has more than one image
+        List<String> selectedImages;
+        if (allImageNames.size() > 1) {
+            var pane = new ImageSelectionPane(qupath.getStage(), allImageNames, currentImageNameFinal);
+            selectedImages = pane.showAndWait();
+            if (selectedImages == null || selectedImages.isEmpty()) return;
+        } else {
+            selectedImages = new ArrayList<>(allImageNames);
+        }
+
+        // Output directory
+        DirectoryChooser dc = new DirectoryChooser();
+        dc.setTitle("Select Output Folder for Cell Table(s)");
         if (project != null && project.getPath() != null) {
             File dir = project.getPath().getParent().toFile();
-            if (dir.isDirectory()) fc.setInitialDirectory(dir);
+            if (dir.isDirectory()) dc.setInitialDirectory(dir);
         }
-        fc.setInitialFileName("celltune_export.csv");
-        File chosen = fc.showSaveDialog(qupath.getStage());
-        if (chosen == null) return;
+        File outDir = dc.showDialog(qupath.getStage());
+        if (outDir == null) return;
 
-        ExportFeatureOptions opts = askExportFeatureOptions();
-        if (opts == null) return;
+        final var finalImageData = imageData;
+        final var finalProject   = project;
+        final var finalSelected  = selectedImages;
+        final int total          = selectedImages.size();
 
-        try {
-            Collection<PathObject> cells = imageData.getHierarchy()
-                    .getObjects(null, PathObject.class).stream()
-                    .filter(PathObjectFilter.DETECTIONS_ALL)
-                    .toList();
-            // Build extractor so feature values (raw + normalised) are included
-            CellFeatureExtractor extractor = null;
-            List<String> feats = selectedFeatures != null && !selectedFeatures.isEmpty()
-                    ? selectedFeatures
-                    : CellFeatureExtractor.discoverFeatureNames(cells);
-            if (!feats.isEmpty()) {
-                extractor = new CellFeatureExtractor(feats);
-                extractor.setNormalizer(featureNormalizer);
+        // Progress dialog — built and shown on the FX thread before the worker starts
+        Stage progressStage = new Stage();
+        progressStage.setTitle("Exporting Cell Tables");
+        progressStage.initOwner(qupath.getStage());
+        progressStage.initModality(Modality.NONE);
+        progressStage.setResizable(true);
+
+        ProgressBar progressBar = new ProgressBar(0);
+        progressBar.setPrefWidth(Double.MAX_VALUE);
+        Label statusLabel = new Label("Starting export…");
+        TextArea logArea = new TextArea();
+        logArea.setEditable(false);
+        logArea.setPrefHeight(130);
+        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
+        Button closeBtn = new Button("Close");
+        closeBtn.setDisable(true);
+        closeBtn.setOnAction(e -> progressStage.close());
+
+        VBox progressRoot = new VBox(8, statusLabel, progressBar, logArea, closeBtn);
+        progressRoot.setPadding(new Insets(14));
+        progressStage.setScene(new Scene(progressRoot, 440, 270));
+        progressStage.show();
+
+        Thread worker = new Thread(() -> {
+            AtomicInteger exported = new AtomicInteger();
+            AtomicInteger done     = new AtomicInteger();
+            List<String> errors = Collections.synchronizedList(new ArrayList<>());
+
+            // One task per image; cap at 4 threads (I/O-bound work)
+            int nThreads = Math.min(total, 4);
+            ExecutorService pool = Executors.newFixedThreadPool(nThreads);
+
+            List<Callable<Void>> tasks = new ArrayList<>();
+            for (String imgName : finalSelected) {
+                tasks.add(() -> {
+                    try {
+                        qupath.lib.images.ImageData<BufferedImage> data;
+                        if (imgName.equals(currentImageNameFinal)) {
+                            // Use the already-open image data directly (read-only)
+                            data = finalImageData;
+                        } else {
+                            // Load from disk — independent per thread
+                            @SuppressWarnings("unchecked")
+                            var typedProject = (Project<BufferedImage>) (Object) finalProject;
+                            var entryOpt = typedProject.getImageList().stream()
+                                    .filter(e -> imgName.equals(e.getImageName()))
+                                    .findFirst();
+                            if (entryOpt.isEmpty()) {
+                                errors.add(imgName + ": not found in project");
+                                int d = done.incrementAndGet();
+                                Platform.runLater(() -> {
+                                    progressBar.setProgress((double) d / total);
+                                    statusLabel.setText("Processing " + d + " / " + total);
+                                    logArea.appendText("✗ " + imgName + ": not found in project\n");
+                                });
+                                return null;
+                            }
+                            data = entryOpt.get().readImageData();
+                            if (data == null) {
+                                errors.add(imgName + ": could not read image data");
+                                int d = done.incrementAndGet();
+                                Platform.runLater(() -> {
+                                    progressBar.setProgress((double) d / total);
+                                    statusLabel.setText("Processing " + d + " / " + total);
+                                    logArea.appendText("✗ " + imgName + ": could not read image data\n");
+                                });
+                                return null;
+                            }
+                        }
+
+                        Collection<PathObject> cells = data.getHierarchy()
+                                .getObjects(null, PathObject.class).stream()
+                                .filter(PathObjectFilter.DETECTIONS_ALL)
+                                .toList();
+
+                        List<String> allFeats = CellFeatureExtractor.discoverFeatureNames(cells);
+                        List<String> feats = allFeats.stream()
+                                .filter(f -> f.equalsIgnoreCase("Cell: Area")
+                                        || f.toLowerCase(java.util.Locale.ROOT).contains("mean"))
+                                .collect(java.util.stream.Collectors.toList());
+                        if (feats.isEmpty()) feats = allFeats;
+
+                        // Sanitise the image name to produce a safe file name
+                        String safeFileName = imgName.replaceAll("[\\\\/:*?\"<>|]", "_") + ".csv";
+                        Path outputPath = outDir.toPath().resolve(safeFileName);
+
+                        CellTableExporter.export(outputPath, cells, imgName, feats);
+                        exported.incrementAndGet();
+                        int d = done.incrementAndGet();
+                        Platform.runLater(() -> {
+                            progressBar.setProgress((double) d / total);
+                            statusLabel.setText("Processing " + d + " / " + total);
+                            logArea.appendText("✓ " + imgName + "\n");
+                        });
+
+                    } catch (Exception ex) {
+                        String errMsg = ex.getMessage();
+                        logger.error("Failed to export cell table for '{}'", imgName, ex);
+                        errors.add(imgName + ": " + errMsg);
+                        int d = done.incrementAndGet();
+                        Platform.runLater(() -> {
+                            progressBar.setProgress((double) d / total);
+                            statusLabel.setText("Processing " + d + " / " + total);
+                            logArea.appendText("✗ " + imgName + ": " + errMsg + "\n");
+                        });
+                    }
+                    return null;
+                });
             }
-            CellTableExporter.export(chosen.toPath(), cells, predAll, labelStore,
-                    extractor, opts.includeRaw(), opts.includeNorm());
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Exported " + cells.size() + " cells to " + chosen.getName());
-        } catch (IOException ex) {
-            logger.error("Failed to export cell table", ex);
-            Dialogs.showErrorMessage(EXTENSION_NAME, "Export failed: " + ex.getMessage());
-        }
-    }
 
-    private void exportAnnData(QuPathGUI qupath) {
-        if (qupath.getProject() == null) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
-            return;
-        }
-        var imageData = qupath.getImageData();
-        if (imageData == null) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
-            return;
-        }
+            try {
+                pool.invokeAll(tasks);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                pool.shutdown();
+            }
 
-        // Need feature names — use selected features or discover all
-        List<String> feats = selectedFeatures;
-        if (feats == null || feats.isEmpty()) {
-            var detections = imageData.getHierarchy()
-                    .getObjects(null, PathObject.class).stream()
-                    .filter(PathObjectFilter.DETECTIONS_ALL)
-                    .toList();
-            feats = CellFeatureExtractor.discoverFeatureNames(detections);
-        }
-
-        FileChooser fc = new FileChooser();
-        fc.setTitle("Export AnnData-compatible CSV");
-        fc.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
-        var project = qupath.getProject();
-        if (project != null && project.getPath() != null) {
-            File dir = project.getPath().getParent().toFile();
-            if (dir.isDirectory()) fc.setInitialDirectory(dir);
-        }
-        fc.setInitialFileName("celltune_anndata.csv");
-        File chosen = fc.showSaveDialog(qupath.getStage());
-        if (chosen == null) return;
-
-        ExportFeatureOptions opts = askExportFeatureOptions();
-        if (opts == null) return;
-
-        try {
-            Collection<PathObject> cells = imageData.getHierarchy()
-                    .getObjects(null, PathObject.class).stream()
-                    .filter(PathObjectFilter.DETECTIONS_ALL)
-                    .toList();
-            CellFeatureExtractor extractor = new CellFeatureExtractor(feats);
-            extractor.setNormalizer(featureNormalizer);
-            String imageName = null;
-            var entry = project.getEntry(imageData);
-            if (entry != null) imageName = entry.getImageName();
-
-            AnnDataExporter.export(chosen.toPath(), cells, extractor,
-                    predAll, labelStore, imageName, opts.includeRaw(), opts.includeNorm());
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Exported " + cells.size() + " cells. "
-                    + "Run convert_to_h5ad.py to generate H5AD file.");
-        } catch (IOException ex) {
-            logger.error("Failed to export AnnData", ex);
-            Dialogs.showErrorMessage(EXTENSION_NAME, "Export failed: " + ex.getMessage());
-        }
+            final int finalExported = exported.get();
+            final List<String> finalErrors = new ArrayList<>(errors);
+            Platform.runLater(() -> {
+                progressBar.setProgress(1.0);
+                closeBtn.setDisable(false);
+                if (finalErrors.isEmpty()) {
+                    statusLabel.setText("Done — exported " + finalExported + " image(s) to " + outDir.getName());
+                } else {
+                    statusLabel.setText("Done — " + finalExported + " exported, " + finalErrors.size() + " error(s).");
+                }
+            });
+        }, "CellTune-ExportCellTable");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void importMarkerTable(QuPathGUI qupath) {
@@ -1805,218 +1887,6 @@ public class CellTuneExtension implements QuPathExtension {
             logger.error("Failed to import marker table", ex);
             Dialogs.showErrorMessage(EXTENSION_NAME, "Import failed: " + ex.getMessage());
         }
-    }
-
-    // ── Auto-landmarking (gating) ──────────────────────────────────────────────
-
-    private void runAutoLandmarking(QuPathGUI qupath) {
-        var imageData = qupath.getImageData();
-        if (imageData == null) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
-            return;
-        }
-
-        Collection<PathObject> detections = imageData.getHierarchy().getDetectionObjects();
-        if (detections.isEmpty()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No detections found. Run cell detection first.");
-            return;
-        }
-
-        if (cellTypeTable == null || !cellTypeTable.hasGatingRules()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No gating rules loaded. Import a CellTypeTable CSV with "
-                    + "PrimaryMarker/SecondaryMarker/TertiaryMarker columns first.\n\n"
-                    + "Use 'Import Marker Table' and select a rule-format CSV.");
-            return;
-        }
-
-        // Discover available measurement names to match channels
-        List<String> allMeasurements = CellFeatureExtractor.discoverFeatureNames(detections);
-
-        // Get channels from the rule table
-        List<String> ruleChannels = cellTypeTable.getAllRuleChannels();
-
-        // Ask user for gating mode and measurement suffix
-        var modeCombo = new javafx.scene.control.ComboBox<AutoLandmarker.Mode>();
-        modeCombo.getItems().addAll(AutoLandmarker.Mode.values());
-        modeCombo.setValue(AutoLandmarker.Mode.INTENSITY);
-        modeCombo.setMaxWidth(Double.MAX_VALUE);
-
-        // Try to auto-detect the measurement suffix
-        String detectedSuffix = detectMeasurementSuffix(allMeasurements, ruleChannels);
-        var suffixField = new javafx.scene.control.TextField(
-                detectedSuffix != null ? detectedSuffix : ": Mean");
-        suffixField.setPromptText("e.g. ': Mean' or '__Mean__Cell'");
-
-        var probSuffixField = new javafx.scene.control.TextField("__Probability");
-        probSuffixField.setPromptText("e.g. '__Probability'");
-
-        var minCellsField = new javafx.scene.control.TextField(
-                String.valueOf(AutoLandmarker.DEFAULT_MIN_CELLS));
-
-        var grid = new javafx.scene.layout.GridPane();
-        grid.setHgap(8);
-        grid.setVgap(8);
-        grid.setPadding(new javafx.geometry.Insets(8));
-        grid.add(new javafx.scene.control.Label("Gating mode:"), 0, 0);
-        grid.add(modeCombo, 1, 0);
-        grid.add(new javafx.scene.control.Label("Intensity suffix:"), 0, 1);
-        grid.add(suffixField, 1, 1);
-        grid.add(new javafx.scene.control.Label("Probability suffix:"), 0, 2);
-        grid.add(probSuffixField, 1, 2);
-        grid.add(new javafx.scene.control.Label("Min cells/type:"), 0, 3);
-        grid.add(minCellsField, 1, 3);
-        grid.add(new javafx.scene.control.Label(
-                ruleChannels.size() + " channels, "
-                + cellTypeTable.size() + " cell types"), 0, 4, 2, 1);
-
-        var dialog = new javafx.scene.control.Alert(
-                javafx.scene.control.Alert.AlertType.CONFIRMATION);
-        dialog.setTitle(EXTENSION_NAME + " — Auto Landmark");
-        dialog.setHeaderText("Run automated gating to generate landmark cells");
-        dialog.getDialogPane().setContent(grid);
-        var result = dialog.showAndWait();
-        if (result.isEmpty() || result.get() != javafx.scene.control.ButtonType.OK) {
-            return;
-        }
-
-        AutoLandmarker.Mode mode = modeCombo.getValue();
-        String intensitySuffix = suffixField.getText().strip();
-        String probabilitySuffix = probSuffixField.getText().strip();
-        int minCells;
-        try {
-            minCells = Integer.parseInt(minCellsField.getText().strip());
-        } catch (NumberFormatException e) {
-            minCells = AutoLandmarker.DEFAULT_MIN_CELLS;
-        }
-
-        // Build gating rules from CellTypeTable
-        List<GatingRule> rules = new ArrayList<>();
-        for (String ct : cellTypeTable.getCellTypes()) {
-            rules.add(new GatingRule(ct,
-                    cellTypeTable.getPrimaryExpression(ct),
-                    cellTypeTable.getSecondaryMarkers(ct),
-                    cellTypeTable.getTertiaryMarkers(ct),
-                    ruleChannels));
-        }
-
-        // Run soft-NOT promotion across all rule pairs (matching Python's convert_not_to_strict_not)
-        for (int i = 0; i < rules.size(); i++) {
-            for (int j = 0; j < rules.size(); j++) {
-                if (i != j) {
-                    rules.get(i).promoteOverlappingSoftNots(rules.get(j));
-                }
-            }
-        }
-
-        // Run landmarking on background thread
-        final int finalMinCells = minCells;
-
-        var progressStage = new javafx.stage.Stage();
-        progressStage.setTitle("CellTune — Auto Landmark");
-        progressStage.initOwner(qupath.getStage());
-        progressStage.initModality(javafx.stage.Modality.NONE);
-        progressStage.setResizable(false);
-        progressStage.setAlwaysOnTop(true);
-
-        var progressBar = new javafx.scene.control.ProgressBar(-1); // indeterminate
-        progressBar.setPrefWidth(500);
-        var statusLabel = new javafx.scene.control.Label("Starting auto-landmarking…");
-        statusLabel.setWrapText(true);
-        statusLabel.setMaxWidth(500);
-        var logArea = new javafx.scene.control.TextArea();
-        logArea.setEditable(false);
-        logArea.setPrefHeight(250);
-        logArea.setPrefWidth(500);
-        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
-
-        var progressBox = new javafx.scene.layout.VBox(8, statusLabel, progressBar, logArea);
-        progressBox.setPadding(new javafx.geometry.Insets(15));
-        progressStage.setScene(new javafx.scene.Scene(progressBox));
-        progressStage.show();
-
-        Thread landmarkThread = new Thread(() -> {
-            try {
-                var results = AutoLandmarker.computeLandmarks(
-                        detections, rules, ruleChannels, mode,
-                        intensitySuffix, probabilitySuffix, finalMinCells,
-                        msg -> {
-                            logger.info("[CellTune] {}", msg);
-                            javafx.application.Platform.runLater(() ->
-                                    logArea.appendText(msg + "\n"));
-                        });
-
-                // Convert landmarks to labels
-                if (labelStore == null) {
-                    labelStore = new LabelStore("CellTune");
-                }
-
-                int totalAdded = 0;
-                for (var entry : results.entrySet()) {
-                    String cellType = entry.getKey();
-                    var landmark = entry.getValue();
-                    for (PathObject cell : landmark.cells()) {
-                        labelStore.setLabel(cell.getID().toString(), cellType);
-                        cell.setPathClass(PathClass.fromString(cellType));
-                        totalAdded++;
-                    }
-                }
-
-                final int total = totalAdded;
-                final int numTypes = results.size();
-                javafx.application.Platform.runLater(() -> {
-                    imageData.getHierarchy().fireHierarchyChangedEvent(this);
-                    syncPanelState();
-                    logArea.appendText("\nDone! " + total + " landmark cells across "
-                            + numTypes + " cell types added to label store.\n");
-                    statusLabel.setText("Complete — " + total + " landmarks generated.");
-                    progressBar.setProgress(1.0);
-
-                    // Save per-image labels
-                    saveCurrentImageLabels(qupath);
-
-                    Dialogs.showInfoNotification(EXTENSION_NAME,
-                            "Auto-landmarking complete: " + total + " landmark cells across "
-                            + numTypes + " cell types.");
-                });
-
-            } catch (Exception ex) {
-                logger.error("Auto-landmarking failed", ex);
-                javafx.application.Platform.runLater(() -> {
-                    logArea.appendText("\nERROR: " + ex.getMessage() + "\n");
-                    statusLabel.setText("Auto-landmarking failed!");
-                    progressBar.setProgress(0);
-                    Dialogs.showErrorMessage(EXTENSION_NAME,
-                            "Auto-landmarking failed: " + ex.getMessage());
-                });
-            }
-        }, "CellTune-AutoLandmark");
-        landmarkThread.setDaemon(true);
-        landmarkThread.start();
-    }
-
-    /**
-     * Try to auto-detect the measurement suffix by checking which of common
-     * suffixes produces matches for the rule channels.
-     */
-    private String detectMeasurementSuffix(List<String> measurements,
-                                            List<String> ruleChannels) {
-        String[] candidates = {": Mean", ": Cell: Mean", "__Mean__Cell", "__mean__cell", ""};
-        Set<String> measSet = new HashSet<>(measurements);
-        String bestSuffix = null;
-        int bestCount = 0;
-        for (String suffix : candidates) {
-            int count = 0;
-            for (String ch : ruleChannels) {
-                if (measSet.contains(ch + suffix)) count++;
-            }
-            if (count > bestCount) {
-                bestCount = count;
-                bestSuffix = suffix;
-            }
-        }
-        return bestSuffix;
     }
 
     // ── Ground truth export/import ─────────────────────────────────────────────
