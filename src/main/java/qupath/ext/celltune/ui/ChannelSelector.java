@@ -82,15 +82,23 @@ public class ChannelSelector {
             var channels = display.availableChannels();
             if (channels == null) return;
 
+            // Pre-normalize the marker names once
+            List<String> normMarkers = markerNames.stream()
+                    .map(ChannelSelector::alphanumericNormalize)
+                    .filter(m -> !m.isEmpty())
+                    .toList();
+
             logger.info("Auto-switch: looking for markers {} in {} channels",
                     markerNames, channels.size());
 
             for (var ch : channels) {
-                String chName = ch.getName();
-                boolean shouldShow = markerNames.stream()
-                        .anyMatch(m -> chName.toLowerCase().contains(m.toLowerCase()));
+                String normCh = alphanumericNormalize(ch.getName());
+                boolean shouldShow = normMarkers.stream()
+                        .anyMatch(m -> normCh.equals(m)
+                                || normCh.contains(m)
+                                || m.contains(normCh));
                 if (shouldShow) {
-                    logger.info("  Showing channel: {}", chName);
+                    logger.info("  Showing channel: {}", ch.getName());
                 }
                 display.setChannelSelected(ch, shouldShow);
                 if (shouldShow) {
@@ -106,5 +114,18 @@ public class ChannelSelector {
             // If the display API is unavailable or throws, fall back silently
             logger.warn("Could not auto-switch channels: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Normalize a channel/marker name to lowercase alphanumeric characters only.
+     * This makes matching robust to variations in spacing, dashes, underscores,
+     * and parentheses that can differ between marker table CSVs and QuPath channel names.
+     * <p>
+     * Examples: "CD3_S2 - Cy5_AF" → "cd3s2cy5af",
+     *           "CD3_S2-Cy5_AF" → "cd3s2cy5af" (same result).
+     */
+    private static String alphanumericNormalize(String s) {
+        if (s == null) return "";
+        return s.toLowerCase().replaceAll("[^a-z0-9]", "");
     }
 }
