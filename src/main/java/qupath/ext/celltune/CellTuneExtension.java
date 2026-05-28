@@ -147,6 +147,8 @@ public class CellTuneExtension implements QuPathExtension {
     private Map<String, String> binaryRegistry = new LinkedHashMap<>();
     /** Name of the currently active binary classifier, or null if in multi-class mode. */
     private String activeBinaryMarker = null;
+    /** Class names resolved from saved state or label store for the active binary classifier. */
+    private List<String> activeBinaryClassNames = null;
     /** Multi-class state saved before entering binary mode, restored on exit. */
     private LabelStore preBinaryLabelStore = null;
     private DualModelClassifier preBinaryClassifier = null;
@@ -1322,7 +1324,7 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         var toolbar = new ManualLabelToolbar(
-            qupath, labelStore, extraClasses, qupath.getStage(), predAll);
+            qupath, labelStore, extraClasses, qupath.getStage(), predAll, activeBinaryClassNames);
 
         // When the manual label window closes, sync state
         toolbar.getStage().setOnHidden(e -> {
@@ -1568,6 +1570,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         var channelSelector = new ChannelSelector(qupath, cellTypeTable);
         var toolbar = new ReviewToolbar(reviewController, cellTypeTable, channelSelector);
+        toolbar.setBinaryMarker(activeBinaryMarker, activeBinaryClassNames);
 
         // Build the review stage
         var vbox = new javafx.scene.layout.VBox(6);
@@ -2528,8 +2531,24 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         this.activeBinaryMarker = markerName;
+
+        // Resolve the allowed class names for UI restriction:
+        // 1. Trained classifier's class list (most authoritative)
+        // 2. Distinct values already in the label store (backwards compat)
+        // 3. Fallback: construct markerName+ / markerName-
+        if (this.classifier != null
+                && this.classifier.getClassNames() != null
+                && this.classifier.getClassNames().size() >= 2) {
+            this.activeBinaryClassNames = List.copyOf(this.classifier.getClassNames());
+        } else if (this.labelStore != null && this.labelStore.getClassNames().size() >= 2) {
+            this.activeBinaryClassNames = List.copyOf(this.labelStore.getClassNames());
+        } else {
+            this.activeBinaryClassNames = List.of(markerName + "+", markerName + "-");
+        }
+
         syncPanelState();
-        logger.info("[CellTune] Entered binary mode for marker '{}'", markerName);
+        logger.info("[CellTune] Entered binary mode for marker '{}' (classes: {})",
+                markerName, activeBinaryClassNames);
 
         // Select and expand the docked classification panel for immediate use
         javafx.application.Platform.runLater(() -> {
@@ -2567,6 +2586,7 @@ public class CellTuneExtension implements QuPathExtension {
         this.importedTrainingRows = preBinaryImportedTrainingRows;
         this.importedTrainingFeatureNames = preBinaryImportedTrainingFeatureNames;
         this.activeBinaryMarker = null;
+        this.activeBinaryClassNames = null;
         this.preBinaryLabelStore = null;
         this.preBinaryClassifier = null;
         this.preBinaryImportedTrainingRows = null;

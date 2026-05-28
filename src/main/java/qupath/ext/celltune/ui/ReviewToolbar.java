@@ -39,6 +39,11 @@ public class ReviewToolbar extends HBox {
     private final HBox predictionBox = new HBox(4);
     /** Dropdown listing every PathClass in the QuPath project. */
     private final MenuButton allClassesMenu = new MenuButton("All Classes \u25BC");
+    /**
+     * When non-null, the toolbar is in binary mode and only these class names
+     * are offered as labelling choices (populated from saved state or labels).
+     */
+    private List<String> binaryClasses = null;
 
     // Status widgets
     private final Label indexLabel = new Label();
@@ -266,17 +271,41 @@ public class ReviewToolbar extends HBox {
 
     // ── All Classes menu ────────────────────────────────────────────────
 
+    /**
+     * Restrict class choices to the provided allowed classes when in binary mode.
+     *
+     * @param markerName    sanitized marker name, used as fallback to construct
+     *                      "marker+"/"marker-" if allowedClasses is empty
+     * @param allowedClasses the exact class names to show; if null or empty and
+     *                       markerName is non-blank, falls back to marker+/marker-
+     */
+    public void setBinaryMarker(String markerName, List<String> allowedClasses) {
+        if (allowedClasses != null && !allowedClasses.isEmpty()) {
+            this.binaryClasses = List.copyOf(allowedClasses);
+        } else if (markerName != null && !markerName.isBlank()) {
+            this.binaryClasses = List.of(markerName + "+", markerName + "-");
+        } else {
+            this.binaryClasses = null;
+        }
+        populateAllClassesMenu();
+    }
+
     private void populateAllClassesMenu() {
         allClassesMenu.getItems().clear();
 
-        // Gather class names: QuPath project classes first, then CellTypeTable
         Set<String> seen = new LinkedHashSet<>();
-        for (String name : controller.getQuPathClassNames()) {
-            seen.add(name);
-        }
-        if (cellTypeTable != null) {
-            for (String ct : cellTypeTable.getCellTypes()) {
-                seen.add(ct);
+        if (binaryClasses != null) {
+            // Binary mode: only the resolved allowed classes
+            seen.addAll(binaryClasses);
+        } else {
+            // Multi-class mode: QuPath project classes first, then CellTypeTable
+            for (String name : controller.getQuPathClassNames()) {
+                seen.add(name);
+            }
+            if (cellTypeTable != null) {
+                for (String ct : cellTypeTable.getCellTypes()) {
+                    seen.add(ct);
+                }
             }
         }
 
@@ -288,6 +317,8 @@ public class ReviewToolbar extends HBox {
 
         if (allClassesMenu.getItems().isEmpty()) {
             allClassesMenu.setDisable(true);
+        } else {
+            allClassesMenu.setDisable(false);
         }
     }
 

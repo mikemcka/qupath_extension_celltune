@@ -83,21 +83,32 @@ public class ManualLabelToolbar {
     private PathObjectSelectionListener selectionListener;
 
     /**
+     * When non-null, class buttons and the All Classes menu are restricted to
+     * exactly these classes, preventing accidental cross-marker labels during
+     * a binary classifier session.
+     */
+    private final List<String> binaryClasses;
+
+    /**
      * Create and show the manual label toolbar.
      *
-     * @param qupath       the QuPath GUI
-     * @param labelStore   the ground-truth label store to write to
-     * @param extraClasses additional class names (e.g. from CellTypeTable), may be null
-     * @param owner        owner window for positioning
+     * @param qupath         the QuPath GUI
+     * @param labelStore     the ground-truth label store to write to
+     * @param extraClasses   additional class names (e.g. from CellTypeTable), may be null
+     * @param owner          owner window for positioning
+     * @param predictions    optional current predictions, may be null
+     * @param binaryClasses  allowed class names for binary mode, or null for multi-class mode
      */
     public ManualLabelToolbar(QuPathGUI qupath,
                               LabelStore labelStore,
                               Set<String> extraClasses,
                               Window owner,
-                              PopulationSet predictions) {
+                              PopulationSet predictions,
+                              List<String> binaryClasses) {
         this.qupath = qupath;
         this.labelStore = labelStore;
         this.predictions = predictions;
+        this.binaryClasses = (binaryClasses != null && !binaryClasses.isEmpty()) ? List.copyOf(binaryClasses) : null;
 
         stage = new Stage();
         stage.setTitle("Manual Label Mode");
@@ -284,19 +295,22 @@ public class ManualLabelToolbar {
         classButtonBox.getChildren().clear();
         Set<String> allNames = new LinkedHashSet<>();
 
-        // From QuPath project
-        var project = qupath.getProject();
-        if (project != null) {
-            for (var pc : project.getPathClasses()) {
-                if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
-                    allNames.add(pc.getName());
+        if (binaryClasses != null) {
+            // Binary mode: only the resolved allowed classes
+            allNames.addAll(binaryClasses);
+        } else {
+            // Multi-class mode: QuPath project classes, then extras
+            var project = qupath.getProject();
+            if (project != null) {
+                for (var pc : project.getPathClasses()) {
+                    if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
+                        allNames.add(pc.getName());
+                    }
                 }
             }
-        }
-
-        // From CellTypeTable or other extra sources
-        if (extraClasses != null) {
-            allNames.addAll(extraClasses);
+            if (extraClasses != null) {
+                allNames.addAll(extraClasses);
+            }
         }
 
         // Show up to 12 buttons inline; rest go into All Classes menu
@@ -315,16 +329,21 @@ public class ManualLabelToolbar {
         allClassesMenu.getItems().clear();
         Set<String> allNames = new LinkedHashSet<>();
 
-        var project = qupath.getProject();
-        if (project != null) {
-            for (var pc : project.getPathClasses()) {
-                if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
-                    allNames.add(pc.getName());
+        if (binaryClasses != null) {
+            // Binary mode: only the resolved allowed classes
+            allNames.addAll(binaryClasses);
+        } else {
+            var project = qupath.getProject();
+            if (project != null) {
+                for (var pc : project.getPathClasses()) {
+                    if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
+                        allNames.add(pc.getName());
+                    }
                 }
             }
-        }
-        if (extraClasses != null) {
-            allNames.addAll(extraClasses);
+            if (extraClasses != null) {
+                allNames.addAll(extraClasses);
+            }
         }
 
         for (String name : allNames) {
@@ -335,6 +354,8 @@ public class ManualLabelToolbar {
 
         if (allClassesMenu.getItems().isEmpty()) {
             allClassesMenu.setDisable(true);
+        } else {
+            allClassesMenu.setDisable(false);
         }
     }
 
