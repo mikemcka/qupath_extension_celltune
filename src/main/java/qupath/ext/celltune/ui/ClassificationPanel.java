@@ -86,7 +86,8 @@ public class ClassificationPanel extends VBox {
     private final Spinner<Integer> depthSpinner;
     private final Spinner<Integer> workersSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
-    private final ComboBox<ResamplingStrategy> resamplingCombo = new ComboBox<>();
+    private final CheckBox enableBalancingCheckBox = new CheckBox("Enable data balancing");
+    private final ComboBox<ResamplingStrategy> advancedResamplingCombo = new ComboBox<>();
     private final ComboBox<ModelType> model1Combo = new ComboBox<>();
     private final ComboBox<ModelType> model2Combo = new ComboBox<>();
     private final CheckBox autoTuneCheckBox = new CheckBox("Auto-tune hyperparameters");
@@ -163,11 +164,21 @@ public class ClassificationPanel extends VBox {
                 "Include labelled cells from all project images in the training set"));
         poolImagesCheckBox.setSelected(true);
 
-        resamplingCombo.getItems().addAll(ResamplingStrategy.values());
-        resamplingCombo.setValue(ResamplingStrategy.NONE);
-        resamplingCombo.setMaxWidth(Double.MAX_VALUE);
-        resamplingCombo.setTooltip(new Tooltip(
-                "Resampling strategy to address class imbalance before training"));
+        // ── Data balancing ──
+        enableBalancingCheckBox.setSelected(true);
+        enableBalancingCheckBox.setTooltip(new Tooltip(
+                "Apply SMOTE + Tomek resampling to address class imbalance before training.\n"
+                + "Recommended for most datasets. Use the Strategy dropdown to override."));
+        advancedResamplingCombo.getItems().addAll(ResamplingStrategy.values());
+        advancedResamplingCombo.setValue(ResamplingStrategy.SMOTE_TOMEK);
+        advancedResamplingCombo.setTooltip(new Tooltip(
+                "Override the default SMOTE + Tomek strategy with another resampling method"));
+        advancedResamplingCombo.visibleProperty().bind(enableBalancingCheckBox.selectedProperty());
+        advancedResamplingCombo.managedProperty().bind(enableBalancingCheckBox.selectedProperty());
+
+        HBox balancingRow = new HBox(8, enableBalancingCheckBox,
+                new Label("Strategy:"), advancedResamplingCombo);
+        balancingRow.setAlignment(Pos.CENTER_LEFT);
 
         model1Combo.getItems().addAll(ModelType.values());
         model1Combo.setValue(ModelType.XGBOOST);
@@ -278,7 +289,7 @@ public class ClassificationPanel extends VBox {
                 paramRow,
                 modelRow,
                 poolImagesCheckBox,
-                resamplingCombo,
+                balancingRow,
                 autoTuneCheckBox,
                 earlyStopCheckBox,
                 showFeatureImportanceCheckBox,
@@ -398,6 +409,13 @@ public class ClassificationPanel extends VBox {
     public void setBinaryTargetImagesSupplier(Supplier<List<String>> cb) { this.binaryTargetImagesSupplier = cb; }
 
     // ── Actions ──
+
+    private ResamplingStrategy getEffectiveResamplingStrategy() {
+        if (!enableBalancingCheckBox.isSelected()) return ResamplingStrategy.NONE;
+        return advancedResamplingCombo.getValue() != null
+                ? advancedResamplingCombo.getValue()
+                : ResamplingStrategy.SMOTE_TOMEK;
+    }
 
     private void doTrain() {
         var imageData = qupath.getImageData();
@@ -595,7 +613,7 @@ public class ClassificationPanel extends VBox {
         // In binary mode every label belongs to one classifier — always pool labels
         // for that classifier, regardless of the (now-disabled) checkbox state.
         final boolean poolAllImages = binaryActive || poolImagesCheckBox.isSelected();
-        final ResamplingStrategy resamplingStrategy = resamplingCombo.getValue();
+        final ResamplingStrategy resamplingStrategy = getEffectiveResamplingStrategy();
         final boolean autoTuneSelected = autoTuneCheckBox.isSelected();
         final boolean earlyStopSelected = earlyStopCheckBox.isSelected();
         final List<String> finalFeatureNames = featureNames;

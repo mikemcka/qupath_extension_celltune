@@ -1559,10 +1559,17 @@ public class CellTuneExtension implements QuPathExtension {
         vbox.setPadding(new javafx.geometry.Insets(6));
         vbox.getChildren().addAll(toolbar, channelSelector.getCheckBox());
 
+        double reviewScreenH = javafx.stage.Screen.getPrimary().getVisualBounds().getHeight();
+        var reviewScroll = new javafx.scene.control.ScrollPane(vbox);
+        reviewScroll.setFitToWidth(true);
+        reviewScroll.setHbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        reviewScroll.setVbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        reviewScroll.setMaxHeight(reviewScreenH * 0.9);
+
         var stage = new javafx.stage.Stage();
         stage.setTitle(resources.getString("review.stage.title"));
         stage.initOwner(qupath.getStage());
-        stage.setScene(new javafx.scene.Scene(vbox));
+        stage.setScene(new javafx.scene.Scene(reviewScroll));
         stage.setAlwaysOnTop(true);
         stage.setResizable(true);
         stage.setMinWidth(750);

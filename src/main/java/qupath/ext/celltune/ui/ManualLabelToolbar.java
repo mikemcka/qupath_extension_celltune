@@ -53,7 +53,7 @@ public class ManualLabelToolbar {
     private final Label selectedCellLabel = new Label("Select a cell in the viewer");
     private final Label labelCountLabel = new Label("0 labels");
     private final Circle statusDot = new Circle(6, Color.WHITE);
-    private final HBox classButtonBox = new HBox(4);
+    private final FlowPane classButtonBox = new FlowPane(4, 4);
     private final MenuButton allClassesMenu = new MenuButton("All Classes \u25BC");
     private final CheckBox autoAdvance = new CheckBox("Auto-advance to next detection");
 
@@ -132,14 +132,14 @@ public class ManualLabelToolbar {
         updatePredictionButtons(null); // initially no cell
 
         // ── Class buttons ───────────────────────────────────────────────────
-        classButtonBox.setAlignment(Pos.CENTER_LEFT);
+        classButtonBox.setPrefWrapLength(420);
         populateClassButtons(extraClasses);
 
         allClassesMenu.setStyle("-fx-font-size: 11px;");
         populateAllClassesMenu(extraClasses);
 
-        HBox buttonRow = new HBox(8, classButtonBox, allClassesMenu);
-        buttonRow.setAlignment(Pos.CENTER_LEFT);
+        VBox buttonSection = new VBox(4, classButtonBox, allClassesMenu);
+        buttonSection.setAlignment(Pos.CENTER_LEFT);
 
         // ── Auto-advance checkbox ───────────────────────────────────────────
         autoAdvance.setSelected(false);
@@ -155,9 +155,18 @@ public class ManualLabelToolbar {
         doneRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Layout ──────────────────────────────────────────────────────────
-        VBox root = new VBox(8, statusRow, predictionBox, buttonRow, doneRow);
+        VBox root = new VBox(8, statusRow, predictionBox, buttonSection, doneRow);
         root.setPadding(new Insets(10));
-        stage.setScene(new Scene(root));
+        root.setMinWidth(440);
+
+        ScrollPane scroll = new ScrollPane(root);
+        scroll.setFitToWidth(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        double screenH = javafx.stage.Screen.getPrimary().getVisualBounds().getHeight();
+        scroll.setMaxHeight(screenH * 0.85);
+
+        stage.setScene(new Scene(scroll));
         stage.sizeToScene();
 
         // ── Listen for cell selection changes ───────────────────────────────
