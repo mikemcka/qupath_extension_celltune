@@ -373,12 +373,8 @@ The default cofactor is 1. Configure per-feature transforms and cofactor through
 
 ## TODO / Future Exploration
 - look at bug with using mac screenshot freezing extension on mac
-- find best possible gui format, use docked side pane, dropdown or popups?
 - compile gpu librarys for xgboost, lightgbm ect 
 - tab pfn model 
-- prvent user from selecting incorrect classification in binary mode
-- fix exported cell table image column
-- add unit tests
 - add documentation
 - look at handling of imported features with marker chnages between imaging rounds
 

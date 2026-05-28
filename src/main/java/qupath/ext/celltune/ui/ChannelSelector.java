@@ -40,7 +40,7 @@ public class ChannelSelector {
         this.qupath = qupath;
         this.cellTypeTable = cellTypeTable;
         this.autoSwitchCheckBox = new CheckBox(STRINGS.getString("sample.autochannel.label"));
-        this.autoSwitchCheckBox.setSelected(false);
+        this.autoSwitchCheckBox.setSelected(true);
     }
 
     /** @return the checkbox that gates auto-switching; add it to your UI */
@@ -93,6 +93,9 @@ public class ChannelSelector {
                     logger.info("  Showing channel: {}", chName);
                 }
                 display.setChannelSelected(ch, shouldShow);
+                if (shouldShow) {
+                    display.autoSetDisplayRange(ch);
+                }
             }
 
             // Force the viewer to repaint with the updated channel visibility
