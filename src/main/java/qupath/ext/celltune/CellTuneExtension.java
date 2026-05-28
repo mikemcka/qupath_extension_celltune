@@ -228,6 +228,8 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setAutoClassifyCallback(() -> autoClassifyCurrentImage(qupath));
         classificationPanel.setOnExitBinaryMode(() -> exitBinaryMode(qupath));
         classificationPanel.setOnApplyToImages(() -> applyBinaryClassifierToImages(qupath));
+        classificationPanel.setOnManualLabelMode(() -> showManualLabelMode(qupath));
+        classificationPanel.setOnFeatureImportance(() -> showFeatureImportance(qupath));
         classificationPanel.setBinaryTargetImagesSupplier(() ->
                 binaryTargetImages == null ? List.of() : new ArrayList<>(binaryTargetImages));
 
@@ -603,22 +605,6 @@ public class CellTuneExtension implements QuPathExtension {
     private void addMenuItems(QuPathGUI qupath) {
         var menu = qupath.getMenu("Extensions>" + EXTENSION_NAME, true);
 
-        MenuItem reviewItem = new MenuItem(resources.getString("menu.review"));
-        reviewItem.setOnAction(e -> showReviewMode(qupath));
-        reviewItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem manualLabelItem = new MenuItem(resources.getString("menu.manual.label"));
-        manualLabelItem.setOnAction(e -> showManualLabelMode(qupath));
-        manualLabelItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem confusionsItem = new MenuItem(resources.getString("menu.confusions"));
-        confusionsItem.setOnAction(e -> showConfusions(qupath));
-        confusionsItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem featureImportanceItem = new MenuItem("Feature Importance...");
-        featureImportanceItem.setOnAction(e -> showFeatureImportance(qupath));
-        featureImportanceItem.disableProperty().bind(enableExtensionProperty.not());
-
         MenuItem projectSummaryItem = new MenuItem(resources.getString("menu.prediction.summary"));
         projectSummaryItem.setOnAction(e -> showProjectPredictionSummary(qupath));
         projectSummaryItem.disableProperty().bind(enableExtensionProperty.not());
@@ -669,10 +655,6 @@ public class CellTuneExtension implements QuPathExtension {
                 featuresItem,
                 normalizeItem,
                 new SeparatorMenuItem(),
-                reviewItem,
-                manualLabelItem,
-                confusionsItem,
-                featureImportanceItem,
                 projectSummaryItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,

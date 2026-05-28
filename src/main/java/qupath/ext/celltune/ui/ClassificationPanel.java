@@ -71,6 +71,8 @@ public class ClassificationPanel extends VBox {
     private final Button trainButton = new Button();
     private final Button confusionsButton = new Button();
     private final Button metricsButton = new Button();
+    private final Button featureImportanceButton = new Button("Feature Importance...");
+    private Runnable onFeatureImportance;
     private final Button reviewButton = new Button();
     private final CheckBox currentImageOnlyCheckBox =
             new CheckBox("Sample current image only");
@@ -99,6 +101,8 @@ public class ClassificationPanel extends VBox {
     private Runnable onExitBinaryMode;
     private final Button applyToImagesButton = new Button("Apply to which images...");
     private Runnable onApplyToImages;
+    private final Button manualLabelButton = new Button("Manual Label Mode");
+    private Runnable onManualLabelMode;
     /** Sanitized name of the active binary classifier, or null in multi-class mode.
      *  Used to scope per-image label files so binary classifiers don't share labels. */
     private String activeBinaryMarker = null;
@@ -123,6 +127,8 @@ public class ClassificationPanel extends VBox {
         applyToImagesButton.setManaged(true);
         applyToImagesButton.setDisable(false);
         applyToImagesButton.setOnAction(e -> { if (onApplyToImages != null) onApplyToImages.run(); });
+        manualLabelButton.setMaxWidth(Double.MAX_VALUE);
+        manualLabelButton.setOnAction(e -> { if (onManualLabelMode != null) onManualLabelMode.run(); });
 
         // ── Hyperparameter controls ──
         roundsSpinner = new Spinner<>(50, 1000, 200, 50);
@@ -227,6 +233,10 @@ public class ClassificationPanel extends VBox {
                 "Per-class precision/recall/F1 from an 80/20 stratified split, computed during training."));
         metricsButton.setOnAction(e -> doShowTrainingMetrics());
 
+        featureImportanceButton.setMaxWidth(Double.MAX_VALUE);
+        featureImportanceButton.setDisable(true);
+        featureImportanceButton.setOnAction(e -> { if (onFeatureImportance != null) onFeatureImportance.run(); });
+
         // sampleButton was a separate "Sample for Review" entry point; the
         // current workflow goes straight from training through Enter Review
         // Mode, so the button is no longer wired into the panel layout.
@@ -253,6 +263,8 @@ public class ClassificationPanel extends VBox {
         HBox.setHgrow(confusionsButton, Priority.ALWAYS);
         HBox.setHgrow(metricsButton, Priority.ALWAYS);
 
+        featureImportanceButton.setMaxWidth(Double.MAX_VALUE);
+
         // ── Separator ──
         Separator sep = new Separator();
 
@@ -261,6 +273,7 @@ public class ClassificationPanel extends VBox {
                 title,
                 binaryBannerLabel,
                 exitBinaryButton,
+                manualLabelButton,
                 applyToImagesButton,
                 paramRow,
                 modelRow,
@@ -277,6 +290,7 @@ public class ClassificationPanel extends VBox {
                 statusLabel,
                 new Separator(),
                 actionRow1,
+                featureImportanceButton,
                 currentImageOnlyCheckBox,
                 buildAnnotationFilterBox(),
                 reviewButton,
@@ -323,6 +337,14 @@ public class ClassificationPanel extends VBox {
         this.onApplyToImages = cb;
     }
 
+    public void setOnManualLabelMode(Runnable cb) {
+        this.onManualLabelMode = cb;
+    }
+
+    public void setOnFeatureImportance(Runnable cb) {
+        this.onFeatureImportance = cb;
+    }
+
     public void setApplyToImagesCount(int count) {
         applyToImagesButton.setText(count > 0 ? "Apply to which images... (" + count + ")" : "Apply to which images...");
     }
@@ -335,8 +357,9 @@ public class ClassificationPanel extends VBox {
     }
     public void setClassifier(DualModelClassifier cls) {
         this.classifier = cls;
-        // Re-enable the "Training Metrics" button if the restored classifier has metrics.
+        // Re-enable the "Training Metrics" and "Feature Importance" buttons if the restored classifier has metrics.
         metricsButton.setDisable(cls == null || !cls.hasTrainValMetrics());
+        featureImportanceButton.setDisable(cls == null || !cls.isTrained());
     }
     public void setFeatureNormalizer(FeatureNormalizer normalizer) { this.featureNormalizer = normalizer; }
     public void setSelectedFeatures(List<String> features) { this.selectedFeatures = features; }
