@@ -201,11 +201,11 @@ public class ClassificationPanel extends VBox {
         autoTuneCheckBox.setTooltip(new Tooltip(
                 "TPE Bayesian optimisation with cross-validation to find optimal hyperparameters independently per model"));
 
-        earlyStopCheckBox.setSelected(false);
+        earlyStopCheckBox.setSelected(true);
         earlyStopCheckBox.setTooltip(new Tooltip(
                 "Find optimal boosting rounds via validation loss monitoring (patience=20)"));
 
-        showFeatureImportanceCheckBox.setSelected(false);
+        showFeatureImportanceCheckBox.setSelected(true);
         showFeatureImportanceCheckBox.setTooltip(new Tooltip(
                 "After training, compute and display top 10 features by mean |SHAP| value per class"));
 
