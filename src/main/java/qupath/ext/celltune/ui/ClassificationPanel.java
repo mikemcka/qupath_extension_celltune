@@ -687,7 +687,9 @@ public class ClassificationPanel extends VBox {
                                 PathObject cell = otherCellById.get(labelEntry.getKey());
                                 if (cell == null) continue;
                                 supplementaryRows.add(otherExtractor.extractRow(cell));
-                                supplementaryLabels.add(labelEntry.getValue());
+                                // Strip merge-history annotation so training sees the effective class
+                                supplementaryLabels.add(
+                                        LabelStore.effectiveClassName(labelEntry.getValue()));
                                 added++;
                             }
                             if (added > 0) {

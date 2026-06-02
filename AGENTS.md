@@ -12,21 +12,22 @@ export JAVA_HOME=/path/to/jdk-25   # adjust to your install
 # Output: build/libs/qupath-extension-celltune-0.1.0-SNAPSHOT-all.jar
 ```
 
-- The `shadowJar` task produces a single fat JAR (~51 MB) bundling XGBoost4J and LightGBM4J.
+- The `shadowJar` task produces a single fat JAR bundling XGBoost4J and LightGBM4J.
 - The Gradle wrapper (`gradlew`) is included — no separate Gradle install needed.
 - `settings.gradle.kts` pins QuPath version (`0.7.0`) and uses the `foojay-resolver-convention` plugin for JDK toolchain resolution.
+- ML dependencies (from `build.gradle.kts`): `ml.dmlc:xgboost4j_2.13:2.1.4` and `io.github.metarank:lightgbm4j:4.6.0-2`.
 
 ## Architecture
 
 Entry point: `src/main/java/qupath/ext/celltune/CellTuneExtension.java` — registers menus, docks the sidebar panel, and manages project-level state.
 
-| Package | Purpose |
-|---------|---------|
-| `model/` | Feature extraction, label storage, normalization, cell predictions |
-| `classifier/` | ML training/inference (XGBoost, LightGBM, Random Forest), sampling, resampling, hyperparameter tuning |
-| `gating/` | Marker-based landmark gating (AST expression parser, multi-threshold cascade) |
-| `ui/` | All JavaFX panels, dialogs, and toolbars |
-| `io/` | Export (cell table, AnnData, ground truth CSV) and import (marker table, project state) |
+| Package | Key Classes | Purpose |
+|---------|-------------|---------|
+| `model/` | `CellFeatureExtractor`, `LabelStore`, `FeatureNormalizer`, `CellPrediction`, `CellTypeTable`, `PopulationSet`, `CohortAnomalyAnalyzer`, `CohortAnomalyReport` | Feature extraction, label storage, normalization, cell predictions, population definitions, cohort-level anomaly scoring |
+| `classifier/` | `DualModelClassifier`, `XGBoostModel`, `LightGBMModel`, `RandomForestModel`, `CompositeClassifier`, `CompositeClassificationRule`, `ClassifierState`, `FeaturePruner`, `HyperparameterTuner`, `Resampler`, `ResamplingStrategy`, `TrainingMetrics`, `UncertaintySampler`, `ModelType` | ML training/inference (XGBoost, LightGBM, Random Forest), composite multi-marker rules, sampling, resampling, hyperparameter tuning |
+| `gating/` | `GatingExpression`, `GatingRule` | Marker-based landmark gating (AST expression parser, multi-threshold cascade) |
+| `ui/` | `ClassificationPanel`, `BinaryClassifierPanel`, `CompositeClassificationDialog`, `PopulationPanel`, `ReviewController`, `ReviewToolbar`, `ManualLabelToolbar`, `FeatureImportanceView`, `FeatureSelectionPane`, `TrainingMetricsView`, `ConfusionMatrixView`, `ValidationConfusionMatrixView`, `ProjectPredictionSummaryView`, `ChannelSelector`, `NormalizationPane`, `ImageSelectionPane`, `SelectionHighlightOverlay`, `TrainingTileExtractor` | All JavaFX panels, dialogs, and toolbars |
+| `io/` | `ProjectStateManager`, `BinaryClassifierRegistry`, `CellTableExporter`, `GroundTruthIO`, `MarkerTableImporter`, `ProjectSummaryCsvExporter` | Export (cell table, ground truth CSV, project summary CSV) and import (marker table, project state); binary classifier registry tracks named classifiers across a project |
 
 See [celltune-qupath-structure.md](celltune-qupath-structure.md) for the full component-level build plan.
 
@@ -36,16 +37,31 @@ See [celltune-qupath-structure.md](celltune-qupath-structure.md) for the full co
 - **QuPath public API only**: Use only `qupath.lib.*` public APIs. No internal or deprecated APIs. APIs to watch: `PathObjectSelectionModel`, `PathClass.fromString()`, `project.getEntry(imageData)`, `qupath.getAnalysisTabPane()`.
 - **Null-check project entries**: `project.getEntry(imageData)` returns null when an image is open without a project — always null-check.
 - **LabelStore is not thread-safe**: `LabelStore` uses a plain `LinkedHashMap`. Do not access it concurrently from training threads and UI threads.
-- **Serialization**: Classifier state and per-image labels are saved as JSON+Base64 via Gson to `<project>/celltune/`. Class: `io/ProjectStateManager.java`.
+- **Serialization**: Classifier state and per-image labels are saved as JSON+Base64 via Gson to `<project>/celltune/`. Binary classifiers are stored under `<project>/celltune/binary/` and tracked by `BinaryClassifierRegistry` via `binary-registry.json`.
 - **Feature column ordering**: Feature vectors must use the same column ordering at training and inference time. `CellFeatureExtractor` handles this — do not bypass it.
+- **Marker name sanitization**: `BinaryClassifierRegistry.sanitizeMarkerName()` is called internally on all marker names to prevent path traversal and ensure safe filesystem use. Do not write marker names to disk paths without going through this method.
 
 ## Known Pitfalls
 
 - **LightGBM SHAP crashes the JVM**: Calling `LGBMBooster.predictForMat(... C_API_PREDICT_CONTRIB)` causes a fatal SIGSEGV. `LightGBMModel.computeMeanAbsShap()` exists but is intentionally not called. Do not re-enable LightGBM SHAP without testing in isolation first.
-- **XGBoost4J version lock**: The Java API changed significantly between 1.x, 2.x, and 3.x. Do not upgrade `xgboost4j-gpu_2.13` without thorough testing. `predictContrib()` (TreeSHAP) is only public in 3.x.
+- **XGBoost4J version lock**: The Java API changed significantly between 1.x, 2.x, and 3.x. The project uses `xgboost4j_2.13:2.1.4` (non-GPU). Do not upgrade without thorough testing — `predictContrib()` (TreeSHAP) behaviour and method signatures may change across major versions.
 - **Binary classification SHAP**: For exactly 2 classes, feature importance bars are identical for both classes — this is expected (see [RISKS.md](RISKS.md#24-binary-classification-shap-display)).
+- **CompositeClassificationRule validation**: Rules enforce a max of 128 conditions and a max rule name length of 120 characters. Marker names in rules are validated against the live `BinaryClassifierRegistry` at build time.
+
+## Tests
+
+Unit tests live under `src/test/java/qupath/ext/celltune/` mirroring the main package structure:
+
+| Test class | Covers |
+|-----------|--------|
+| `classifier/CompositeClassificationRuleTest` | Rule construction, polarity parsing, serialization |
+| `classifier/ResamplerTest` | Resampling strategies |
+| `classifier/TrainingMetricsTest` | Metrics calculation |
+| `gating/GatingExpressionTest`, `GatingRuleTest` | AST parsing and gating evaluation |
+| `io/ProjectStateManagerBinaryGroundTruthTest` | Binary ground truth export/import round-trip |
+| `io/ProjectSummaryCsvExporterTest` | CSV output format |
+| `model/CellPredictionTest`, `CellTypeTableTest`, `CohortAnomalyAnalyzerTest`, `FeatureNormalizerTest`, `LabelStoreTest`, `PopulationSetTest` | Core model logic |
+
+Run all tests with `./gradlew test`.
 
 Full risk register: [RISKS.md](RISKS.md)
-
-## how to talk to me
-I only know python, I am 7

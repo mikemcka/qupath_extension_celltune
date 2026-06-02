@@ -158,7 +158,8 @@ public class DualModelClassifier {
         int totalStoredLabels = labelStore.getAllLabels().size();
         for (var entry : labelStore.getAllLabels().entrySet()) {
             String cellId = entry.getKey();
-            String className = entry.getValue();
+            // Strip merge-history annotation so "test1-mergedInto(myType)" trains as "myType"
+            String className = LabelStore.effectiveClassName(entry.getValue());
             PathObject cell = cellById.get(cellId);
             if (cell == null) {
                 droppedNoCell++;

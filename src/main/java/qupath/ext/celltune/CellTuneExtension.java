@@ -62,6 +62,7 @@ import qupath.lib.projects.ProjectImageEntry;
 import java.awt.image.BufferedImage;
 import qupath.ext.celltune.io.BinaryClassifierRegistry;
 import qupath.ext.celltune.ui.BinaryClassifierPanel;
+import qupath.ext.celltune.ui.ClassControlDialog;
 import qupath.ext.celltune.ui.CompositeClassificationDialog;
 
 import java.io.File;
@@ -649,9 +650,14 @@ public class CellTuneExtension implements QuPathExtension {
         compositeItem.setOnAction(e -> showCompositeClassification(qupath));
         compositeItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem classControlItem = new MenuItem("Class Control...");
+        classControlItem.setOnAction(e -> showClassControl(qupath));
+        classControlItem.disableProperty().bind(enableExtensionProperty.not());
+
         menu.getItems().addAll(
                 binaryItem,
                 compositeItem,
+                classControlItem,
                 featuresItem,
                 normalizeItem,
                 new SeparatorMenuItem(),
@@ -2438,6 +2444,20 @@ public class CellTuneExtension implements QuPathExtension {
 
     private void showCompositeClassification(QuPathGUI qupath) {
         new CompositeClassificationDialog(qupath).showAndWait();
+    }
+
+    /** Singleton dialog instance — reuse across menu invocations. */
+    private ClassControlDialog classControlDialog;
+
+    private void showClassControl(QuPathGUI qupath) {
+        if (classControlDialog == null) {
+            classControlDialog = new ClassControlDialog(
+                    qupath,
+                    () -> labelStore,
+                    ls -> this.labelStore = ls
+            );
+        }
+        classControlDialog.show();
     }
 
     /**

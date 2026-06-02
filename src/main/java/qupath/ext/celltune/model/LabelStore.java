@@ -68,9 +68,44 @@ public class LabelStore {
         return labels.size();
     }
 
-    /** @return set of all distinct class names that have at least one labelled cell */
+    /**
+     * Strip merge-history annotation from a raw label value, returning only the
+     * effective (current) class name.
+     * <p>
+     * For example, {@code "test1-mergedInto(myType)"} returns {@code "myType"}.
+     * Labels without a merge annotation are returned unchanged.
+     *
+     * @param rawLabel the raw label value as stored on disk (may be null)
+     * @return the effective class name, or null if rawLabel is null
+     */
+    public static String effectiveClassName(String rawLabel) {
+        if (rawLabel == null) return null;
+        int start = rawLabel.indexOf("-mergedInto(");
+        if (start >= 0 && rawLabel.endsWith(")")) {
+            return rawLabel.substring(start + "-mergedInto(".length(), rawLabel.length() - 1);
+        }
+        return rawLabel;
+    }
+
+    /**
+     * @return set of all distinct <em>effective</em> class names (merge-history
+     * annotations stripped) that have at least one labelled cell
+     */
     public Set<String> getClassNames() {
-        return labels.values().stream().collect(Collectors.toCollection(LinkedHashSet::new));
+        return labels.values().stream()
+                .map(LabelStore::effectiveClassName)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * @return a new map of cellId → <em>effective</em> class name (merge-history
+     * annotations stripped), suitable for training pipelines that must not see
+     * the raw encoded form
+     */
+    public Map<String, String> getEffectiveLabels() {
+        Map<String, String> result = new LinkedHashMap<>();
+        labels.forEach((id, raw) -> result.put(id, effectiveClassName(raw)));
+        return result;
     }
 
     /** @return count of labelled cells per class */
@@ -93,14 +128,16 @@ public class LabelStore {
     }
 
     /**
-     * Remove all labels whose class name is not in the given set of valid classes.
+     * Remove all labels whose <em>effective</em> class name is not in the given
+     * set of valid classes.  Labels that carry merge-history annotations are
+     * matched by their effective (post-merge) class, not their raw stored value.
      *
      * @param validClasses the set of class names to keep
      * @return number of labels removed
      */
     public int retainClasses(Set<String> validClasses) {
         int before = labels.size();
-        labels.entrySet().removeIf(e -> !validClasses.contains(e.getValue()));
+        labels.entrySet().removeIf(e -> !validClasses.contains(effectiveClassName(e.getValue())));
         return before - labels.size();
     }
 
@@ -116,6 +153,29 @@ public class LabelStore {
         for (var entry : labels.entrySet()) {
             if (oldName.equals(entry.getValue())) {
                 entry.setValue(newName);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Restore labels that were encoded by a merge operation.
+     * Any label whose raw value ends with {@code mergedSuffix}
+     * (e.g. {@code "-mergedInto(myType)"}) is reverted to the innermost
+     * original class name (the part before the first {@code -mergedInto(}).
+     *
+     * @param mergedSuffix the suffix to match, e.g. {@code "-mergedInto(myType)"}
+     * @return number of labels restored
+     */
+    public int restoreMergedLabels(String mergedSuffix) {
+        int count = 0;
+        for (var entry : labels.entrySet()) {
+            String raw = entry.getValue();
+            if (raw != null && raw.endsWith(mergedSuffix)) {
+                int idx = raw.indexOf("-mergedInto(");
+                String original = idx >= 0 ? raw.substring(0, idx) : raw;
+                entry.setValue(original);
                 count++;
             }
         }
