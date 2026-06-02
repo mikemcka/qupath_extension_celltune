@@ -87,6 +87,8 @@ public class ClassificationPanel extends VBox {
     private final Spinner<Integer> workersSpinner;
     private final CheckBox poolImagesCheckBox = new CheckBox("Pool labels from all images");
     private final CheckBox enableBalancingCheckBox = new CheckBox("Enable data balancing");
+    private final CheckBox restrictToImportedFeaturesCheckBox =
+            new CheckBox("Restrict to features shared with imported data");
     private final ComboBox<ResamplingStrategy> advancedResamplingCombo = new ComboBox<>();
     private final ComboBox<ModelType> model1Combo = new ComboBox<>();
     private final ComboBox<ModelType> model2Combo = new ComboBox<>();
@@ -294,6 +296,7 @@ public class ClassificationPanel extends VBox {
                 earlyStopCheckBox,
                 showFeatureImportanceCheckBox,
                 autoPruneCheckBox,
+                restrictToImportedFeaturesCheckBox,
                 new Separator(),
                 statsRow,
                 trainButton,
@@ -518,6 +521,38 @@ public class ClassificationPanel extends VBox {
             }
         }
 
+        // ── Restrict to features shared with imported data ─────────────────
+        // When the user has imported ground-truth rows from another project the
+        // imported rows only carry values for that project's panel. Aligning to
+        // the current project's full feature list zero-pads any current-only
+        // marker, which biases the classifier. With this option on we drop those
+        // current-only features so both data sources train on the same columns.
+        String restrictPreamble = null;
+        if (restrictToImportedFeaturesCheckBox.isSelected()
+                && importedTrainingFeatureNames != null
+                && !importedTrainingFeatureNames.isEmpty()) {
+            Set<String> importedLower = importedTrainingFeatureNames.stream()
+                    .filter(n -> n != null)
+                    .map(n -> n.strip().toLowerCase(Locale.ROOT))
+                    .collect(Collectors.toSet());
+            int beforeRestrict = featureNames.size();
+            List<String> intersected = featureNames.stream()
+                    .filter(n -> importedLower.contains(n.strip().toLowerCase(Locale.ROOT)))
+                    .collect(Collectors.toList());
+            if (intersected.isEmpty()) {
+                Dialogs.showErrorMessage(STRINGS.getString("name"),
+                        "Restrict to imported features is on, but no current-project features\n"
+                                + "match any of the " + importedTrainingFeatureNames.size()
+                                + " imported feature names. Disable the option or fix the panel mismatch.");
+                return;
+            }
+            restrictPreamble = String.format(
+                    "Restrict-to-imported: %d \u2192 %d features (intersection with %d imported markers)",
+                    beforeRestrict, intersected.size(), importedTrainingFeatureNames.size());
+            featureNames = intersected;
+        }
+        final String restrictPreambleFinal = restrictPreamble;
+
         // ── Auto-prune features against labelled cells (non-destructive) ───
         // Runs every train so the kept set adapts as more labels are added.
         // Pruning only filters this run's feature list; measurements on disk
@@ -593,6 +628,9 @@ public class ClassificationPanel extends VBox {
         progressBox.setPadding(new Insets(15));
         progressStage.setScene(new javafx.scene.Scene(progressBox));
         progressStage.show();
+        if (restrictPreambleFinal != null) {
+            logArea.appendText(restrictPreambleFinal + "\n");
+        }
         if (prunePreambleFinal != null) {
             logArea.appendText(prunePreambleFinal + "\n");
         }
