@@ -61,10 +61,31 @@ public class CompositeClassifier {
 
     /**
      * Legacy marker-list API retained for backward compatibility.
+     * Equivalent to {@link #apply(ImageData, List, Project, boolean, Consumer)}
+     * with {@code mergeWithPrimary = false}.
      */
     public int apply(ImageData<?> imageData,
                      List<String> markerNames,
                      Project<?> project,
+                     Consumer<String> log) throws Exception {
+        return apply(imageData, markerNames, project, false, log);
+    }
+
+    /**
+     * Apply binary classifiers and assign each cell a composite class.
+     *
+     * @param mergeWithPrimary if true, each cell's existing PathClass is preserved as
+     *                         the leading segment of the composite class name
+     *                         (e.g. {@code "Tumor:CD3+:CD8-"}) and the composite
+     *                         class colour is taken from that primary class so the
+     *                         viewer keeps the original multiclass colouring.
+     *                         Cells with no current class fall back to the
+     *                         binary-only label.
+     */
+    public int apply(ImageData<?> imageData,
+                     List<String> markerNames,
+                     Project<?> project,
+                     boolean mergeWithPrimary,
                      Consumer<String> log) throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {
@@ -76,11 +97,21 @@ public class CompositeClassifier {
             return 0;
         }
 
+        // Snapshot each cell's current primary class BEFORE any reassignment.
+        List<PathClass> primaryClasses = null;
+        if (mergeWithPrimary) {
+            primaryClasses = new ArrayList<>(detectionList.size());
+            for (PathObject det : detectionList) {
+                primaryClasses.add(det.getPathClass());
+            }
+        }
+
         List<String> sorted = new ArrayList<>(markerNames);
         Collections.sort(sorted);
 
         updateStatus("Starting composite classification...", 0.0);
-        out.accept("Classifying " + detectionList.size() + " cells using " + sorted.size() + " markers...");
+        out.accept("Classifying " + detectionList.size() + " cells using " + sorted.size() + " markers"
+                + (mergeWithPrimary ? " (merged with primary classification)..." : "..."));
 
         List<String> activeMarkers = new ArrayList<>();
         List<float[]> markerPosProbs = new ArrayList<>();
@@ -108,6 +139,10 @@ public class CompositeClassifier {
         } else {
             for (int i = 0; i < detectionList.size(); i++) {
                 StringBuilder sb = new StringBuilder();
+                PathClass primary = mergeWithPrimary ? primaryClasses.get(i) : null;
+                if (primary != null && primary.getName() != null && !primary.getName().isEmpty()) {
+                    sb.append(primary.toString());
+                }
                 for (int mi = 0; mi < activeMarkers.size(); mi++) {
                     if (sb.length() > 0) {
                         sb.append(':');
@@ -115,8 +150,14 @@ public class CompositeClassifier {
                     sb.append(activeMarkers.get(mi));
                     sb.append(markerPosProbs.get(mi)[i] >= 0.5f ? '+' : '-');
                 }
+                PathClass composite = PathClass.fromString(sb.toString());
+                if (mergeWithPrimary && primary != null && primary.getColor() != null) {
+                    // Force the composite class's colour to match the primary so the
+                    // viewer keeps the original multiclass colouring.
+                    composite.setColor(primary.getColor());
+                }
                 classifyObjects.add(detectionList.get(i));
-                classifyClasses.add(PathClass.fromString(sb.toString()));
+                classifyClasses.add(composite);
             }
         }
 
@@ -229,11 +270,27 @@ public class CompositeClassifier {
 
     /**
      * Legacy marker-list batch API retained for backward compatibility.
+     * Equivalent to {@link #batch(Project, List, List, boolean, Consumer)} with
+     * {@code mergeWithPrimary = false}.
+     */
+    public Map<String, String> batch(Project<?> project,
+                                     List<String> imageNames,
+                                     List<String> markerNames,
+                                     Consumer<String> log) throws Exception {
+        return batch(project, imageNames, markerNames, false, log);
+    }
+
+    /**
+     * Apply binary classifiers to a list of project images, optionally merging
+     * the result with each cell's existing primary classification.
+     *
+     * @see #apply(ImageData, List, Project, boolean, Consumer)
      */
     @SuppressWarnings("unchecked")
     public Map<String, String> batch(Project<?> project,
                                      List<String> imageNames,
                                      List<String> markerNames,
+                                     boolean mergeWithPrimary,
                                      Consumer<String> log) throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {
@@ -265,7 +322,7 @@ public class CompositeClassifier {
                     continue;
                 }
 
-                int count = apply(imageData, markerNames, project, out);
+                int count = apply(imageData, markerNames, project, mergeWithPrimary, out);
                 entry.saveImageData(imageData);
                 results.put(imageName, "Classified " + count + " cells");
                 out.accept("'" + imageName + "': Classified " + count + " cells.");

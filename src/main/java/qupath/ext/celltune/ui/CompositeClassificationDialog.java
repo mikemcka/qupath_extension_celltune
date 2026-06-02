@@ -41,6 +41,8 @@ public class CompositeClassificationDialog {
     private final TextArea    logArea     = new TextArea();
     private final ProgressBar progressBar = new ProgressBar(0);
     private final Label       statusLabel = new Label("Select markers and images, then click Apply.");
+    private final CheckBox    mergePrimaryCheck = new CheckBox(
+            "Prepend current primary classification (colour follows primary)");
 
     public CompositeClassificationDialog(QuPathGUI qupath) {
         this.qupath = qupath;
@@ -150,6 +152,12 @@ public class CompositeClassificationDialog {
         logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
         progressBar.setPrefWidth(Double.MAX_VALUE);
 
+        mergePrimaryCheck.setWrapText(true);
+        mergePrimaryCheck.setTooltip(new Tooltip(
+                "When ticked, each cell's existing primary class becomes the first "
+                        + "segment of the composite label (e.g. Tumor:CD3+:CD8-), "
+                        + "and the composite class is coloured to match the primary."));
+
         // ── Buttons ──
         Button applyBtn = new Button("Apply");
         Button closeBtn = new Button("Close");
@@ -169,6 +177,7 @@ public class CompositeClassificationDialog {
                 imageButtons,
                 imageScroll,
                 new Separator(),
+                mergePrimaryCheck,
                 statusLabel,
                 progressBar,
                 logArea,
@@ -180,7 +189,7 @@ public class CompositeClassificationDialog {
         s.initOwner(qupath.getStage());
         s.initModality(Modality.NONE);
         s.setResizable(true);
-        s.setScene(new javafx.scene.Scene(root, 500, 620));
+        s.setScene(new javafx.scene.Scene(root, 500, 660));
         return s;
     }
 
@@ -230,6 +239,7 @@ public class CompositeClassificationDialog {
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         statusLabel.setText("Running…");
 
+        final boolean mergeWithPrimary = mergePrimaryCheck.isSelected();
         CompositeClassifier compositeClassifier = new CompositeClassifier();
 
         Thread worker = new Thread(() -> {
@@ -241,6 +251,7 @@ public class CompositeClassificationDialog {
                             liveImageData,
                             selectedMarkers,
                             project,
+                            mergeWithPrimary,
                             this::log);
                     log("Current image done: " + count + " cells classified.");
 
@@ -255,6 +266,7 @@ public class CompositeClassificationDialog {
                             project,
                             batchImages,
                             selectedMarkers,
+                            mergeWithPrimary,
                             this::log);
                     results.forEach((img, msg) -> log(img + ": " + msg));
                 }
