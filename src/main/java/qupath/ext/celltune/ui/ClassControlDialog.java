@@ -183,14 +183,15 @@ public class ClassControlDialog {
                         classListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames()));
                         setStatus("Deleted \"" + selected + "\""
                                 + (purge ? " (" + removed + " label entries purged)." : "."));
-                        deleteBtn.setDisable(false);
                     });
-                } catch (IOException ex) {
+                } catch (Exception ex) {
+                    logger.error("Delete class failed", ex);
                     Platform.runLater(() -> {
                         Dialogs.showErrorMessage(EXTENSION_NAME, "Delete failed: " + ex.getMessage());
                         setStatus("Error: " + ex.getMessage());
-                        deleteBtn.setDisable(false);
                     });
+                } finally {
+                    Platform.runLater(() -> deleteBtn.setDisable(false));
                 }
             });
         });
@@ -274,14 +275,15 @@ public class ClassControlDialog {
                         targetField.clear();
                         setStatus("Merged " + sources.size() + " class(es) → \"" + target
                                 + "\" (" + count + " labels updated).");
-                        mergeBtn.setDisable(false);
                     });
-                } catch (IOException ex) {
+                } catch (Exception ex) {
+                    logger.error("Merge classes failed", ex);
                     Platform.runLater(() -> {
                         Dialogs.showErrorMessage(EXTENSION_NAME, "Merge failed: " + ex.getMessage());
                         setStatus("Error: " + ex.getMessage());
-                        mergeBtn.setDisable(false);
                     });
+                } finally {
+                    Platform.runLater(() -> mergeBtn.setDisable(false));
                 }
             });
         });
@@ -343,14 +345,15 @@ public class ClassControlDialog {
                         if (inMemory != null) labelStoreUpdater.accept(inMemory);
                         refreshUndoCombo(targetCombo);
                         setStatus("Restored " + count + " labels merged into \"" + target + "\".");
-                        undoBtn.setDisable(false);
                     });
-                } catch (IOException ex) {
+                } catch (Exception ex) {
+                    logger.error("Undo merge failed", ex);
                     Platform.runLater(() -> {
                         Dialogs.showErrorMessage(EXTENSION_NAME, "Undo failed: " + ex.getMessage());
                         setStatus("Error: " + ex.getMessage());
-                        undoBtn.setDisable(false);
                     });
+                } finally {
+                    Platform.runLater(() -> undoBtn.setDisable(false));
                 }
             });
         });
