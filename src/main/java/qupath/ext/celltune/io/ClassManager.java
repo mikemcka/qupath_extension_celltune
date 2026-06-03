@@ -342,8 +342,11 @@ public final class ClassManager {
         var project = qupath.getProject();
         if (project == null) return;
         try {
+            // Only update the project's class list. Do NOT call project.syncChanges()
+            // here — that flushes the entire project (including any pending in-memory
+            // image-list edits) to disk and can clobber unrelated state. QuPath will
+            // persist the class list with the next normal project save.
             project.setPathClasses(new ArrayList<>(qupath.getAvailablePathClasses()));
-            project.syncChanges();
         } catch (Exception e) {
             logger.warn("Could not sync PathClasses to project: {}", e.getMessage());
         }

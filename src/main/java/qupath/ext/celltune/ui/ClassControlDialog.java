@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -49,11 +50,23 @@ public class ClassControlDialog {
     private final Consumer<LabelStore> labelStoreUpdater;
 
     private final Stage stage;
-    private final ExecutorService bgExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "ClassControl-BG");
-        t.setDaemon(true);
-        return t;
-    });
+    private ExecutorService bgExecutor = newBgExecutor();
+
+    private static ExecutorService newBgExecutor() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "ClassControl-BG");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    /** Returns a live executor, recreating it if a previous close shut it down. */
+    private synchronized ExecutorService executor() {
+        if (bgExecutor.isShutdown() || bgExecutor.isTerminated()) {
+            bgExecutor = newBgExecutor();
+        }
+        return bgExecutor;
+    }
 
     // ── Shared status bar ────────────────────────────────────────────────────
     private final Label statusLabel = new Label("Ready.");
@@ -106,7 +119,9 @@ public class ClassControlDialog {
         s.initOwner(qupath.getStage());
         s.initModality(Modality.NONE);
         s.setScene(new javafx.scene.Scene(root, 440, 480));
-        s.setOnHidden(e -> bgExecutor.shutdownNow());
+        // NB: do not shut down bgExecutor here — the dialog instance is cached and
+        // reused across menu invocations. The executor uses daemon threads so it
+        // will die with the JVM; executor() recreates it if it ever does shut down.
         return s;
     }
 
@@ -176,7 +191,8 @@ public class ClassControlDialog {
 
             deleteBtn.setDisable(true);
             setStatus("Deleting…");
-            bgExecutor.submit(() -> {
+            try {
+                executor().submit(() -> {
                 try {
                     int removed = ClassManager.deletePathClass(qupath, selected, purge);
                     Platform.runLater(() -> {
@@ -193,7 +209,13 @@ public class ClassControlDialog {
                 } finally {
                     Platform.runLater(() -> deleteBtn.setDisable(false));
                 }
-            });
+                });
+            } catch (RejectedExecutionException rex) {
+                logger.error("Delete task could not be submitted", rex);
+                deleteBtn.setDisable(false);
+                Dialogs.showErrorMessage(EXTENSION_NAME, "Could not start delete task: " + rex.getMessage());
+                setStatus("Error: could not start delete task.");
+            }
         });
 
         var box = new VBox(10,
@@ -263,7 +285,8 @@ public class ClassControlDialog {
             mergeBtn.setDisable(true);
             setStatus("Merging…");
             LabelStore inMemory = labelStoreSupplier.get();
-            bgExecutor.submit(() -> {
+            try {
+                executor().submit(() -> {
                 try {
                     int count = ClassManager.mergeClasses(qupath, sources, target, inMemory);
                     Platform.runLater(() -> {
@@ -285,7 +308,13 @@ public class ClassControlDialog {
                 } finally {
                     Platform.runLater(() -> mergeBtn.setDisable(false));
                 }
-            });
+                });
+            } catch (RejectedExecutionException rex) {
+                logger.error("Merge task could not be submitted", rex);
+                mergeBtn.setDisable(false);
+                Dialogs.showErrorMessage(EXTENSION_NAME, "Could not start merge task: " + rex.getMessage());
+                setStatus("Error: could not start merge task.");
+            }
         });
 
         var box = new VBox(10,
@@ -338,7 +367,8 @@ public class ClassControlDialog {
             undoBtn.setDisable(true);
             setStatus("Undoing merge…");
             LabelStore inMemory = labelStoreSupplier.get();
-            bgExecutor.submit(() -> {
+            try {
+                executor().submit(() -> {
                 try {
                     int count = ClassManager.undoMerge(qupath, target, inMemory);
                     Platform.runLater(() -> {
@@ -355,7 +385,13 @@ public class ClassControlDialog {
                 } finally {
                     Platform.runLater(() -> undoBtn.setDisable(false));
                 }
-            });
+                });
+            } catch (RejectedExecutionException rex) {
+                logger.error("Undo task could not be submitted", rex);
+                undoBtn.setDisable(false);
+                Dialogs.showErrorMessage(EXTENSION_NAME, "Could not start undo task: " + rex.getMessage());
+                setStatus("Error: could not start undo task.");
+            }
         });
 
         var box = new VBox(10,
