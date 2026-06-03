@@ -1273,7 +1273,17 @@ public class CellTuneExtension implements QuPathExtension {
 
             for (PathObject det : hits) {
                 if (det.isDetection()) {
-                    store.setLabel(det.getID().toString(), cls);
+                    String id = det.getID().toString();
+                    String existing = store.getLabel(id);
+                    // Preserve merge-history encoding: if the existing stored value is
+                    // "<cls>-mergedInto(target)" (or a chained merge whose innermost
+                    // original equals cls), don't overwrite it with the bare PathClass
+                    // — the annotation has no knowledge of the merge so doing so would
+                    // silently destroy the merge result.
+                    if (existing != null && cls.equals(LabelStore.innermostOriginal(existing))) {
+                        continue;
+                    }
+                    store.setLabel(id, cls);
                 }
             }
         }

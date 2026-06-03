@@ -88,6 +88,20 @@ public class LabelStore {
     }
 
     /**
+     * Strip all merge-history layers to reveal the very first class name.
+     * E.g. {@code "a-mergedInto(b-mergedInto(c))"} → {@code "a"}.
+     * Labels without a merge annotation are returned unchanged.
+     *
+     * @param rawLabel the raw label value (may be null)
+     * @return the innermost original class name, or null if rawLabel is null
+     */
+    public static String innermostOriginal(String rawLabel) {
+        if (rawLabel == null) return null;
+        int idx = rawLabel.indexOf("-mergedInto(");
+        return idx >= 0 ? rawLabel.substring(0, idx) : rawLabel;
+    }
+
+    /**
      * @return set of all distinct <em>effective</em> class names (merge-history
      * annotations stripped) that have at least one labelled cell
      */
