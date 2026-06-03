@@ -560,6 +560,15 @@ public class ConfusionMatrixView {
             gc.fillText(classNames.get(j), 0, 0);
             gc.restore();
         }
+
+        // ── Bottom key: metric definitions ────────────────────────────────
+        gc.setFont(Font.font("SansSerif", 11));
+        gc.setTextAlign(TextAlignment.LEFT);
+        gc.setFill(Color.gray(0.25));
+        double keyX = gridLeft;
+        double keyY = bottomLabelY + 26;
+        gc.fillText("Key: TP% = true positive rate (recall) for that model margin: TP/(TP+FN)", keyX, keyY);
+        gc.fillText("      Dice = per-class overlap score: 2TP/(2TP+FP+FN)", keyX, keyY + 16);
     }
 
     // ── Image selector ───────────────────────────────────────────────────────
