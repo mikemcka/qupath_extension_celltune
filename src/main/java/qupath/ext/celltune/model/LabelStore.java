@@ -142,16 +142,19 @@ public class LabelStore {
     }
 
     /**
-     * Rename all labels from one class name to another.
+     * Rename labels whose <em>effective</em> class equals {@code oldName} to
+     * {@code newName}. Raw values that already carry merge-history annotation
+     * are matched by their effective (post-merge) class, so chained merges
+     * stay in sync with the on-disk representation.
      *
-     * @param oldName the old class name
-     * @param newName the new class name
+     * @param oldName the effective class name to match
+     * @param newName the new raw value to assign
      * @return number of labels renamed
      */
     public int renameClass(String oldName, String newName) {
         int count = 0;
         for (var entry : labels.entrySet()) {
-            if (oldName.equals(entry.getValue())) {
+            if (oldName.equals(effectiveClassName(entry.getValue()))) {
                 entry.setValue(newName);
                 count++;
             }

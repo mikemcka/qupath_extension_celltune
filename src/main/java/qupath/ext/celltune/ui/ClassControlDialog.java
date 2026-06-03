@@ -48,6 +48,10 @@ public class ClassControlDialog {
     private final QuPathGUI qupath;
     private final Supplier<LabelStore> labelStoreSupplier;
     private final Consumer<LabelStore> labelStoreUpdater;
+    /** Optional: flush the active image's in-memory labels to disk before a class op runs. */
+    private final Runnable preOpDiskSync;
+    /** Optional: reload the active image's labels from disk after a class op finishes. */
+    private final Runnable postOpDiskReload;
 
     private final Stage stage;
     private ExecutorService bgExecutor = newBgExecutor();
@@ -79,9 +83,32 @@ public class ClassControlDialog {
     public ClassControlDialog(QuPathGUI qupath,
                               Supplier<LabelStore> labelStoreSupplier,
                               Consumer<LabelStore> labelStoreUpdater) {
+        this(qupath, labelStoreSupplier, labelStoreUpdater, null, null);
+    }
+
+    /**
+     * @param qupath              the QuPath GUI instance
+     * @param labelStoreSupplier  provides the current in-memory LabelStore (may return null)
+     * @param labelStoreUpdater   called after an operation that changes the in-memory store
+     * @param preOpDiskSync       optional: invoked on the FX thread before each class
+     *                            operation runs, to flush the active image's in-memory
+     *                            labels to disk. Prevents stale memory from clobbering
+     *                            freshly-merged on-disk entries when the active image
+     *                            is later re-saved.
+     * @param postOpDiskReload    optional: invoked on the FX thread after each class
+     *                            operation finishes, to reload the active image's
+     *                            labels from disk so memory matches the new disk state.
+     */
+    public ClassControlDialog(QuPathGUI qupath,
+                              Supplier<LabelStore> labelStoreSupplier,
+                              Consumer<LabelStore> labelStoreUpdater,
+                              Runnable preOpDiskSync,
+                              Runnable postOpDiskReload) {
         this.qupath = qupath;
         this.labelStoreSupplier = labelStoreSupplier;
         this.labelStoreUpdater = labelStoreUpdater;
+        this.preOpDiskSync = preOpDiskSync;
+        this.postOpDiskReload = postOpDiskReload;
         this.stage = buildStage();
     }
 
@@ -191,12 +218,14 @@ public class ClassControlDialog {
 
             deleteBtn.setDisable(true);
             setStatus("Deleting…");
+            runPreOpSync();
             try {
                 executor().submit(() -> {
                 try {
                     int removed = ClassManager.deletePathClass(qupath, selected, purge);
                     Platform.runLater(() -> {
                         classListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames()));
+                        runPostOpReload();
                         setStatus("Deleted \"" + selected + "\""
                                 + (purge ? " (" + removed + " label entries purged)." : "."));
                     });
@@ -284,6 +313,7 @@ public class ClassControlDialog {
 
             mergeBtn.setDisable(true);
             setStatus("Merging…");
+            runPreOpSync();
             LabelStore inMemory = labelStoreSupplier.get();
             try {
                 executor().submit(() -> {
@@ -291,6 +321,7 @@ public class ClassControlDialog {
                     int count = ClassManager.mergeClasses(qupath, sources, target, inMemory);
                     Platform.runLater(() -> {
                         if (inMemory != null) labelStoreUpdater.accept(inMemory);
+                        runPostOpReload();
                         // Refresh both source lists
                         List<String> refreshed = currentEffectiveClassNames();
                         sourceListView.setItems(FXCollections.observableArrayList(refreshed));
@@ -366,6 +397,7 @@ public class ClassControlDialog {
 
             undoBtn.setDisable(true);
             setStatus("Undoing merge…");
+            runPreOpSync();
             LabelStore inMemory = labelStoreSupplier.get();
             try {
                 executor().submit(() -> {
@@ -373,6 +405,7 @@ public class ClassControlDialog {
                     int count = ClassManager.undoMerge(qupath, target, inMemory);
                     Platform.runLater(() -> {
                         if (inMemory != null) labelStoreUpdater.accept(inMemory);
+                        runPostOpReload();
                         refreshUndoCombo(targetCombo);
                         setStatus("Restored " + count + " labels merged into \"" + target + "\".");
                     });
@@ -452,6 +485,26 @@ public class ClassControlDialog {
         }
         if (targets.isEmpty()) targets.addAll(currentEffectiveClassNames());
         combo.setItems(FXCollections.observableArrayList(targets));
+    }
+
+    /** Flush the active image's in-memory labels to disk before a class op. */
+    private void runPreOpSync() {
+        if (preOpDiskSync == null) return;
+        try {
+            preOpDiskSync.run();
+        } catch (Exception ex) {
+            logger.warn("Pre-op disk sync failed: {}", ex.getMessage());
+        }
+    }
+
+    /** Reload the active image's labels from disk after a class op. */
+    private void runPostOpReload() {
+        if (postOpDiskReload == null) return;
+        try {
+            postOpDiskReload.run();
+        } catch (Exception ex) {
+            logger.warn("Post-op disk reload failed: {}", ex.getMessage());
+        }
     }
 
     private static Label label(String text) {

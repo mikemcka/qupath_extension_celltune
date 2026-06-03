@@ -2454,7 +2454,49 @@ public class CellTuneExtension implements QuPathExtension {
             classControlDialog = new ClassControlDialog(
                     qupath,
                     () -> labelStore,
-                    ls -> this.labelStore = ls
+                    ls -> this.labelStore = ls,
+                    // Pre-op: flush active image's in-memory labels to disk so a class
+                    // operation (delete/merge/undo) doesn't get clobbered later by a
+                    // save that reflects stale memory. Only runs in multi-class mode.
+                    () -> {
+                        if (activeBinaryMarker != null) return;
+                        var project = qupath.getProject();
+                        var imageData = qupath.getImageData();
+                        if (project == null || imageData == null || labelStore == null
+                                || labelStore.size() == 0) return;
+                        var entry = project.getEntry(imageData);
+                        if (entry == null) return;
+                        try {
+                            var filtered = filterLabelStoreToImage(labelStore, imageData);
+                            if (filtered.size() > 0) {
+                                ProjectStateManager.saveImageLabels(
+                                        project, entry.getImageName(), filtered);
+                            }
+                        } catch (IOException ex) {
+                            logger.warn("Pre-op label flush failed for {}: {}",
+                                    entry.getImageName(), ex.getMessage());
+                        }
+                    },
+                    // Post-op: reload active image's labels from disk so memory matches
+                    // the freshly-rewritten on-disk state. Disk is the source of truth.
+                    () -> {
+                        if (activeBinaryMarker != null) return;
+                        var project = qupath.getProject();
+                        var imageData = qupath.getImageData();
+                        if (project == null || imageData == null) return;
+                        var entry = project.getEntry(imageData);
+                        if (entry == null) return;
+                        try {
+                            LabelStore reloaded = ProjectStateManager.loadImageLabels(
+                                    project, entry.getImageName());
+                            this.labelStore = (reloaded != null) ? reloaded
+                                    : new LabelStore("CellTune");
+                            collectLabelsFromAnnotations(qupath, this.labelStore);
+                        } catch (IOException ex) {
+                            logger.warn("Post-op label reload failed for {}: {}",
+                                    entry.getImageName(), ex.getMessage());
+                        }
+                    }
             );
         }
         classControlDialog.show();
