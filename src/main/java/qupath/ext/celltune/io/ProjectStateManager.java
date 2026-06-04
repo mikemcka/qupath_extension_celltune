@@ -471,19 +471,80 @@ public class ProjectStateManager {
      * Save a timestamped backup of the current labels.
      * Useful for auto-backup before each training cycle.
      *
-     * @param project    the QuPath project
-     * @param labelStore labels to back up
+     * <p>Backwards-compatible overload — image name is unknown so it is recorded
+     * as {@code null}. Prefer {@link #backupLabels(Project, String, LabelStore)}.
+     */
+    public static Path backupLabels(Project<?> project, LabelStore labelStore) throws IOException {
+        return backupLabels(project, null, labelStore);
+    }
+
+    /**
+     * Save a timestamped backup of labels across the whole project. The current
+     * image's in-memory labels are merged with any per-image label files on disk
+     * so the backup captures every labelled cell with its originating image.
+     *
+     * <p>Format: a JSON list of {@code {cellId, className, imageName}} records.
+     *
+     * @param project          the QuPath project
+     * @param currentImageName image name for the in-memory labels (nullable)
+     * @param currentLabels    in-memory labels for the current image
      * @return path to the backup file
      * @throws IOException if writing fails
      */
-    public static Path backupLabels(Project<?> project, LabelStore labelStore) throws IOException {
+    public static Path backupLabels(Project<?> project,
+                                    String currentImageName,
+                                    LabelStore currentLabels) throws IOException {
         Path dir = getCellTuneDir(project);
         String filename = "labels_backup_" + LocalDateTime.now().format(TIMESTAMP_FMT) + ".json";
         Path outPath = dir.resolve(filename);
 
-        String json = GSON.toJson(labelStore.getAllLabels());
-        Files.writeString(outPath, json, StandardCharsets.UTF_8);
-        logger.info("Backed up {} labels to {}", labelStore.size(), outPath);
+        // Collect per-image labels: image -> (cellId -> className).
+        Map<String, Map<String, String>> byImage = new LinkedHashMap<>();
+
+        // Disk-resident per-image labels (other images that aren't currently open).
+        Path labelsDir = dir.resolve(IMAGE_LABELS_DIR);
+        if (Files.isDirectory(labelsDir)) {
+            try (var stream = Files.list(labelsDir)) {
+                for (Path file : (Iterable<Path>) stream::iterator) {
+                    String fname = file.getFileName().toString();
+                    if (!fname.endsWith(".json")) continue;
+                    String imageName = fname.substring(0, fname.length() - ".json".length());
+                    try {
+                        String json = Files.readString(file, StandardCharsets.UTF_8);
+                        @SuppressWarnings("unchecked")
+                        Map<String, String> labels = GSON.fromJson(json, Map.class);
+                        if (labels != null && !labels.isEmpty()) {
+                            byImage.put(imageName, new LinkedHashMap<>(labels));
+                        }
+                    } catch (IOException | JsonSyntaxException e) {
+                        logger.warn("Skipping unreadable label file {}: {}", file, e.getMessage());
+                    }
+                }
+            }
+        }
+
+        // Overlay the current in-memory labels (most up-to-date for the open image).
+        if (currentLabels != null && !currentLabels.getAllLabels().isEmpty()) {
+            String key = currentImageName != null ? currentImageName : "";
+            byImage.put(key, new LinkedHashMap<>(currentLabels.getAllLabels()));
+        }
+
+        // Flatten to a list of records so each entry carries its image name.
+        List<Map<String, String>> records = new ArrayList<>();
+        for (var imgEntry : byImage.entrySet()) {
+            String imageName = imgEntry.getKey().isEmpty() ? null : imgEntry.getKey();
+            for (var lbl : imgEntry.getValue().entrySet()) {
+                Map<String, String> rec = new LinkedHashMap<>();
+                rec.put("cellId", lbl.getKey());
+                rec.put("className", lbl.getValue());
+                rec.put("imageName", imageName);
+                records.add(rec);
+            }
+        }
+
+        Files.writeString(outPath, GSON.toJson(records), StandardCharsets.UTF_8);
+        logger.info("Backed up {} labels across {} image(s) to {}",
+                records.size(), byImage.size(), outPath);
         return outPath;
     }
 

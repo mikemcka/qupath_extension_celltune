@@ -669,7 +669,9 @@ public class ClassificationPanel extends VBox {
             try {
                 // Auto-backup labels
                 if (projectRef != null) {
-                    ProjectStateManager.backupLabels(projectRef, storeCopy);
+                    var backupEntry = projectRef.getEntry(imageData);
+                    String backupImageName = backupEntry != null ? backupEntry.getImageName() : null;
+                    ProjectStateManager.backupLabels(projectRef, backupImageName, storeCopy);
                 }
 
                 // Collect supplementary training data from other project images

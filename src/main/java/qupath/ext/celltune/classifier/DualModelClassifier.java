@@ -964,6 +964,7 @@ public class DualModelClassifier {
         List<Integer> valList = new ArrayList<>();
 
         for (var group : groups) {
+            if (group.isEmpty()) continue; // class has no samples in pooled data — skip
             Collections.shuffle(group, rng);
             int trainCount = Math.max(1, (int) (group.size() * trainRatio));
             trainList.addAll(group.subList(0, trainCount));
