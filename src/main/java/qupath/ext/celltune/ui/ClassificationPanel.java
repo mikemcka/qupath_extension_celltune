@@ -109,6 +109,9 @@ public class ClassificationPanel extends VBox {
     /** Sanitized name of the active binary classifier, or null in multi-class mode.
      *  Used to scope per-image label files so binary classifiers don't share labels. */
     private String activeBinaryMarker = null;
+    /** Allowed class names for the active binary classifier; used to filter label
+     *  collection and persistence so labels from other classifiers don't bleed in. */
+    private java.util.Set<String> activeBinaryClassNames = null;
 
     public ClassificationPanel(QuPathGUI qupath) {
         super(10);
@@ -347,6 +350,17 @@ public class ClassificationPanel extends VBox {
         this.onExitBinaryMode = cb;
     }
 
+    /** Allowed class names for the active binary classifier (e.g. ["GrB+","GrB-"]).
+     *  When non-null, label collection and persistence filter to these classes so
+     *  point annotations from other classifiers don't contaminate this store. */
+    public void setActiveBinaryClassNames(java.util.Collection<String> classNames) {
+        if (classNames == null || classNames.isEmpty()) {
+            this.activeBinaryClassNames = null;
+        } else {
+            this.activeBinaryClassNames = new java.util.LinkedHashSet<>(classNames);
+        }
+    }
+
     public void setOnApplyToImages(Runnable cb) {
         this.onApplyToImages = cb;
     }
@@ -439,10 +453,17 @@ public class ClassificationPanel extends VBox {
         if (labelStore == null) labelStore = new LabelStore("CellTune");
         collectLabelsFromAnnotations(labelStore);
 
-        // Sync labels with current QuPath class list — remove labels for deleted classes
+        // Sync labels with current QuPath class list — remove labels for deleted classes.
+        // In binary mode, restrict valid classes to the active binary classifier's
+        // classes so labels from other classifiers (e.g. PD-1+/-) get evicted from
+        // this store before training and persistence.
         var project = qupath.getProject();
         Set<String> validClasses = new LinkedHashSet<>();
-        if (project != null) {
+        if (activeBinaryMarker != null && activeBinaryClassNames != null
+                && !activeBinaryClassNames.isEmpty()) {
+            validClasses.addAll(activeBinaryClassNames);
+            labelStore.retainClasses(validClasses);
+        } else if (project != null) {
             for (var pc : project.getPathClasses()) {
                 if (pc != null && pc.getName() != null && !pc.getName().isEmpty()) {
                     validClasses.add(pc.getName());
@@ -648,6 +669,13 @@ public class ClassificationPanel extends VBox {
         // multi-class mode) so per-image label files don't bleed between classifiers.
         final String scope = activeBinaryMarker;
         final boolean binaryActive = (scope != null);
+        // Snapshot the allowed-class set for this binary session so the background
+        // thread filters out foreign labels (e.g. PD-1+/- in a GrB save) even if
+        // the active marker changes mid-train.
+        final java.util.Set<String> binaryClassFilter =
+                (binaryActive && activeBinaryClassNames != null && !activeBinaryClassNames.isEmpty())
+                        ? new java.util.LinkedHashSet<>(activeBinaryClassNames)
+                        : null;
         // In binary mode every label belongs to one classifier — always pool labels
         // for that classifier, regardless of the (now-disabled) checkbox state.
         final boolean poolAllImages = binaryActive || poolImagesCheckBox.isSelected();
@@ -824,6 +852,12 @@ public class ClassificationPanel extends VBox {
                     var imgEntry = projectRef.getEntry(imageData);
                     if (imgEntry != null) {
                         var filteredStore = filterLabelStoreToImage(storeCopy, imageData);
+                        // In binary mode, drop any foreign-class labels so the per-image
+                        // file for this classifier never contains the other classifier's
+                        // classes (and any historical contamination gets self-healed).
+                        if (binaryClassFilter != null) {
+                            filteredStore.retainClasses(binaryClassFilter);
+                        }
                         ProjectStateManager.saveImageLabels(
                                 projectRef, scope, imgEntry.getImageName(), filteredStore);
                     }
@@ -1398,17 +1432,28 @@ public class ClassificationPanel extends VBox {
     private void collectLabelsFromAnnotations(LabelStore store) {
         var imageData = qupath.getImageData();
         if (imageData == null) return;
-        collectLabelsFromHierarchy(imageData.getHierarchy(), store);
+        // In binary mode, restrict to the active binary classifier's classes
+        // so labels from other classifiers (e.g. PD-1+/-) don't get pulled into
+        // this store via point annotations left over from a previous session.
+        collectLabelsFromHierarchy(imageData.getHierarchy(), store, activeBinaryClassNames);
     }
 
     private static void collectLabelsFromHierarchy(
             qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
+        collectLabelsFromHierarchy(hierarchy, store, null);
+    }
+
+    private static void collectLabelsFromHierarchy(
+            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
+            LabelStore store,
+            java.util.Set<String> allowedClasses) {
         for (PathObject anno : hierarchy.getAnnotationObjects()) {
             if (anno.getPathClass() == null || anno.getROI() == null) continue;
             // Only point annotations count as ground truth — area/region annotations
             // describe tissue regions, not individual cell labels.
             if (!anno.getROI().isPoint()) continue;
             String cls = anno.getPathClass().toString();
+            if (allowedClasses != null && !allowedClasses.contains(cls)) continue;
 
             List<PathObject> hits = new java.util.ArrayList<>();
             for (var pt : anno.getROI().getAllPoints()) {
@@ -1857,11 +1902,28 @@ public class ClassificationPanel extends VBox {
             LabelStore delta = entry.getValue();
 
             try {
+                // In binary mode, strip foreign-class labels from the delta before
+                // it touches disk, and from the merged on-disk store after merge.
+                // The post-merge filter is self-healing: any historical contamination
+                // (foreign labels written by older buggy code) gets cleaned up on
+                // the next save.
+                java.util.Set<String> binaryFilter = null;
+                if (activeBinaryMarker != null
+                        && activeBinaryClassNames != null
+                        && !activeBinaryClassNames.isEmpty()) {
+                    binaryFilter = new java.util.LinkedHashSet<>(activeBinaryClassNames);
+                    delta.retainClasses(binaryFilter);
+                    if (delta.size() == 0) continue;
+                }
+
                 LabelStore merged = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imageName);
                 if (merged == null) {
                     merged = new LabelStore("CellTune");
                 }
                 merged.mergeFrom(delta);
+                if (binaryFilter != null) {
+                    merged.retainClasses(binaryFilter);
+                }
                 ProjectStateManager.saveImageLabels(project, activeBinaryMarker, imageName, merged);
             } catch (Exception ignored) {
             }

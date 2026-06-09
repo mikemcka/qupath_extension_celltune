@@ -213,8 +213,15 @@ public class CellTuneExtension implements QuPathExtension {
                 if (proj != null) {
                     try {
                         ClassifierState state = cls.toClassifierState(activeBinaryMarker);
+                        // Defence-in-depth: drop labels for classes outside this binary
+                        // classifier before writing the canonical state file.
+                        LabelStore safeStore = labelStore != null
+                                ? labelStore : new LabelStore(activeBinaryMarker);
+                        if (activeBinaryClassNames != null && !activeBinaryClassNames.isEmpty()) {
+                            safeStore.retainClasses(new java.util.LinkedHashSet<>(activeBinaryClassNames));
+                        }
                         ProjectStateManager.saveBinaryState(proj, activeBinaryMarker,
-                                labelStore != null ? labelStore : new LabelStore(activeBinaryMarker),
+                                safeStore,
                                 state.getFeatureNames(), state.getClassNames(),
                                 state.getXgboostBytes(), state.getLightgbmBytes(),
                                 state.getRfModel1Bytes(), state.getRfModel2Bytes(),
@@ -279,6 +286,14 @@ public class CellTuneExtension implements QuPathExtension {
                 // Save labels
                 if (labelStore != null && labelStore.size() > 0) {
                     var filteredStore = filterLabelStoreToImage(labelStore, oldData);
+                    // In binary mode, drop any labels for classes that don't belong
+                    // to this binary classifier so foreign labels (e.g. PD-1+/- in a
+                    // GrB store) don't get persisted to per-image label files.
+                    if (activeBinaryMarker != null
+                            && activeBinaryClassNames != null
+                            && !activeBinaryClassNames.isEmpty()) {
+                        filteredStore.retainClasses(new java.util.LinkedHashSet<>(activeBinaryClassNames));
+                    }
                     if (filteredStore.size() > 0) {
                         try {
                             ProjectStateManager.saveImageLabels(
@@ -343,6 +358,14 @@ public class CellTuneExtension implements QuPathExtension {
                 this.labelStore = (loaded != null) ? loaded : new LabelStore("CellTune");
                 // Also pick up any annotation-based labels on the new image
                 collectLabelsFromAnnotations(qupath, this.labelStore);
+                // In binary mode, drop any labels loaded from disk that belong to
+                // other classifiers (self-healing for previously-contaminated files).
+                if (activeBinaryMarker != null
+                        && activeBinaryClassNames != null
+                        && !activeBinaryClassNames.isEmpty()) {
+                    this.labelStore.retainClasses(
+                            new java.util.LinkedHashSet<>(activeBinaryClassNames));
+                }
 
                 // Load sampled cell IDs for new image
                 try {
@@ -434,6 +457,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setLastSampledCellIds(lastSampledCellIds);
         classificationPanel.setImportedTrainingData(importedTrainingRows, importedTrainingFeatureNames);
         classificationPanel.setActiveBinaryMarker(activeBinaryMarker);
+        classificationPanel.setActiveBinaryClassNames(activeBinaryClassNames);
     }
 
     /** Persist Pred_ALL for the current image so manual mode can show confidence after reload. */
@@ -954,7 +978,57 @@ public class CellTuneExtension implements QuPathExtension {
     private void collectLabelsFromAnnotations(QuPathGUI qupath, LabelStore store) {
         var imageData = qupath.getImageData();
         if (imageData == null) return;
-        collectLabelsFromHierarchy(imageData.getHierarchy(), store);
+        collectLabelsFromHierarchy(imageData.getHierarchy(), store, activeBinaryClassFilter());
+    }
+
+    /** Returns the allowed binary class names when in binary mode, or null otherwise. */
+    private java.util.Set<String> activeBinaryClassFilter() {
+        if (activeBinaryMarker == null) return null;
+        if (activeBinaryClassNames == null || activeBinaryClassNames.isEmpty()) return null;
+        return new java.util.LinkedHashSet<>(activeBinaryClassNames);
+    }
+
+    /**
+     * Rewrite every per-image label file under the given binary marker scope,
+     * stripping any entries whose class is not in {@code allowedClasses}. Files
+     * that become empty are deleted. Errors on individual files are logged and
+     * do not abort the scrub.
+     */
+    private static void scrubBinaryPerImageLabels(qupath.lib.projects.Project<?> project,
+                                                  String markerName,
+                                                  java.util.Set<String> allowedClasses) {
+        if (project == null || markerName == null || allowedClasses == null || allowedClasses.isEmpty()) return;
+        try {
+            var files = ProjectStateManager.listImageLabelFiles(project, markerName);
+            int filesScrubbed = 0;
+            int totalRemoved = 0;
+            for (var file : files) {
+                try {
+                    var labels = ProjectStateManager.readImageLabelsRaw(file);
+                    if (labels.isEmpty()) continue;
+                    int before = labels.size();
+                    labels.entrySet().removeIf(e -> !allowedClasses.contains(e.getValue()));
+                    int removed = before - labels.size();
+                    if (removed == 0) continue;
+                    totalRemoved += removed;
+                    filesScrubbed++;
+                    if (labels.isEmpty()) {
+                        java.nio.file.Files.deleteIfExists(file);
+                    } else {
+                        ProjectStateManager.writeImageLabelsRaw(file, labels);
+                    }
+                } catch (Exception ex) {
+                    logger.warn("Failed to scrub per-image labels file {}: {}", file, ex.getMessage());
+                }
+            }
+            if (totalRemoved > 0) {
+                logger.info("[CellTune] Scrubbed {} foreign-class labels from {} per-image file(s) for binary marker '{}'",
+                        totalRemoved, filesScrubbed, markerName);
+            }
+        } catch (Exception ex) {
+            logger.warn("Failed to enumerate per-image label files for binary marker '{}': {}",
+                    markerName, ex.getMessage());
+        }
     }
 
     /**
@@ -973,6 +1047,14 @@ public class CellTuneExtension implements QuPathExtension {
 
         // Filter to only cell IDs that belong to this image's detections
         var filteredStore = filterLabelStoreToImage(labelStore, imageData);
+        // In binary mode, also drop labels for classes outside this binary classifier
+        // (defence-in-depth — collection paths already filter, but stale memory could
+        // otherwise reintroduce foreign labels into the per-image file on save).
+        if (activeBinaryMarker != null
+                && activeBinaryClassNames != null
+                && !activeBinaryClassNames.isEmpty()) {
+            filteredStore.retainClasses(new java.util.LinkedHashSet<>(activeBinaryClassNames));
+        }
         if (filteredStore.size() == 0) return;
 
         try {
@@ -1187,16 +1269,31 @@ public class CellTuneExtension implements QuPathExtension {
                     .setLabel(cellId, label);
         }
 
+        java.util.Set<String> binaryFilter = activeBinaryClassFilter();
+
         for (var entry : labelsByImage.entrySet()) {
             String imageName = entry.getKey();
             LabelStore delta = entry.getValue();
 
             try {
+                // In binary mode, strip foreign-class labels from the delta before
+                // it touches disk, and from the merged on-disk store after merge.
+                // The post-merge filter is self-healing: any historical contamination
+                // (foreign labels written by older buggy code) gets cleaned up on
+                // the next save.
+                if (binaryFilter != null) {
+                    delta.retainClasses(binaryFilter);
+                    if (delta.size() == 0) continue;
+                }
+
                 LabelStore merged = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imageName);
                 if (merged == null) {
                     merged = new LabelStore("CellTune");
                 }
                 merged.mergeFrom(delta);
+                if (binaryFilter != null) {
+                    merged.retainClasses(binaryFilter);
+                }
                 ProjectStateManager.saveImageLabels(project, activeBinaryMarker, imageName, merged);
             } catch (Exception ex) {
                 logger.warn("Failed to save reviewed labels for {}: {}", imageName, ex.getMessage());
@@ -1257,12 +1354,20 @@ public class CellTuneExtension implements QuPathExtension {
      */
     private static void collectLabelsFromHierarchy(
             qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
+        collectLabelsFromHierarchy(hierarchy, store, null);
+    }
+
+    private static void collectLabelsFromHierarchy(
+            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
+            LabelStore store,
+            java.util.Set<String> allowedClasses) {
         for (PathObject anno : hierarchy.getAnnotationObjects()) {
             if (anno.getPathClass() == null || anno.getROI() == null) continue;
             // Only point annotations count as ground truth — area/region annotations
             // describe tissue regions, not individual cell labels.
             if (!anno.getROI().isPoint()) continue;
             String cls = anno.getPathClass().toString();
+            if (allowedClasses != null && !allowedClasses.contains(cls)) continue;
 
             List<PathObject> hits = new java.util.ArrayList<>();
             for (var pt : anno.getROI().getAllPoints()) {
@@ -2593,18 +2698,53 @@ public class CellTuneExtension implements QuPathExtension {
 
         this.activeBinaryMarker = markerName;
 
-        // Resolve the allowed class names for UI restriction:
-        // 1. Trained classifier's class list (most authoritative)
-        // 2. Distinct values already in the label store (backwards compat)
-        // 3. Fallback: construct markerName+ / markerName-
+        // Resolve the allowed class names for UI restriction.
+        //
+        // CRITICAL: A binary classifier for marker X is ALWAYS exactly two classes
+        // {X+, X-}. We must NEVER derive this set from the on-disk label store,
+        // because if that file is contaminated with foreign classes (e.g. PD-1+/-
+        // labels in a GrB store) we would then "validate" those foreign classes
+        // and every subsequent retainClasses() filter would become a no-op,
+        // permanently preserving the contamination on every save.
+        //
+        // The trained classifier is allowed to override the canonical pair only
+        // when its class list is a subset of {markerName+, markerName-} — this
+        // covers degenerate single-class classifiers but never widens the set.
+        java.util.LinkedHashSet<String> canonical = new java.util.LinkedHashSet<>();
+        canonical.add(markerName + "+");
+        canonical.add(markerName + "-");
         if (this.classifier != null
                 && this.classifier.getClassNames() != null
-                && this.classifier.getClassNames().size() >= 2) {
+                && !this.classifier.getClassNames().isEmpty()
+                && canonical.containsAll(this.classifier.getClassNames())) {
             this.activeBinaryClassNames = List.copyOf(this.classifier.getClassNames());
-        } else if (this.labelStore != null && this.labelStore.getClassNames().size() >= 2) {
-            this.activeBinaryClassNames = List.copyOf(this.labelStore.getClassNames());
         } else {
-            this.activeBinaryClassNames = List.of(markerName + "+", markerName + "-");
+            this.activeBinaryClassNames = List.copyOf(canonical);
+        }
+
+        // Self-heal: unconditionally drop any labels whose class is not in the
+        // canonical set for this marker. This evicts cross-contamination from
+        // earlier sessions where labels from other classifiers bled into this
+        // marker's store (e.g. via collectLabelsFromAnnotations or older buggy
+        // save paths). Runs every time the user enters binary mode so a single
+        // open of the panel is enough to clean a contaminated file.
+        if (this.labelStore != null && this.labelStore.size() > 0) {
+            int removed = this.labelStore.retainClasses(canonical);
+            if (removed > 0) {
+                logger.info("[CellTune] Pruned {} foreign-class labels from binary store '{}' on entry",
+                        removed, markerName);
+                try {
+                    ProjectStateManager.saveBinaryLabels(project, markerName, this.labelStore);
+                } catch (IOException ex) {
+                    logger.warn("Failed to persist self-healed binary labels for '{}': {}",
+                            markerName, ex.getMessage());
+                }
+                // Also scrub every per-image label file for this marker so that
+                // disk state matches the now-cleaned in-memory state. Without
+                // this, a stale per-image file would be re-loaded on the next
+                // image switch and reintroduce foreign labels.
+                scrubBinaryPerImageLabels(project, markerName, canonical);
+            }
         }
 
         syncPanelState();
@@ -2634,6 +2774,11 @@ public class CellTuneExtension implements QuPathExtension {
 
         // Save binary labels before exiting
         if (project != null && labelStore != null) {
+            // Defence-in-depth: filter out any labels that don't belong to this binary
+            // classifier's classes before persisting the canonical state.
+            if (activeBinaryClassNames != null && !activeBinaryClassNames.isEmpty()) {
+                labelStore.retainClasses(new java.util.LinkedHashSet<>(activeBinaryClassNames));
+            }
             try {
                 ProjectStateManager.saveBinaryLabels(project, activeBinaryMarker, labelStore);
             } catch (IOException ex) {

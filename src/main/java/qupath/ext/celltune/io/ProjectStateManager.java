@@ -691,6 +691,48 @@ public class ProjectStateManager {
         return name.replaceAll("[^a-zA-Z0-9._\\-]", "_");
     }
 
+    /**
+     * List all per-image label files for the given scope (binary marker name,
+     * or null for multi-class). Returns an empty list if the directory does
+     * not exist. The returned paths are absolute and point at the JSON files
+     * themselves, not the image names — call {@link #loadImageLabels(Project, String, String)}
+     * to read them by name.
+     */
+    public static List<Path> listImageLabelFiles(Project<?> project, String scope) throws IOException {
+        Path dir = resolveImageLabelsDir(project, scope);
+        if (!Files.isDirectory(dir)) return List.of();
+        try (var stream = Files.list(dir)) {
+            return stream
+                    .filter(p -> p.getFileName().toString().endsWith(".json"))
+                    .filter(Files::isRegularFile)
+                    .sorted()
+                    .toList();
+        }
+    }
+
+    /**
+     * Overwrite a per-image labels file with the raw map of cellId -> class.
+     * Used by self-heal flows that have already filtered the map and need to
+     * persist the cleaned version directly (without going through LabelStore).
+     */
+    public static void writeImageLabelsRaw(Path filePath, Map<String, String> labels) throws IOException {
+        Files.createDirectories(filePath.getParent());
+        String json = GSON.toJson(labels);
+        Files.writeString(filePath, json, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Read a per-image labels file as a raw cellId -> class map. Returns an
+     * empty map if the file does not exist or is empty.
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, String> readImageLabelsRaw(Path filePath) throws IOException {
+        if (!Files.exists(filePath)) return new LinkedHashMap<>();
+        String json = Files.readString(filePath, StandardCharsets.UTF_8);
+        Map<String, String> labels = GSON.fromJson(json, Map.class);
+        return labels == null ? new LinkedHashMap<>() : labels;
+    }
+
     // â”€â”€ Per-image sampled cell state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static final String IMAGE_SAMPLED_DIR = "image-sampled";

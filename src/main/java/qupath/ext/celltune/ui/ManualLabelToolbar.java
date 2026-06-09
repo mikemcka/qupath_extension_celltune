@@ -81,6 +81,13 @@ public class ManualLabelToolbar {
 
     // Listener reference for cleanup
     private PathObjectSelectionListener selectionListener;
+    // Hierarchy the selection listener is currently attached to (may differ from
+    // qupath.getImageData() after an image switch). Tracked so we can detach
+    // cleanly even if the active image has changed.
+    private qupath.lib.objects.hierarchy.PathObjectHierarchy listenedHierarchy;
+    // Listener on QuPath's active-image property so we can re-attach the
+    // selection listener to the new image and clear the stale highlight ring.
+    private javafx.beans.value.ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>> imageDataListener;
 
     /**
      * When non-null, class buttons and the All Classes menu are restricted to
@@ -176,8 +183,41 @@ public class ManualLabelToolbar {
         highlightViewer = qupath.getViewer();
         highlightOverlay.installOn(highlightViewer);
 
+        // ── React to image switches so the ring & selection listener follow ──
+        // Without this, the overlay keeps drawing the previous cell's slide
+        // coordinates onto the newly-opened image, producing a magenta ring at
+        // an apparently random location.
+        imageDataListener = (obs, oldData, newData) -> {
+            javafx.application.Platform.runLater(() -> {
+                // Drop the stale target so we don't draw old coords on the new image.
+                highlightOverlay.clear();
+                selectedCells = new ArrayList<>();
+                selectedCellLabel.setText("Select a detection cell in the viewer");
+                statusDot.setFill(Color.WHITE);
+                updatePredictionButtons(null);
+
+                // Move the overlay onto the (possibly new) active viewer.
+                var viewerNow = qupath.getViewer();
+                if (viewerNow != highlightViewer) {
+                    if (highlightViewer != null) highlightOverlay.uninstallFrom(highlightViewer);
+                    highlightViewer = viewerNow;
+                    if (highlightViewer != null) highlightOverlay.installOn(highlightViewer);
+                }
+                if (highlightViewer != null) highlightViewer.repaint();
+
+                // Re-attach the selection listener to the new image's hierarchy.
+                removeSelectionListener();
+                installSelectionListener();
+            });
+        };
+        qupath.imageDataProperty().addListener(imageDataListener);
+
         // ── Cleanup on close ─────────────────────────────────────────────
         stage.setOnHidden(e -> {
+            if (imageDataListener != null) {
+                qupath.imageDataProperty().removeListener(imageDataListener);
+                imageDataListener = null;
+            }
             removeSelectionListener();
             highlightOverlay.uninstallFrom(highlightViewer);
             if (highlightViewer != null) highlightViewer.repaint();
@@ -195,6 +235,7 @@ public class ManualLabelToolbar {
     private void installSelectionListener() {
         var imageData = qupath.getImageData();
         if (imageData == null) return;
+        listenedHierarchy = imageData.getHierarchy();
 
         selectionListener = (pathObjectSelected, previousObject, allSelected) -> {
             javafx.application.Platform.runLater(() -> {
@@ -229,7 +270,7 @@ public class ManualLabelToolbar {
             });
         };
 
-        imageData.getHierarchy().getSelectionModel()
+        listenedHierarchy.getSelectionModel()
                 .addPathObjectSelectionListener(selectionListener);
     }
 
@@ -271,12 +312,14 @@ public class ManualLabelToolbar {
 
     private void removeSelectionListener() {
         if (selectionListener == null) return;
-        var imageData = qupath.getImageData();
-        if (imageData != null) {
-            imageData.getHierarchy().getSelectionModel()
+        // Detach from the hierarchy the listener was actually attached to, not
+        // the currently-active image's hierarchy (which may have changed).
+        if (listenedHierarchy != null) {
+            listenedHierarchy.getSelectionModel()
                     .removePathObjectSelectionListener(selectionListener);
         }
         selectionListener = null;
+        listenedHierarchy = null;
     }
 
     /**
