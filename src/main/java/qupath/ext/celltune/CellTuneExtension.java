@@ -678,6 +678,10 @@ public class CellTuneExtension implements QuPathExtension {
         classControlItem.setOnAction(e -> showClassControl(qupath));
         classControlItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem distancesItem = new MenuItem("Generate Distance Measurements...");
+        distancesItem.setOnAction(e -> showDistanceMeasurements(qupath));
+        distancesItem.disableProperty().bind(enableExtensionProperty.not());
+
         menu.getItems().addAll(
                 binaryItem,
                 compositeItem,
@@ -686,6 +690,7 @@ public class CellTuneExtension implements QuPathExtension {
                 normalizeItem,
                 new SeparatorMenuItem(),
                 projectSummaryItem,
+                distancesItem,
                 new SeparatorMenuItem(),
                 importMarkersItem,
                 exportItem,
@@ -695,6 +700,14 @@ public class CellTuneExtension implements QuPathExtension {
                 exportBinaryGroundTruthItem,
                 importBinaryGroundTruthItem
         );
+    }
+
+    private void showDistanceMeasurements(QuPathGUI qupath) {
+        if (qupath.getProject() == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
+            return;
+        }
+        new qupath.ext.celltune.ui.DistanceMeasurementsDialog(qupath).show();
     }
 
     // ── Placeholder actions (wired in later phases) ────────────────────────────
@@ -1921,8 +1934,12 @@ public class CellTuneExtension implements QuPathExtension {
 
                         List<String> allFeats = CellFeatureExtractor.discoverFeatureNames(cells);
                         List<String> feats = allFeats.stream()
-                                .filter(f -> f.equalsIgnoreCase("Cell: Area")
-                                        || f.toLowerCase(java.util.Locale.ROOT).contains("mean"))
+                                .filter(f -> {
+                                    String lc = f.toLowerCase(java.util.Locale.ROOT);
+                                    return f.equalsIgnoreCase("Cell: Area")
+                                            || lc.contains("mean")
+                                            || lc.contains("distance");
+                                })
                                 .collect(java.util.stream.Collectors.toList());
                         if (feats.isEmpty()) feats = allFeats;
 
