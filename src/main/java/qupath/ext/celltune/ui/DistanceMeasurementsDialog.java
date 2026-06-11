@@ -8,6 +8,10 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.index.strtree.ItemBoundable;
+import org.locationtech.jts.index.strtree.ItemDistance;
+import org.locationtech.jts.index.strtree.STRtree;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.analysis.DistanceTools;
@@ -25,7 +29,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 /**
  * Project-wide batch dialog that runs distance-measurement computations on the
@@ -409,8 +412,10 @@ public class DistanceMeasurementsDialog {
      * scaled by the imageData's current pixel calibration (µm if calibrated,
      * pixels otherwise) — the measurement name carries the unit suffix.
      *
-     * <p>Per-class loops are O(n²) but parallelised across cores. For class
-     * sizes up to ~100k this completes in seconds on a multi-core machine.
+     * <p>Uses a JTS {@link STRtree} for O(n log n) nearest-neighbour queries.
+     * Each query passes the cell's own object reference as the exclusion item,
+     * so the result is guaranteed to be a different cell of the same class.
+     * Comfortably handles classes with hundreds of thousands of cells.
      */
     private static void computeSameClassDistances(ImageData<?> imageData,
                                                   java.util.function.Consumer<String> log) {
@@ -432,6 +437,7 @@ public class DistanceMeasurementsDialog {
             String className = entry.getKey();
             List<PathObject> cells = entry.getValue();
             int n = cells.size();
+            String mname = "Distance to other " + className + " " + unit;
             if (n < 2) {
                 log.accept("Skipping '" + className + "' (n=" + n + ")");
                 continue;
@@ -450,33 +456,82 @@ public class DistanceMeasurementsDialog {
                 }
             }
 
-            String mname = "Distance to other " + className + " " + unit;
             long t0 = System.currentTimeMillis();
-            IntStream.range(0, n).parallel().forEach(i -> {
-                double xi = xs[i], yi = ys[i];
-                if (Double.isNaN(xi) || Double.isNaN(yi)) {
-                    cells.get(i).getMeasurementList().put(mname, Double.NaN);
-                    return;
-                }
-                double minSq = Double.POSITIVE_INFINITY;
-                for (int j = 0; j < n; j++) {
-                    if (j == i) continue;
-                    double xj = xs[j], yj = ys[j];
-                    if (Double.isNaN(xj) || Double.isNaN(yj)) continue;
-                    double dx = xi - xj;
-                    double dy = yi - yj;
-                    double d2 = dx * dx + dy * dy;
-                    if (d2 < minSq) minSq = d2;
-                }
-                double dist = minSq == Double.POSITIVE_INFINITY ? Double.NaN : Math.sqrt(minSq);
-                // Each cell's MeasurementList is touched by exactly one thread
-                // (the one owning index i), so no extra synchronisation needed.
-                cells.get(i).getMeasurementList().put(mname, dist);
-            });
+            double[] distances = sameClassNearestNeighbourDistances(xs, ys);
             long elapsed = System.currentTimeMillis() - t0;
+
+            for (int i = 0; i < n; i++) {
+                cells.get(i).getMeasurementList().put(mname, distances[i]);
+            }
             log.accept(String.format(Locale.US, "  %s: %d cells in %d ms → %s",
                     className, n, elapsed, mname));
         }
+    }
+
+    /**
+     * Pure helper: given parallel arrays of xs/ys (already in the desired
+     * units), returns a same-length array where each entry is the distance
+     * from that point to its nearest neighbour in the same set, excluding
+     * itself. Entries with NaN coordinates produce NaN, as do points whose
+     * only valid neighbours are themselves (single valid point).
+     *
+     * <p>Package-private for unit testing.
+     */
+    static double[] sameClassNearestNeighbourDistances(double[] xs, double[] ys) {
+        if (xs.length != ys.length) {
+            throw new IllegalArgumentException("xs and ys must have the same length");
+        }
+        int n = xs.length;
+        double[] out = new double[n];
+        if (n == 0) return out;
+
+        // JTS's 3-arg nearestNeighbour does NOT auto-exclude the query item —
+        // self-exclusion has to live in the ItemDistance callback. Each index
+        // gets a unique Object marker; reference equality is used to skip self.
+        Object[] keys = new Object[n];
+        IdentityHashMap<Object, Integer> indexByKey = new IdentityHashMap<>(n * 2);
+        STRtree tree = new STRtree();
+        int inserted = 0;
+        for (int i = 0; i < n; i++) {
+            if (Double.isNaN(xs[i]) || Double.isNaN(ys[i])) continue;
+            keys[i] = new Object();
+            indexByKey.put(keys[i], i);
+            tree.insert(new Envelope(xs[i], xs[i], ys[i], ys[i]), keys[i]);
+            inserted++;
+        }
+        if (inserted < 2) {
+            Arrays.fill(out, Double.NaN);
+            return out;
+        }
+        tree.build();
+
+        ItemDistance pointDistance = (ItemBoundable a, ItemBoundable b) -> {
+            if (a.getItem() == b.getItem()) return Double.POSITIVE_INFINITY;
+            Envelope ea = (Envelope) a.getBounds();
+            Envelope eb = (Envelope) b.getBounds();
+            double dx = ea.getMinX() - eb.getMinX();
+            double dy = ea.getMinY() - eb.getMinY();
+            return Math.sqrt(dx * dx + dy * dy);
+        };
+
+        for (int i = 0; i < n; i++) {
+            double xi = xs[i], yi = ys[i];
+            if (Double.isNaN(xi) || Double.isNaN(yi)) {
+                out[i] = Double.NaN;
+                continue;
+            }
+            Envelope env = new Envelope(xi, xi, yi, yi);
+            Object nearest = tree.nearestNeighbour(env, keys[i], pointDistance);
+            Integer j = indexByKey.get(nearest);
+            if (j == null || j == i) {
+                out[i] = Double.NaN;
+                continue;
+            }
+            double dx = xi - xs[j];
+            double dy = yi - ys[j];
+            out[i] = Math.sqrt(dx * dx + dy * dy);
+        }
+        return out;
     }
 
     private void log(String msg) {

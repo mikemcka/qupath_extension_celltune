@@ -26,7 +26,7 @@ Entry point: `src/main/java/qupath/ext/celltune/CellTuneExtension.java` — regi
 | `model/` | `CellFeatureExtractor`, `LabelStore`, `FeatureNormalizer`, `CellPrediction`, `CellTypeTable`, `PopulationSet`, `CohortAnomalyAnalyzer`, `CohortAnomalyReport` | Feature extraction, label storage, normalization, cell predictions, population definitions, cohort-level anomaly scoring |
 | `classifier/` | `DualModelClassifier`, `XGBoostModel`, `LightGBMModel`, `RandomForestModel`, `CompositeClassifier`, `CompositeClassificationRule`, `ClassifierState`, `FeaturePruner`, `HyperparameterTuner`, `Resampler`, `ResamplingStrategy`, `TrainingMetrics`, `UncertaintySampler`, `ModelType` | ML training/inference (XGBoost, LightGBM, Random Forest), composite multi-marker rules, sampling, resampling, hyperparameter tuning |
 | `gating/` | `GatingExpression`, `GatingRule` | Marker-based landmark gating (AST expression parser, multi-threshold cascade) |
-| `ui/` | `ClassificationPanel`, `BinaryClassifierPanel`, `CompositeClassificationDialog`, `ClassControlDialog`, `PopulationPanel`, `ReviewController`, `ReviewToolbar`, `ManualLabelToolbar`, `FeatureImportanceView`, `FeatureSelectionPane`, `TrainingMetricsView`, `ConfusionMatrixView`, `ValidationConfusionMatrixView`, `ProjectPredictionSummaryView`, `ChannelSelector`, `NormalizationPane`, `ImageSelectionPane`, `SelectionHighlightOverlay`, `TrainingTileExtractor` | All JavaFX panels, dialogs, and toolbars |
+| `ui/` | `ClassificationPanel`, `BinaryClassifierPanel`, `CompositeClassificationDialog`, `ClassControlDialog`, `PopulationPanel`, `ReviewController`, `ReviewToolbar`, `ManualLabelToolbar`, `FeatureImportanceView`, `FeatureSelectionPane`, `TrainingMetricsView`, `ConfusionMatrixView`, `ValidationConfusionMatrixView`, `ProjectPredictionSummaryView`, `ChannelSelector`, `NormalizationPane`, `ImageSelectionPane`, `SelectionHighlightOverlay`, `TrainingTileExtractor`, `DistanceMeasurementsDialog` | All JavaFX panels, dialogs, and toolbars |
 | `io/` | `ProjectStateManager`, `BinaryClassifierRegistry`, `ClassManager`, `CellTableExporter`, `GroundTruthIO`, `MarkerTableImporter`, `ProjectSummaryCsvExporter` | Export (cell table, ground truth CSV, project summary CSV) and import (marker table, project state); binary classifier registry tracks named classifiers across a project; `ClassManager` backs the Class Control dialog (add/delete/merge/undo-merge on PathClasses + persisted label files) |
 
 See [celltune-qupath-structure.md](celltune-qupath-structure.md) for the full component-level build plan.
@@ -48,6 +48,7 @@ See [celltune-qupath-structure.md](celltune-qupath-structure.md) for the full co
 - **XGBoost4J version lock**: The Java API changed significantly between 1.x, 2.x, and 3.x. The project uses `xgboost4j_2.13:2.1.4` (non-GPU). Do not upgrade without thorough testing — `predictContrib()` (TreeSHAP) behaviour and method signatures may change across major versions.
 - **Binary classification SHAP**: For exactly 2 classes, feature importance bars are identical for both classes — this is expected (see [RISKS.md](RISKS.md#24-binary-classification-shap-display)).
 - **CompositeClassificationRule validation**: Rules enforce a max of 128 conditions and a max rule name length of 120 characters. Marker names in rules are validated against the live `BinaryClassifierRegistry` at build time.
+- **Same-class nearest-neighbour distances must stay O(n log n) AND must self-exclude**: `DistanceMeasurementsDialog.sameClassNearestNeighbourDistances()` uses a JTS `STRtree`. JTS's 3-arg `nearestNeighbour(env, item, ItemDistance)` does NOT automatically exclude the query item — the `ItemDistance` callback must compare item references and return `+Infinity` for a self-match (we use unique `Object` markers per index so reference equality is meaningful). Without this, every cell's "Distance to other X" comes back as 0. Do not replace the STRtree path with a brute-force pairwise loop — at 500k+ cells per image the O(n²) variant takes minutes to hours per class. Annotation and cross-class distances use QuPath's `DistanceTools`, which is already spatially indexed; only the same-class path is owned by this extension. Tests: `ui/DistanceMeasurementsDialogTest`.
 
 ## Tests
 
@@ -62,6 +63,7 @@ Unit tests live under `src/test/java/qupath/ext/celltune/` mirroring the main pa
 | `io/ProjectStateManagerBinaryGroundTruthTest` | Binary ground truth export/import round-trip |
 | `io/ProjectSummaryCsvExporterTest` | CSV output format |
 | `model/CellPredictionTest`, `CellTypeTableTest`, `CohortAnomalyAnalyzerTest`, `FeatureNormalizerTest`, `LabelStoreTest`, `PopulationSetTest` | Core model logic |
+| `ui/DistanceMeasurementsDialogTest` | STRtree-based same-class nearest-neighbour distances: self-exclusion, NaN handling, brute-force agreement on random clouds |
 
 Run all tests with `./gradlew test`.
 
