@@ -34,6 +34,7 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
     - [11.2 Resolve Hierarchy](#112-resolve-hierarchy)
     - [11.3 Delete Measurements by Keyword](#113-delete-measurements-by-keyword)
     - [11.4 Import GeoJSON Objects](#114-import-geojson-objects)
+    - [11.5 Export Annotation Regions](#115-export-annotation-regions)
 12. [Reference: every setting in the sidebar](#12-reference-every-setting-in-the-sidebar)
 13. [Reference: every CellTune menu item](#13-reference-every-celltune-menu-item)
 14. [Project directory layout](#14-project-directory-layout)
@@ -585,6 +586,12 @@ Removes every detection measurement whose name contains a keyword (case-insensit
 
 Imports annotations and detections from a `.geojson` (or gzipped `.geojson.gz`) file into the **current image**. Pick the file, then choose whether to **clear existing objects first** and whether to **resolve the hierarchy** afterwards (off by default — it is O(n²) and slow for many objects). Parsing streams the file feature-by-feature on a background thread; objects are added annotations-first (locked), then detections, and the image data is saved automatically.
 
+### 11.5 Export Annotation Regions
+
+> ⚠️ **Single-image, small-to-medium exports.** Pixels are streamed tile-by-tile so memory stays bounded, but very large regions or whole-project batch exports are far faster headless on HPC. For those, use the dedicated pipeline: [github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions](https://github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions).
+
+Exports one or more annotation ROIs from the **current image** as polygon-**masked** OME-TIFFs — pixels outside the annotation shape are zeroed, so you get the annotation region rather than its rectangular bounding box. Enter a comma-separated list of annotation names (leave blank to export **all** annotations), set the **downsample**, **tile size**, **writer threads**, **compression** (LZW by default), and whether to write **BigTIFF** and a **pyramid**, then choose an output directory. Each region is written to `<image>__<annotation>.ome.tif` on a background thread, and a notification reports how many succeeded. Requires QuPath's built-in Bio-Formats extension (loaded by default).
+
 ---
 
 ## 12. Reference: every setting in the sidebar
@@ -638,6 +645,7 @@ All under *Extensions → CellTune Classifier*.
 | Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[11.1](#111-filter-cells-by-size--circularity). |
 | Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[11.2](#112-resolve-hierarchy). |
 | Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[11.4](#114-import-geojson-objects). |
+| Utility Scripts ▸ Export Annotation Regions... | Open image | Export annotation ROIs from the current image as polygon-masked OME-TIFF(s) — **single-image, small-to-medium**. See §[11.5](#115-export-annotation-regions). |
 | Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[11.3](#113-delete-measurements-by-keyword). |
 
 ---
