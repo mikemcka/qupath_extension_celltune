@@ -19,6 +19,8 @@ import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServerMetadata;
 import qupath.lib.objects.PathObject;
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.classes.PathClassTools;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 
@@ -65,6 +67,9 @@ public class DistanceMeasurementsDialog {
     private final TextField pixelSizeField = new TextField();
     private final CheckBox updateCalibrationCheck = new CheckBox(
             "Persist this pixel size to each image's calibration on save");
+    private final CheckBox skipCompletedCheck = new CheckBox(
+            "Skip images where all selected measurements already exist");
+    private final Spinner<Integer> workerSpinner = new Spinner<>();
 
     private final TextArea logArea = new TextArea();
     private final ProgressBar progressBar = new ProgressBar(0);
@@ -181,6 +186,36 @@ public class DistanceMeasurementsDialog {
                 "When checked, the pixel size above is saved into each image's calibration metadata,\n"
               + "so future measurements also use this scale. When unchecked, the override is reverted after the run."));
 
+        skipCompletedCheck.setSelected(true);
+        skipCompletedCheck.setTooltip(new Tooltip(
+                "Before computing, scans every cell in the image. If all cells already carry every\n"
+              + "measurement the selected computations would produce, the image is skipped entirely —\n"
+              + "no recompute and no re-save. Uncheck to force recomputation (e.g. after changing classes)."));
+
+        // ── Parallel image workers ──
+        int cores = Runtime.getRuntime().availableProcessors();
+        int defaultWorkers = Math.max(1, Math.min(4, cores / 2));
+        workerSpinner.setValueFactory(
+                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, Math.max(1, cores), defaultWorkers));
+        workerSpinner.setEditable(true);
+        workerSpinner.setPrefWidth(80);
+        workerSpinner.setTooltip(new Tooltip(
+                "How many images are processed at the same time.\n"
+              + "Each image's heavy distance maths already spreads across all CPU cores, so more\n"
+              + "workers mainly overlaps image loading/saving (I/O) with computation."));
+        HBox workerRow = new HBox(6, new Label("Parallel image workers:"), workerSpinner,
+                new Label("(of " + cores + " cores)"));
+        workerRow.setAlignment(Pos.CENTER_LEFT);
+        Label workerHint = new Label(
+                "Number of images processed simultaneously. The distance computations for a single "
+              + "image already use all CPU cores, so raising this mostly overlaps disk load/save with "
+              + "compute rather than making the maths itself faster. Higher values can speed up batches "
+              + "of many small images, but for a few very large images (hundreds of thousands of cells) "
+              + "1–2 workers is often fastest, since each image then gets the full CPU and uses less memory. "
+              + "Default: " + defaultWorkers + ".");
+        workerHint.setWrapText(true);
+        workerHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+
         // ── Log / progress ──
         logArea.setEditable(false);
         logArea.setPrefHeight(160);
@@ -206,10 +241,14 @@ public class DistanceMeasurementsDialog {
                 annotationDistCheck,
                 crossClassCheck,
                 sameClassCheck,
+                skipCompletedCheck,
                 new Separator(),
                 pxRow,
                 pxHint,
                 updateCalibrationCheck,
+                new Separator(),
+                workerRow,
+                workerHint,
                 new Separator(),
                 statusLabel,
                 progressBar,
@@ -221,7 +260,7 @@ public class DistanceMeasurementsDialog {
         s.setTitle("Generate Distance Measurements");
         s.initOwner(qupath.getStage());
         s.initModality(Modality.NONE);
-        s.setScene(new Scene(root, 580, 760));
+        s.setScene(new Scene(root, 580, 880));
         return s;
     }
 
@@ -280,7 +319,11 @@ public class DistanceMeasurementsDialog {
         final boolean doCross = crossClassCheck.isSelected();
         final boolean doSame = sameClassCheck.isSelected();
         final boolean persistCal = updateCalibrationCheck.isSelected();
+        final boolean skipCompleted = skipCompletedCheck.isSelected();
         final Double pxSize = pixelSizeOverride;
+
+        Integer requestedWorkers = workerSpinner.getValue();
+        final int workers = requestedWorkers == null ? 1 : Math.max(1, requestedWorkers);
 
         applyBtn.setDisable(true);
         progressBar.setProgress(0);
@@ -292,9 +335,8 @@ public class DistanceMeasurementsDialog {
 
         Thread worker = new Thread(() -> {
             int cores = Runtime.getRuntime().availableProcessors();
-            int nThreads = Math.min(selectedImages.size(),
-                    Math.max(1, Math.min(4, cores / 2)));
-            log("Using " + nThreads + " parallel I/O worker(s) (cores=" + cores + ").");
+            int nThreads = Math.min(selectedImages.size(), workers);
+            log("Using " + nThreads + " parallel image worker(s) (cores=" + cores + ").");
             ExecutorService pool = Executors.newFixedThreadPool(nThreads, r -> {
                 Thread t = new Thread(r, "CellTune-Distances");
                 t.setDaemon(true);
@@ -307,7 +349,7 @@ public class DistanceMeasurementsDialog {
             for (String imgName : selectedImages) {
                 futures.add(pool.submit(() -> {
                     try {
-                        processOne(typedProject, imgName, doAnn, doCross, doSame, pxSize, persistCal);
+                        processOne(typedProject, imgName, doAnn, doCross, doSame, pxSize, persistCal, skipCompleted);
                     } catch (Exception ex) {
                         log("[" + imgName + "] ERROR: " + ex.getMessage());
                         logger.warn("Distance computation failed for {}", imgName, ex);
@@ -338,7 +380,7 @@ public class DistanceMeasurementsDialog {
     private void processOne(Project<BufferedImage> project,
                             String imgName,
                             boolean doAnn, boolean doCross, boolean doSame,
-                            Double pxSize, boolean persistCal) throws Exception {
+                            Double pxSize, boolean persistCal, boolean skipCompleted) throws Exception {
         var entryOpt = project.getImageList().stream()
                 .filter(e -> imgName.equals(e.getImageName()))
                 .findFirst();
@@ -351,6 +393,14 @@ public class DistanceMeasurementsDialog {
         var imageData = entry.readImageData();
         if (imageData == null) {
             log("[" + imgName + "] could not load image data");
+            return;
+        }
+
+        // Fast path: if every cell already carries all the measurements the
+        // selected computations would produce, skip the (expensive) recompute
+        // and the re-save entirely.
+        if (skipCompleted && alreadyComplete(imageData, doAnn, doCross, doSame, pxSize)) {
+            log("[" + imgName + "] Skipped — all selected measurements already present.");
             return;
         }
 
@@ -404,6 +454,100 @@ public class DistanceMeasurementsDialog {
         imageData.getHierarchy().fireHierarchyChangedEvent(this);
         entry.saveImageData(imageData);
         log("[" + imgName + "] Saved.");
+    }
+
+    /**
+     * Returns {@code true} when every cell in the image already carries all the
+     * measurements that the selected computations would produce, so the
+     * recompute and re-save can be skipped entirely.
+     *
+     * <p>Expected measurement names are derived to match exactly what the run
+     * would write:
+     * <ul>
+     *   <li>Annotation — {@code "Signed distance to annotation <class> <unit>"}
+     *       (QuPath {@code DistanceTools}, one per valid, non-ignored annotation class).</li>
+     *   <li>Cross-class — {@code "Distance to detection <class> <unit>"}
+     *       (QuPath {@code DistanceTools}, one per valid, non-ignored detection class;
+     *       written to every detection, so these are required of all cells).</li>
+     *   <li>Same-class — {@code "Distance to other <class> <unit>"}
+     *       (this dialog, only for classes with at least two members; required only
+     *       of cells in those classes).</li>
+     * </ul>
+     *
+     * <p>The unit suffix mirrors the calibration that the run would use: if a
+     * pixel-size override is supplied the units become microns, otherwise the
+     * image's existing calibration is used. Returns {@code false} when there is
+     * nothing to compute (so the caller takes the normal, cheap path).
+     */
+    private static boolean alreadyComplete(ImageData<?> imageData,
+                                           boolean doAnn, boolean doCross, boolean doSame,
+                                           Double pxSize) {
+        var hierarchy = imageData.getHierarchy();
+        var cells = hierarchy.getCellObjects();
+        var detections = cells.isEmpty() ? hierarchy.getDetectionObjects() : cells;
+        if (detections.isEmpty())
+            return false;
+
+        var cal = imageData.getServer().getPixelCalibration();
+        boolean willBeMicrons = pxSize != null || cal.hasPixelSizeMicrons();
+        // QuPath DistanceTools uses the calibration's unit string; the same-class
+        // helper uses "µm"/"px". These agree for standard calibrations.
+        String unitQp = pxSize != null ? "µm" : cal.getPixelWidthUnit();
+        String unitSame = willBeMicrons ? "µm" : "px";
+
+        // Names written to every detection.
+        Set<String> globalExpected = new HashSet<>();
+        if (doAnn) {
+            for (var pc : distinctValidClasses(hierarchy.getAnnotationObjects()))
+                globalExpected.add("Signed distance to annotation " + pc + " " + unitQp);
+        }
+        if (doCross) {
+            for (var pc : distinctValidClasses(detections))
+                globalExpected.add("Distance to detection " + pc + " " + unitQp);
+        }
+
+        // Same-class names — keyed on class string, only for classes with >= 2 members.
+        Map<String, Integer> sameClassCounts = new HashMap<>();
+        if (doSame) {
+            for (var cell : cells) {
+                var pc = cell.getPathClass();
+                if (pc != null)
+                    sameClassCounts.merge(pc.toString(), 1, Integer::sum);
+            }
+        }
+        boolean anySameClass = sameClassCounts.values().stream().anyMatch(c -> c >= 2);
+
+        if (globalExpected.isEmpty() && !anySameClass)
+            return false;
+
+        for (var cell : detections) {
+            var ml = cell.getMeasurementList();
+            for (var name : globalExpected) {
+                if (!ml.containsKey(name))
+                    return false;
+            }
+            if (anySameClass) {
+                var pc = cell.getPathClass();
+                if (pc != null) {
+                    Integer cnt = sameClassCounts.get(pc.toString());
+                    if (cnt != null && cnt >= 2
+                            && !ml.containsKey("Distance to other " + pc + " " + unitSame))
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Distinct valid, non-ignored path classes across the given objects. */
+    private static Set<PathClass> distinctValidClasses(Collection<PathObject> objects) {
+        Set<PathClass> set = new LinkedHashSet<>();
+        for (var o : objects) {
+            var pc = o.getPathClass();
+            if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc))
+                set.add(pc);
+        }
+        return set;
     }
 
     /**
@@ -514,23 +658,27 @@ public class DistanceMeasurementsDialog {
             return Math.sqrt(dx * dx + dy * dy);
         };
 
-        for (int i = 0; i < n; i++) {
+        // The STRtree is immutable after build() and its queries are read-only,
+        // so the per-cell nearest-neighbour lookups parallelise safely. This is
+        // the dominant cost for large classes (hundreds of thousands of cells),
+        // so spreading it across cores is the main speed-up.
+        java.util.stream.IntStream.range(0, n).parallel().forEach(i -> {
             double xi = xs[i], yi = ys[i];
             if (Double.isNaN(xi) || Double.isNaN(yi)) {
                 out[i] = Double.NaN;
-                continue;
+                return;
             }
             Envelope env = new Envelope(xi, xi, yi, yi);
             Object nearest = tree.nearestNeighbour(env, keys[i], pointDistance);
             Integer j = indexByKey.get(nearest);
             if (j == null || j == i) {
                 out[i] = Double.NaN;
-                continue;
+                return;
             }
             double dx = xi - xs[j];
             double dy = yi - ys[j];
             out[i] = Math.sqrt(dx * dx + dy * dy);
-        }
+        });
         return out;
     }
 
