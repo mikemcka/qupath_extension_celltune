@@ -29,10 +29,14 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 10. [Exporting results](#10-exporting-results)
     - [10.1 Cell table export](#101-cell-table-export)
     - [10.2 Ground truth export & import](#102-ground-truth-export--import)
-11. [Reference: every setting in the sidebar](#11-reference-every-setting-in-the-sidebar)
-12. [Reference: every CellTune menu item](#12-reference-every-celltune-menu-item)
-13. [Project directory layout](#13-project-directory-layout)
-14. [Tips, gotchas, and known limitations](#14-tips-gotchas-and-known-limitations)
+11. [Utility scripts](#11-utility-scripts)
+    - [11.1 Filter Cells by Size & Circularity](#111-filter-cells-by-size--circularity)
+    - [11.2 Resolve Hierarchy](#112-resolve-hierarchy)
+    - [11.3 Delete Measurements by Keyword](#113-delete-measurements-by-keyword)
+12. [Reference: every setting in the sidebar](#12-reference-every-setting-in-the-sidebar)
+13. [Reference: every CellTune menu item](#13-reference-every-celltune-menu-item)
+14. [Project directory layout](#14-project-directory-layout)
+15. [Tips, gotchas, and known limitations](#15-tips-gotchas-and-known-limitations)
 
 ---
 
@@ -122,7 +126,7 @@ QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000
 
 **Do you need to hand-prune for big panels?** Usually not. Both default models are gradient-boosted trees, which are robust to correlated and redundant features: at each split a tree picks the single most informative feature, so two near-duplicate columns don't distort the model the way they would in a linear/regression model — the worst case is wasted training time and *diluted* importance (a marker's signal gets split across its correlated columns, muddying SHAP plots). So extra features rarely hurt accuracy, but they do cost speed and interpretability.
 
-Rather than manually paring the list down, leave **Auto-prune features** (§[11](#11-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round:
+Rather than manually paring the list down, leave **Auto-prune features** (§[12](#12-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round:
 
 1. **Sparsity / variance filter** — drops features that are effectively constant (non-zero in fewer than ~5 of your labelled cells, or zero variance). A feature that never varies can't help a tree split.
 2. **Within-marker correlation removal** — features are grouped by their prefix (`Cell:`, `Nucleus:`, `Membrane:`…); within each group it keeps the **highest-variance** feature and drops any peer whose absolute Pearson correlation with a kept feature exceeds ~0.95. This is what collapses `Cell: CD3 Mean` / `Cell: CD3 Median` / `Cell: CD3 Max` down to one representative column.
@@ -554,7 +558,29 @@ The binary equivalents are **Import ▸ Active Binary Ground Truth...** — same
 
 ---
 
-## 11. Reference: every setting in the sidebar
+## 11. Utility scripts
+
+*Extensions → CellTune Classifier → **Utility Scripts***
+
+A grab-bag of common housekeeping operations that would otherwise live in one-off Groovy scripts. Each prompts for its parameters and reports what it did.
+
+### 11.1 Filter Cells by Size & Circularity
+
+Removes cell detections that are likely mis-segmented or artefacts. A dialog takes an optional **Min** and **Max** for both **Cell area (µm²)** and **Circularity** — leave any field blank for no bound. A cell is removed if it violates *any* active bound (e.g. `area > 500` **or** `circularity < 0.7`). Cells missing either measurement are skipped, not removed. The number of cells to be removed is shown for confirmation first; the operation acts on the **current image** only.
+
+### 11.2 Resolve Hierarchy
+
+Rebuilds parent/child relationships from ROI containment — equivalent to the `resolveHierarchy()` scripting call. Choose **Current image** (resolves and refreshes immediately) or **All project images** (confirms first, then resolves and saves every entry). Project-wide work runs in the background so QuPath stays responsive; the open image updates straight away.
+
+### 11.3 Delete Measurements by Keyword
+
+> ⚠️ **Destructive and not undoable.** Double-check the keyword against your actual measurement names — a loose keyword can delete more columns than you intend.
+
+Removes every detection measurement whose name contains a keyword (case-insensitive by default; tick **Case sensitive** to match exactly). Choose **Current image** or **All project images**. Before deleting, CellTune previews the exact list of matching columns and asks you to confirm — if nothing matches, it aborts. Project-wide saves each entry (open image first, the rest in the background).
+
+---
+
+## 12. Reference: every setting in the sidebar
 
 | Control | Default | What it does |
 |---|---|---|
@@ -583,7 +609,7 @@ The binary equivalents are **Import ▸ Active Binary Ground Truth...** — same
 
 ---
 
-## 12. Reference: every CellTune menu item
+## 13. Reference: every CellTune menu item
 
 All under *Extensions → CellTune Classifier*.
 
@@ -602,10 +628,13 @@ All under *Extensions → CellTune Classifier*.
 | Import ▸ Marker Table... | Open image | Load cell-type → markers mapping for review channel switching. |
 | Import ▸ Ground Truth... | Open image (multi-class) | Spatial-match or training-data-only mode. |
 | Import ▸ Active Binary Ground Truth... | Binary mode active + open image | Same as above, scoped to active marker. |
+| Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[11.1](#111-filter-cells-by-size--circularity). |
+| Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[11.2](#112-resolve-hierarchy). |
+| Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[11.3](#113-delete-measurements-by-keyword). |
 
 ---
 
-## 13. Project directory layout
+## 14. Project directory layout
 
 Everything CellTune writes is under `<project>/celltune/`:
 
@@ -638,7 +667,7 @@ JSON throughout. Model bytes are Base64-encoded inside the state files. Safe to 
 
 ---
 
-## 14. Tips, gotchas, and known limitations
+## 15. Tips, gotchas, and known limitations
 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.

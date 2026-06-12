@@ -5,12 +5,17 @@ import javafx.beans.property.BooleanProperty;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -699,6 +704,23 @@ public class CellTuneExtension implements QuPathExtension {
         importMenu.disableProperty().bind(enableExtensionProperty.not());
         importMenu.getItems().addAll(importMarkersItem, importGtItem, importBinaryGroundTruthItem);
 
+        // Utility scripts: ad-hoc helpers commonly reused across projects.
+        MenuItem filterCellsItem = new MenuItem(resources.getString("menu.utility.filter.cells"));
+        filterCellsItem.setOnAction(e -> filterCellsBySizeAndCircularity(qupath));
+        filterCellsItem.disableProperty().bind(enableExtensionProperty.not());
+
+        MenuItem resolveHierarchyItem = new MenuItem(resources.getString("menu.utility.resolve.hierarchy"));
+        resolveHierarchyItem.setOnAction(e -> resolveHierarchy(qupath));
+        resolveHierarchyItem.disableProperty().bind(enableExtensionProperty.not());
+
+        MenuItem deleteMeasurementsItem = new MenuItem(resources.getString("menu.utility.delete.measurements"));
+        deleteMeasurementsItem.setOnAction(e -> deleteMeasurementsByKeyword(qupath));
+        deleteMeasurementsItem.disableProperty().bind(enableExtensionProperty.not());
+
+        Menu utilityScriptsMenu = new Menu(resources.getString("menu.group.utilities"));
+        utilityScriptsMenu.disableProperty().bind(enableExtensionProperty.not());
+        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, deleteMeasurementsItem);
+
         menu.getItems().addAll(
                 binaryItem,
                 compositeItem,
@@ -710,7 +732,9 @@ public class CellTuneExtension implements QuPathExtension {
                 distancesItem,
                 new SeparatorMenuItem(),
                 exportMenu,
-                importMenu
+                importMenu,
+                new SeparatorMenuItem(),
+                utilityScriptsMenu
         );
     }
 
@@ -720,6 +744,464 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
         new qupath.ext.celltune.ui.DistanceMeasurementsDialog(qupath).show();
+    }
+
+    // ── Utility scripts ────────────────────────────────────────────────────────
+
+    /**
+     * Remove cell detections that are likely mis-segmented or artefacts, based on
+     * optional min/max bounds for area and circularity. The thresholds are entered
+     * at run time (any field may be left blank for no bound); cells missing either
+     * measurement are skipped (not removed).
+     */
+    private void filterCellsBySizeAndCircularity(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is currently open.");
+            return;
+        }
+        var hierarchy = imageData.getHierarchy();
+
+        List<PathObject> cells = new ArrayList<>();
+        for (PathObject det : hierarchy.getDetectionObjects()) {
+            if (det.isCell()) cells.add(det);
+        }
+        if (cells.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No cells found on the current image.");
+            return;
+        }
+
+        // Build the threshold dialog: min/max for both area and circularity.
+        TextField minAreaField = new TextField();
+        minAreaField.setPromptText("none");
+        TextField maxAreaField = new TextField("500.0");
+        TextField minCircField = new TextField("0.7");
+        TextField maxCircField = new TextField();
+        maxCircField.setPromptText("none");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(8);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(10));
+        grid.add(new Label("Min"), 1, 0);
+        grid.add(new Label("Max"), 2, 0);
+        grid.add(new Label("Cell area (\u00b5m\u00b2)"), 0, 1);
+        grid.add(minAreaField, 1, 1);
+        grid.add(maxAreaField, 2, 1);
+        grid.add(new Label("Circularity (0\u20131)"), 0, 2);
+        grid.add(minCircField, 1, 2);
+        grid.add(maxCircField, 2, 2);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(EXTENSION_NAME);
+        dialog.setHeaderText("Remove cells outside the specified ranges.\nLeave a field blank for no bound.");
+        dialog.getDialogPane().setContent(grid);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        var choice = dialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != ButtonType.OK) return;
+
+        Double minArea, maxArea, minCirc, maxCirc;
+        try {
+            minArea = parseOptionalDouble(minAreaField.getText());
+            maxArea = parseOptionalDouble(maxAreaField.getText());
+            minCirc = parseOptionalDouble(minCircField.getText());
+            maxCirc = parseOptionalDouble(maxCircField.getText());
+        } catch (NumberFormatException e) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "Invalid number: " + e.getMessage());
+            return;
+        }
+
+        if (minArea == null && maxArea == null && minCirc == null && maxCirc == null) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No thresholds specified; nothing to filter.");
+            return;
+        }
+
+        List<String> criteria = new ArrayList<>();
+        if (minArea != null) criteria.add(String.format("area < %.1f", minArea));
+        if (maxArea != null) criteria.add(String.format("area > %.1f", maxArea));
+        if (minCirc != null) criteria.add(String.format("circularity < %.2f", minCirc));
+        if (maxCirc != null) criteria.add(String.format("circularity > %.2f", maxCirc));
+        String criteriaText = String.join(" or ", criteria);
+
+        int missing = 0;
+        List<PathObject> toRemove = new ArrayList<>();
+        for (PathObject cell : cells) {
+            double area = measurementContaining(cell, "area");
+            double circ = measurementContaining(cell, "circularity");
+            if (Double.isNaN(area) || Double.isNaN(circ)) {
+                missing++;
+                continue;
+            }
+            boolean remove = (minArea != null && area < minArea)
+                    || (maxArea != null && area > maxArea)
+                    || (minCirc != null && circ < minCirc)
+                    || (maxCirc != null && circ > maxCirc);
+            if (remove) {
+                toRemove.add(cell);
+            }
+        }
+
+        if (toRemove.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "No cells matched the filter (" + criteriaText + ").");
+            return;
+        }
+
+        boolean confirm = Dialogs.showConfirmDialog(EXTENSION_NAME, String.format(
+                "Remove %d of %d cells (%s)?%s",
+                toRemove.size(), cells.size(), criteriaText,
+                missing > 0
+                        ? "\n\n" + missing + " cell(s) skipped (missing area/circularity measurements)."
+                        : ""));
+        if (!confirm) return;
+
+        hierarchy.removeObjects(toRemove, true);
+        hierarchy.fireHierarchyChangedEvent(this);
+
+        long remaining = hierarchy.getDetectionObjects().stream().filter(PathObject::isCell).count();
+        Dialogs.showInfoNotification(EXTENSION_NAME,
+                "Removed " + toRemove.size() + " cell(s). " + remaining + " remaining.");
+        logger.info("[CellTune] Size/circularity filter removed {} of {} cells ({}, skipped={}).",
+                toRemove.size(), cells.size(), criteriaText, missing);
+    }
+
+    /**
+     * Return the value of the first measurement whose name contains {@code substring}
+     * (case-insensitive), or {@link Double#NaN} if none match.
+     */
+    private static double measurementContaining(PathObject cell, String substring) {
+        var ml = cell.getMeasurementList();
+        String needle = substring.toLowerCase(java.util.Locale.ROOT);
+        for (String name : ml.getMeasurementNames()) {
+            if (name.toLowerCase(java.util.Locale.ROOT).contains(needle)) {
+                return ml.get(name);
+            }
+        }
+        return Double.NaN;
+    }
+
+    /**
+     * Parse a numeric bound, returning {@code null} for a blank value (no bound)
+     * and throwing {@link NumberFormatException} for an invalid one.
+     */
+    private static Double parseOptionalDouble(String s) {
+        if (s == null || s.isBlank()) return null;
+        return Double.parseDouble(s.strip());
+    }
+
+    /**
+     * Resolve the object hierarchy (parent/child relationships from ROI containment),
+     * equivalent to the {@code resolveHierarchy()} scripting call. Offers a choice
+     * between the current image and every image in the project; project-wide runs on
+     * a background thread and saves each entry.
+     */
+    private void resolveHierarchy(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        var project = qupath.getProject();
+        if (imageData == null && project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image or project is open.");
+            return;
+        }
+
+        final String currentChoice = "Current image";
+        final String projectChoice = "All project images";
+        String choice;
+        if (project == null) {
+            choice = currentChoice;
+        } else if (imageData == null) {
+            choice = projectChoice;
+        } else {
+            choice = Dialogs.showChoiceDialog(EXTENSION_NAME,
+                    "Resolve the object hierarchy for:",
+                    List.of(currentChoice, projectChoice), currentChoice);
+            if (choice == null) return;
+        }
+
+        // Current image only — resolve and refresh on the FX thread.
+        if (choice.equals(currentChoice)) {
+            var hierarchy = imageData.getHierarchy();
+            hierarchy.resolveHierarchy();
+            hierarchy.fireHierarchyChangedEvent(this);
+            Dialogs.showInfoNotification(EXTENSION_NAME, "Resolved hierarchy for the current image.");
+            logger.info("[CellTune] Resolved hierarchy for current image.");
+            return;
+        }
+
+        // Project-wide.
+        @SuppressWarnings("unchecked")
+        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        if (entries.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
+            return;
+        }
+        if (!Dialogs.showConfirmDialog(EXTENSION_NAME,
+                "Resolve the hierarchy for all " + entries.size() + " project image(s) and save each?")) {
+            return;
+        }
+
+        var currentEntry = imageData != null ? project.getEntry(imageData) : null;
+
+        // Resolve the open image immediately so its view updates; the rest are
+        // processed off the UI thread to keep QuPath responsive.
+        int done = 0;
+        if (imageData != null && currentEntry != null) {
+            try {
+                imageData.getHierarchy().resolveHierarchy();
+                imageData.getHierarchy().fireHierarchyChangedEvent(this);
+                currentEntry.saveImageData(imageData);
+                done = 1;
+            } catch (Exception ex) {
+                logger.warn("[CellTune] Failed to resolve hierarchy for current image {}: {}",
+                        currentEntry.getImageName(), ex.getMessage());
+            }
+        }
+
+        final int alreadyDone = done;
+        final var currentEntryF = currentEntry;
+        Thread worker = new Thread(() -> {
+            int ok = alreadyDone;
+            int failed = 0;
+            for (var entry : entries) {
+                if (entry == null) continue;
+                if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
+                try {
+                    var data = entry.readImageData();
+                    data.getHierarchy().resolveHierarchy();
+                    entry.saveImageData(data);
+                    ok++;
+                } catch (Exception ex) {
+                    failed++;
+                    logger.warn("[CellTune] Failed to resolve hierarchy for {}: {}",
+                            entry.getImageName(), ex.getMessage());
+                }
+            }
+            final int okF = ok;
+            final int failedF = failed;
+            Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Resolved hierarchy for " + okF + " image(s)."
+                    + (failedF > 0 ? " " + failedF + " failed (see log)." : "")));
+            logger.info("[CellTune] Project-wide resolveHierarchy complete: {} ok, {} failed.", okF, failedF);
+        }, "celltune-resolve-hierarchy");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Delete detection measurements whose name contains a keyword (case-insensitive
+     * by default), equivalent to the delete-measurements batch script. This is
+     * destructive and not undoable, so the matching columns are previewed and
+     * explicitly confirmed before anything is removed.
+     */
+    private void deleteMeasurementsByKeyword(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        var project = qupath.getProject();
+        if (imageData == null && project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image or project is open.");
+            return;
+        }
+
+        // Options: keyword + case sensitivity.
+        TextField keywordField = new TextField();
+        keywordField.setPromptText("e.g. Distance");
+        CheckBox caseSensitive = new CheckBox("Case sensitive");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(8);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(10));
+        grid.add(new Label("Keyword:"), 0, 0);
+        grid.add(keywordField, 1, 0);
+        grid.add(caseSensitive, 1, 1);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(EXTENSION_NAME);
+        dialog.setHeaderText("Delete all detection measurements whose name contains the keyword.\n"
+                + "This is permanent and cannot be undone.");
+        dialog.getDialogPane().setContent(grid);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        var choice = dialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != ButtonType.OK) return;
+
+        String keyword = keywordField.getText() == null ? "" : keywordField.getText().strip();
+        if (keyword.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "Please enter a keyword.");
+            return;
+        }
+        boolean cs = caseSensitive.isSelected();
+
+        // Scope.
+        final String currentChoice = "Current image";
+        final String projectChoice = "All project images";
+        boolean projectWide;
+        if (project == null) {
+            projectWide = false;
+        } else if (imageData == null) {
+            projectWide = true;
+        } else {
+            String scope = Dialogs.showChoiceDialog(EXTENSION_NAME, "Apply to:",
+                    List.of(currentChoice, projectChoice), currentChoice);
+            if (scope == null) return;
+            projectWide = scope.equals(projectChoice);
+        }
+
+        // Preview the matching columns from a sample image so the user can verify
+        // before anything is deleted.
+        List<String> preview;
+        String previewImage;
+        if (imageData != null) {
+            preview = matchingMeasurementNames(imageData.getHierarchy().getDetectionObjects(), keyword, cs);
+            previewImage = "the current image";
+        } else {
+            preview = List.of();
+            previewImage = null;
+            @SuppressWarnings("unchecked")
+            var sampleEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+            for (var entry : sampleEntries) {
+                if (entry == null) continue;
+                try {
+                    var data = entry.readImageData();
+                    var dets = data.getHierarchy().getDetectionObjects();
+                    if (!dets.isEmpty()) {
+                        preview = matchingMeasurementNames(dets, keyword, cs);
+                        previewImage = entry.getImageName();
+                        break;
+                    }
+                } catch (Exception ex) {
+                    logger.warn("[CellTune] Failed to read {} for measurement preview: {}",
+                            entry.getImageName(), ex.getMessage());
+                }
+            }
+        }
+
+        if (preview.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "No measurement names contain \"" + keyword + "\""
+                    + (previewImage != null ? " on " + previewImage : "") + ".");
+            return;
+        }
+
+        String columnList = String.join("\n", preview.stream().map(s -> "  \u2022 " + s).toList());
+        int imageCount = projectWide ? project.getImageList().size() : 1;
+        String scopeText = projectWide ? ("all " + imageCount + " project image(s)") : "the current image";
+        boolean confirmed = Dialogs.showConfirmDialog(EXTENSION_NAME,
+                "Permanently delete these " + preview.size() + " measurement column(s) from "
+                + scopeText + "?\n\n" + columnList + "\n\nThis cannot be undone.");
+        if (!confirmed) return;
+
+        // Current image only.
+        if (!projectWide) {
+            int touched = removeMeasurementsByKeyword(imageData.getHierarchy().getDetectionObjects(), keyword, cs);
+            imageData.getHierarchy().fireHierarchyChangedEvent(this);
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Removed " + preview.size() + " column(s) from " + touched + " detection(s).");
+            logger.info("[CellTune] Deleted measurements matching \"{}\" (caseSensitive={}) from {} detections on current image.",
+                    keyword, cs, touched);
+            return;
+        }
+
+        // Project-wide.
+        @SuppressWarnings("unchecked")
+        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        var currentEntry = imageData != null ? project.getEntry(imageData) : null;
+
+        // Handle the open image immediately on the FX thread so its table refreshes.
+        int doneImages = 0;
+        long doneTouched = 0;
+        if (imageData != null && currentEntry != null) {
+            try {
+                int t = removeMeasurementsByKeyword(imageData.getHierarchy().getDetectionObjects(), keyword, cs);
+                imageData.getHierarchy().fireHierarchyChangedEvent(this);
+                currentEntry.saveImageData(imageData);
+                if (t > 0) doneImages = 1;
+                doneTouched = t;
+            } catch (Exception ex) {
+                logger.warn("[CellTune] Failed to delete measurements for current image {}: {}",
+                        currentEntry.getImageName(), ex.getMessage());
+            }
+        }
+
+        final int alreadyImages = doneImages;
+        final long alreadyTouched = doneTouched;
+        final var currentEntryF = currentEntry;
+        final String keywordF = keyword;
+        final boolean csF = cs;
+        Thread worker = new Thread(() -> {
+            int images = alreadyImages;
+            long touched = alreadyTouched;
+            int failed = 0;
+            for (var entry : entries) {
+                if (entry == null) continue;
+                if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
+                try {
+                    var data = entry.readImageData();
+                    int t = removeMeasurementsByKeyword(data.getHierarchy().getDetectionObjects(), keywordF, csF);
+                    entry.saveImageData(data);
+                    if (t > 0) images++;
+                    touched += t;
+                } catch (Exception ex) {
+                    failed++;
+                    logger.warn("[CellTune] Failed to delete measurements for {}: {}",
+                            entry.getImageName(), ex.getMessage());
+                }
+            }
+            final int imagesF = images;
+            final long touchedF = touched;
+            final int failedF = failed;
+            Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Removed matching measurements from " + touchedF + " detection(s) across "
+                    + imagesF + " image(s)."
+                    + (failedF > 0 ? " " + failedF + " image(s) failed (see log)." : "")));
+            logger.info("[CellTune] Project-wide measurement delete matching \"{}\": {} detections across {} images, {} failed.",
+                    keywordF, touchedF, imagesF, failedF);
+        }, "celltune-delete-measurements");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Return the measurement names on the first detection that has any, matching
+     * {@code keyword} as a substring (case-insensitive unless {@code caseSensitive}).
+     */
+    private static List<String> matchingMeasurementNames(Collection<PathObject> detections,
+                                                          String keyword, boolean caseSensitive) {
+        PathObject sample = null;
+        for (PathObject det : detections) {
+            if (!det.getMeasurementList().getNames().isEmpty()) {
+                sample = det;
+                break;
+            }
+        }
+        if (sample == null) return List.of();
+        String needle = caseSensitive ? keyword : keyword.toLowerCase(java.util.Locale.ROOT);
+        List<String> out = new ArrayList<>();
+        for (String name : sample.getMeasurementList().getNames()) {
+            String hay = caseSensitive ? name : name.toLowerCase(java.util.Locale.ROOT);
+            if (hay.contains(needle)) out.add(name);
+        }
+        return out;
+    }
+
+    /**
+     * Remove every measurement matching {@code keyword} from each detection.
+     * Returns the number of detections that had at least one measurement removed.
+     */
+    private static int removeMeasurementsByKeyword(Collection<PathObject> detections,
+                                                   String keyword, boolean caseSensitive) {
+        List<String> matches = matchingMeasurementNames(detections, keyword, caseSensitive);
+        if (matches.isEmpty()) return 0;
+        int touched = 0;
+        for (PathObject det : detections) {
+            var ml = det.getMeasurementList();
+            boolean changed = false;
+            for (String name : matches) {
+                if (ml.containsKey(name)) {
+                    ml.remove(name);
+                    changed = true;
+                }
+            }
+            if (changed) touched++;
+        }
+        return touched;
     }
 
     // ── Placeholder actions (wired in later phases) ────────────────────────────
