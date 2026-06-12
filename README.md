@@ -1,6 +1,6 @@
 # CellTune Classifier for QuPath
 
-## This Java extension is an unofficial emulation of the core functionality of CellTune by the Keren Lab into QuPath. If you use this tool for your analysis please also cite [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
+## This Java extension is an unofficial emulation of some functionality of CellTune by the Keren Lab into QuPath. If you use this tool for your analysis please also cite [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
 
 A [QuPath](https://qupath.github.io/) 0.7 extension that brings **CellTune-style active learning** to cell classification. It trains two gradient-boosted models (XGBoost + LightGBM) simultaneously, identifies cells where the models disagree, and presents those disputed cells for human review — creating an iterative loop that progressively improves classification accuracy.
 
