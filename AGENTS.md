@@ -29,7 +29,20 @@ Entry point: `src/main/java/qupath/ext/celltune/CellTuneExtension.java` — regi
 | `ui/` | `ClassificationPanel`, `BinaryClassifierPanel`, `CompositeClassificationDialog`, `ClassControlDialog`, `PopulationPanel`, `ReviewController`, `ReviewToolbar`, `ManualLabelToolbar`, `FeatureImportanceView`, `FeatureSelectionPane`, `TrainingMetricsView`, `ConfusionMatrixView`, `ValidationConfusionMatrixView`, `ProjectPredictionSummaryView`, `ChannelSelector`, `NormalizationPane`, `ImageSelectionPane`, `SelectionHighlightOverlay`, `TrainingTileExtractor`, `DistanceMeasurementsDialog` | All JavaFX panels, dialogs, and toolbars |
 | `io/` | `ProjectStateManager`, `BinaryClassifierRegistry`, `ClassManager`, `CellTableExporter`, `GroundTruthIO`, `MarkerTableImporter`, `ProjectSummaryCsvExporter` | Export (cell table, ground truth CSV, project summary CSV) and import (marker table, project state); binary classifier registry tracks named classifiers across a project; `ClassManager` backs the Class Control dialog (add/delete/merge/undo-merge on PathClasses + persisted label files) |
 
-See [celltune-qupath-structure.md](celltune-qupath-structure.md) for the full component-level build plan.
+See [USER_GUIDE.md](USER_GUIDE.md) for end-user workflows and [RISKS.md](RISKS.md) for the full risk register.
+
+## QuPath 0.7 API notes
+
+Verified against QuPath 0.7.0:
+
+- Extension class implements `qupath.lib.gui.extensions.QuPathExtension` — override `installExtension(QuPathGUI)`, `getName()`, `getDescription()`, `getQuPathVersion()`.
+- Add menu items via `qupath.getMenu("Extensions>" + EXTENSION_NAME, true)` (returns/creates a `Menu`).
+- All UI text comes from `ResourceBundle.getBundle("qupath.ext.celltune.ui.strings")`.
+- Read cell measurements via `PathObject.getMeasurementList().get(name)` — returns `NaN` if missing (default to `0f`).
+- Use `qupath.fx.dialogs.Dialogs` (not raw JavaFX `Alert`) for dialogs/notifications.
+- Use `PathPrefs.createPersistentPreference(...)` for prefs that survive sessions.
+- Non-modal windows: `stage.initOwner(qupath.getStage())` + `Modality.NONE` so QuPath stays usable.
+- Build pins Java 25 via the `qupath-conventions` plugin (`languageVersion=25`); `foojay-resolver-convention` in `settings.gradle.kts` can auto-provision the toolchain. See [BUILD.md](BUILD.md).
 
 ## Key Conventions
 

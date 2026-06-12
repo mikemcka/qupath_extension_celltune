@@ -10,7 +10,6 @@ qupath_extension_celltune/
 ├── settings.gradle.kts                       # QuPath version pin (0.7.0) + toolchain resolver
 ├── gradlew / gradlew.bat                     # Gradle wrapper scripts
 ├── gradle/                                   # Gradle wrapper jar + properties
-├── celltune-qupath-structure.md              # Full build plan and phase reference
 ├── AGENTS.md                                 # AI agent instructions for this project
 ├── README.md                                 # Project overview
 ├── RISKS.md                                  # Known risks and mitigations
