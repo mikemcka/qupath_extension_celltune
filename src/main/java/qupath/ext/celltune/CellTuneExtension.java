@@ -401,6 +401,12 @@ public class CellTuneExtension implements QuPathExtension {
         // ── Try to restore feature selection and normalization from project state ──
         if (project != null) {
             try {
+                // Restore the persisted marker table (auto channel switching) so it
+                // survives QuPath restarts without re-importing the CSV.
+                CellTypeTable savedTable = ProjectStateManager.loadMarkerTable(project);
+                if (savedTable != null) {
+                    this.cellTypeTable = savedTable;
+                }
                 var state = ProjectStateManager.loadState(project);
                 if (state != null) {
                     if (state.selectedFeatures != null) this.selectedFeatures = new ArrayList<>(state.selectedFeatures);
@@ -2011,6 +2017,13 @@ public class CellTuneExtension implements QuPathExtension {
         try {
             cellTypeTable = MarkerTableImporter.importFromCSV(chosen.toPath());
             syncPanelState();
+            if (project != null) {
+                try {
+                    ProjectStateManager.saveMarkerTable(project, cellTypeTable);
+                } catch (IOException saveEx) {
+                    logger.warn("Failed to persist marker table to project: {}", saveEx.getMessage());
+                }
+            }
             Dialogs.showInfoNotification(EXTENSION_NAME,
                     "Loaded " + cellTypeTable.size() + " cell types from " + chosen.getName());
         } catch (IOException ex) {

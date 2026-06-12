@@ -25,13 +25,14 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 6. [Binary + composite workflow in detail](#6-binary--composite-workflow-in-detail)
 7. [After training — Review mode](#7-after-training--review-mode)
 8. [Project Prediction Summary](#8-project-prediction-summary)
-9. [Exporting results](#9-exporting-results)
-   - [9.1 Cell table export](#91-cell-table-export)
-   - [9.2 Ground truth export & import](#92-ground-truth-export--import)
-10. [Reference: every setting in the sidebar](#10-reference-every-setting-in-the-sidebar)
-11. [Reference: every CellTune menu item](#11-reference-every-celltune-menu-item)
-12. [Project directory layout](#12-project-directory-layout)
-13. [Tips, gotchas, and known limitations](#13-tips-gotchas-and-known-limitations)
+9. [Distance measurements (spatial analysis)](#9-distance-measurements-spatial-analysis)
+10. [Exporting results](#10-exporting-results)
+    - [10.1 Cell table export](#101-cell-table-export)
+    - [10.2 Ground truth export & import](#102-ground-truth-export--import)
+11. [Reference: every setting in the sidebar](#11-reference-every-setting-in-the-sidebar)
+12. [Reference: every CellTune menu item](#12-reference-every-celltune-menu-item)
+13. [Project directory layout](#13-project-directory-layout)
+14. [Tips, gotchas, and known limitations](#14-tips-gotchas-and-known-limitations)
 
 ---
 
@@ -119,7 +120,16 @@ QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000
 - Checkbox per row to toggle individual features.
 - Counter at the bottom: `X / Y selected`.
 
-**When to limit features:** for big panels, restricting to e.g. `Cell: Mean` only (one channel-mean per marker) often gives near-identical accuracy with 10–20× less training time and much cleaner SHAP plots. The full set on disk is never touched — only the training column list.
+**Do you need to hand-prune for big panels?** Usually not. Both default models are gradient-boosted trees, which are robust to correlated and redundant features: at each split a tree picks the single most informative feature, so two near-duplicate columns don't distort the model the way they would in a linear/regression model — the worst case is wasted training time and *diluted* importance (a marker's signal gets split across its correlated columns, muddying SHAP plots). So extra features rarely hurt accuracy, but they do cost speed and interpretability.
+
+Rather than manually paring the list down, leave **Auto-prune features** (§[11](#11-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round:
+
+1. **Sparsity / variance filter** — drops features that are effectively constant (non-zero in fewer than ~5 of your labelled cells, or zero variance). A feature that never varies can't help a tree split.
+2. **Within-marker correlation removal** — features are grouped by their prefix (`Cell:`, `Nucleus:`, `Membrane:`…); within each group it keeps the **highest-variance** feature and drops any peer whose absolute Pearson correlation with a kept feature exceeds ~0.95. This is what collapses `Cell: CD3 Mean` / `Cell: CD3 Median` / `Cell: CD3 Max` down to one representative column.
+3. **Cross-marker correlation removal** — available but **off by default**, so distinct markers are never merged just because they happen to co-vary.
+4. **Per-marker guardrail** — if a marker group would otherwise be emptied, its highest-variance feature is force-kept, so the classifier never goes completely blind to a marker.
+
+Pruning runs only on your (small) labelled set, takes milliseconds, and **never touches the measurements on disk** — it only trims the training column list for that run. The net effect is the same "near-identical accuracy, much faster training, cleaner SHAP plots" you'd get from hand-restricting to `Cell: Mean` only, without you having to guess which columns to keep.
 
 Your selection is saved in `<project>/celltune/classifier-state.json` and persists across QuPath sessions.
 
@@ -137,7 +147,7 @@ Per-feature transforms applied during feature extraction. Same prefix/search/sel
 
 You pick **which** features to transform and **one** transform/cofactor applied to all of them. Untouched features stay raw.
 
-**When to skip normalisation:** you probably shouldn't. Tree models are scale-invariant in theory but arcsinh massively helps SMOTE/ADASYN (which interpolate in feature space) and makes the SHAP plots interpretable across markers.
+**What it buys you.** `Normalisation` compresses the bright outliers in raw intensities while keeping the low end (negative vs dim-positive) linear. This pulls each slide's intensity scale closer together, so the model generalises to unseen slides.
 
 ### 4.3 Create classes & Class Control
 
@@ -178,19 +188,11 @@ Dendritic,CD11c,,
 NK-Cell,CD56,,
 ```
 
-**Rule format** (uses gating expressions — supports `|` OR, `&` AND, `!` NOT):
-
-```csv
-CellType,PrimaryMarker,SecondaryMarker,TertiaryMarker
-CD8T,CD8,CD3,CD103|CD45|CD45RA
-Plasma_CD38,CD38&!IgA,,CD45|VIM
-```
-
 Channel-name matching is robust (alphanumeric-normalised), so `CD3_S2 - Cy5_AF` matches the channel `CD3_S2-Cy5_AF` automatically.
 
 In review mode, ticking the **Auto-switch channels** checkbox makes QuPath show only the relevant markers for the cell currently under review (with auto display range). Untick to navigate channels manually.
 
-> The marker table lives in memory only. It is **not** saved to the project — re-import after restarting QuPath.
+> The marker table is saved to `<project>/celltune/marker-table.json` when you import it, so it persists across QuPath restarts — no need to re-import. Importing a new CSV overwrites it.
 
 ---
 
@@ -437,9 +439,58 @@ For each image:
 
 ---
 
-## 9. Exporting results
+## 9. Distance measurements (spatial analysis)
 
-### 9.1 Cell table export
+**Menu:** *Extensions → CellTune Classifier → Generate Distance Measurements...*
+
+A project-wide batch tool that adds spatial distance columns to your cell measurements — useful for downstream neighbourhood / spatial-statistics analysis. It runs across as many project images as you select, loading and saving each one for you.
+
+It can generate three independent measurement families (tick any combination):
+
+| Computation | What it writes per cell | Backed by |
+|---|---|---|
+| **Detection-to-annotation signed distances** | `Signed distance to annotation <class> <unit>` — negative inside the annotation, positive outside. | QuPath `DistanceTools.detectionToAnnotationDistancesSigned` |
+| **Cross-class centroid distances** | `Distance to detection <class> <unit>` — nearest centroid-to-centroid distance to a cell of every *other* class. | QuPath `DistanceTools.detectionCentroidDistances` |
+| **Same-class nearest-neighbour distances (excludes self)** | `Distance to other <class> <unit>` — distance to the nearest *other* cell of the **same** class. | CellTune (spatially indexed; see below) |
+
+`<unit>` is `µm` when a pixel size is available (from calibration or the override below), otherwise `px`.
+
+### Dialog options
+
+- **Images** — checklist of every project image, with **All** / **None** / **Current only** buttons. All are ticked by default.
+- **Pixel size (µm/pixel)** — optional. Pre-filled from the current image's calibration when available.
+  - Leave **blank** to use each image's own existing calibration.
+  - Enter a value to override calibration for *every* selected image so results come out in microns.
+  - **Persist this pixel size to each image's calibration on save** — when ticked, the override is written into each image's calibration metadata (so future measurements also use this scale). When unticked, the override is reverted after the run.
+- **Skip images where all selected measurements already exist** (default on) — before computing, CellTune scans every cell. If all cells already carry every measurement the selected computations would produce, the image is skipped entirely (no recompute, no re-save). This makes interrupted runs cheap to resume. It is **all-or-nothing per image**: if even one selected measurement is missing, the whole image is recomputed, guaranteeing internally consistent results. Untick to force recomputation (e.g. after changing classes).
+- **Parallel image workers** (1–N cores) — how many images are processed at the same time.
+  - The heavy distance maths for a *single* image already spreads across all CPU cores, so raising this mostly overlaps disk load/save (I/O) with compute.
+  - **Many small images:** higher worker counts can speed up the batch.
+  - **A few very large images (hundreds of thousands of cells):** 1–2 workers is often fastest — each image then gets the full CPU and uses less memory.
+
+### Running it
+
+Click **Apply**. The log area streams per-image progress, e.g.:
+
+```
+Starting on 41 image(s)…
+Using 1 parallel image worker(s) (cores=14).
+[slide1.ome.tif] Loading…
+[slide1.ome.tif] Skipped — all selected measurements already present.
+[slide2.ome.tif] Same-class nearest-neighbour distances…
+[slide2.ome.tif]   Tumour: 82770 cells in 18830 ms → Distance to other Tumour µm
+[slide2.ome.tif] Saved.
+```
+
+Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for the same-class computation (a lone cell has no same-class neighbour). Each processed image is saved back to the project automatically. **Close** dismisses the dialog.
+
+> **Performance note.** The same-class nearest-neighbour computation uses a spatially-indexed search (JTS `STRtree`), not a brute-force pairwise loop, and parallelises its per-cell queries across cores. This keeps it tractable on 500k+ cell images, where a naïve O(n²) approach would take minutes to hours per class.
+
+---
+
+## 10. Exporting results
+
+### 10.1 Cell table export
 
 **Menu:** *Extensions → CellTune Classifier → Export Cell Table...*
 
@@ -458,7 +509,7 @@ For each selected image, writes `<ImageName>.csv` to your chosen folder with one
 
 RFC-4180 compliant (quotes escaped). The dialog asks which images to include if the project has more than one.
 
-### 9.2 Ground truth export & import
+### 10.2 Ground truth export & import
 
 CellTune ground-truth files are a portable representation of your labelled cells **and** their feature vectors — they let you reuse labels across projects/workstations.
 
@@ -493,7 +544,7 @@ The binary equivalents are **Import Active Binary Ground Truth...** — same mod
 
 ---
 
-## 10. Reference: every setting in the sidebar
+## 11. Reference: every setting in the sidebar
 
 | Control | Default | What it does |
 |---|---|---|
@@ -522,7 +573,7 @@ The binary equivalents are **Import Active Binary Ground Truth...** — same mod
 
 ---
 
-## 11. Reference: every CellTune menu item
+## 12. Reference: every CellTune menu item
 
 All under *Extensions → CellTune Classifier*.
 
@@ -534,6 +585,7 @@ All under *Extensions → CellTune Classifier*.
 | Select Features... | Project | Pick which measurement columns are used for training. |
 | Normalise Features | Project | Per-feature arcsinh/sqrt with shared cofactor. |
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
+| Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[9](#9-distance-measurements-spatial-analysis). |
 | Import Marker Table... | Open image | Load cell-type → markers mapping for review channel switching. |
 | Export Cell Table... | Open image with detections | One CSV per selected image. |
 | Export Ground Truth... | Open image with labels (multi-class) | Portable labels + feature vectors CSV. |
@@ -543,7 +595,7 @@ All under *Extensions → CellTune Classifier*.
 
 ---
 
-## 12. Project directory layout
+## 13. Project directory layout
 
 Everything CellTune writes is under `<project>/celltune/`:
 
@@ -551,6 +603,7 @@ Everything CellTune writes is under `<project>/celltune/`:
 celltune/
 ├── classifier-state.json         # Multi-class model (features, classes, model bytes, labels, normalisation)
 ├── composite-rules.json          # Saved CompositeClassificationRule objects (advanced/programmatic)
+├── marker-table.json             # Imported marker table (auto channel switching) — persists across restarts
 ├── binary-registry.json          # markerName → state file path
 ├── labels_backup_YYYYMMDD_HHMMSS.json   # Auto-snapshot before each Train
 │
@@ -575,7 +628,7 @@ JSON throughout. Model bytes are Base64-encoded inside the state files. Safe to 
 
 ---
 
-## 13. Tips, gotchas, and known limitations
+## 14. Tips, gotchas, and known limitations
 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.

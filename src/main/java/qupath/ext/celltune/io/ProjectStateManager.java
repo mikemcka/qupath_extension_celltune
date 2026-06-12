@@ -14,6 +14,7 @@ import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.TrainingMetrics;
 import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.model.CellPrediction;
+import qupath.ext.celltune.model.CellTypeTable;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.projects.Project;
@@ -50,6 +51,8 @@ public class ProjectStateManager {
     private static final String STATE_FILENAME = "classifier-state.json";
     private static final String COMPOSITE_RULES_FILENAME = "composite-rules.json";
     private static final int COMPOSITE_RULES_SCHEMA_VERSION = 1;
+    private static final String MARKER_TABLE_FILENAME = "marker-table.json";
+    private static final int MARKER_TABLE_SCHEMA_VERSION = 1;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final DateTimeFormatter TIMESTAMP_FMT =
             DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
@@ -1370,6 +1373,153 @@ public class ProjectStateManager {
             return result;
         }
         return new ArrayList<>();
+    }
+
+    // -- Marker table persistence -----------------------------------------------
+
+    /**
+     * Save the imported marker table to {@code <project>/celltune/marker-table.json}
+     * so it survives QuPath restarts and no longer has to be re-imported.
+     * <p>
+     * Both CSV formats are preserved losslessly: simple tables store their display
+     * markers, rule tables store their primary/secondary/tertiary gating expressions.
+     *
+     * @param project the QuPath project (null-safe - logs warning and returns)
+     * @param table   the marker table to persist (null or empty clears the file)
+     * @throws IOException if writing fails
+     */
+    public static void saveMarkerTable(Project<?> project, CellTypeTable table) throws IOException {
+        if (project == null) {
+            logger.warn("saveMarkerTable: project is null - skipping save");
+            return;
+        }
+
+        Path dir = getCellTuneDir(project);
+        Path path = dir.resolve(MARKER_TABLE_FILENAME);
+
+        if (table == null || table.isEmpty()) {
+            Files.deleteIfExists(path);
+            logger.info("Cleared marker table at {}", path);
+            return;
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("version", MARKER_TABLE_SCHEMA_VERSION);
+        boolean hasRules = table.hasGatingRules();
+        root.addProperty("hasRules", hasRules);
+
+        JsonArray entries = new JsonArray();
+        for (String cellType : table.getCellTypes()) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("cellType", cellType);
+            if (hasRules) {
+                String primary = table.getPrimaryExpression(cellType);
+                String secondary = table.getSecondaryMarkers(cellType);
+                String tertiary = table.getTertiaryMarkers(cellType);
+                if (primary != null) entry.addProperty("primary", primary);
+                if (secondary != null) entry.addProperty("secondary", secondary);
+                if (tertiary != null) entry.addProperty("tertiary", tertiary);
+            } else {
+                JsonArray markers = new JsonArray();
+                for (String marker : table.getMarkers(cellType)) {
+                    markers.add(marker);
+                }
+                entry.add("markers", markers);
+            }
+            entries.add(entry);
+        }
+        root.add("entries", entries);
+
+        Files.writeString(path, GSON.toJson(root), StandardCharsets.UTF_8);
+        logger.info("Saved marker table ({} cell types, {} format) to {}",
+                entries.size(), hasRules ? "rule" : "simple", path);
+    }
+
+    /**
+     * Load the persisted marker table from {@code <project>/celltune/marker-table.json}.
+     *
+     * @param project the QuPath project (null-safe - returns null)
+     * @return the reconstructed marker table, or null if no valid file exists
+     */
+    public static CellTypeTable loadMarkerTable(Project<?> project) {
+        if (project == null) {
+            return null;
+        }
+
+        Path path;
+        try {
+            path = getCellTuneDir(project).resolve(MARKER_TABLE_FILENAME);
+        } catch (IOException ex) {
+            logger.warn("loadMarkerTable: cannot resolve celltune dir: {}", ex.getMessage());
+            return null;
+        }
+        if (!Files.exists(path)) {
+            return null;
+        }
+
+        JsonObject root;
+        try {
+            String json = Files.readString(path, StandardCharsets.UTF_8);
+            JsonElement parsed = JsonParser.parseString(json);
+            if (!parsed.isJsonObject()) {
+                logger.warn("loadMarkerTable: unexpected JSON shape in {}", path);
+                return null;
+            }
+            root = parsed.getAsJsonObject();
+        } catch (IOException | JsonSyntaxException ex) {
+            logger.warn("loadMarkerTable: failed to read {}: {}", path, ex.getMessage());
+            return null;
+        }
+
+        JsonElement rawVersion = root.get("version");
+        if (rawVersion != null && rawVersion.isJsonPrimitive() && rawVersion.getAsJsonPrimitive().isNumber()
+                && rawVersion.getAsInt() != MARKER_TABLE_SCHEMA_VERSION) {
+            logger.warn("loadMarkerTable: schema version {} in {} (expected {})",
+                    rawVersion.getAsInt(), path, MARKER_TABLE_SCHEMA_VERSION);
+        }
+
+        boolean hasRules = root.has("hasRules") && root.get("hasRules").isJsonPrimitive()
+                && root.get("hasRules").getAsBoolean();
+
+        JsonElement rawEntries = root.get("entries");
+        if (rawEntries == null || !rawEntries.isJsonArray()) {
+            return null;
+        }
+
+        CellTypeTable table = new CellTypeTable();
+        for (JsonElement rawEntry : rawEntries.getAsJsonArray()) {
+            if (!rawEntry.isJsonObject()) continue;
+            JsonObject entry = rawEntry.getAsJsonObject();
+            String cellType = getOptionalString(entry, "cellType");
+            if (cellType == null || cellType.isBlank()) {
+                logger.warn("loadMarkerTable: skipping entry with missing cellType");
+                continue;
+            }
+            if (hasRules) {
+                table.putRule(cellType,
+                        getOptionalString(entry, "primary"),
+                        getOptionalString(entry, "secondary"),
+                        getOptionalString(entry, "tertiary"));
+            } else {
+                List<String> markers = new ArrayList<>();
+                JsonElement rawMarkers = entry.get("markers");
+                if (rawMarkers != null && rawMarkers.isJsonArray()) {
+                    for (JsonElement m : rawMarkers.getAsJsonArray()) {
+                        if (m.isJsonPrimitive() && m.getAsJsonPrimitive().isString()) {
+                            markers.add(m.getAsString());
+                        }
+                    }
+                }
+                table.put(cellType, markers);
+            }
+        }
+
+        if (table.isEmpty()) {
+            return null;
+        }
+        logger.info("Loaded marker table ({} cell types, {} format) from {}",
+                table.size(), hasRules ? "rule" : "simple", path);
+        return table;
     }
 }
 
