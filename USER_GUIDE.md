@@ -51,6 +51,10 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 
 Disable the extension at any time from **Edit → Preferences → CellTune Classifier → Enable**.
 
+![Docked side panel](doc_images/docked_side_panel.png)
+
+![Dropdown](doc_images/dropdown_menu.png)
+
 ---
 
 ## 2. Quick start — multi-class workflow
@@ -122,9 +126,11 @@ QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000
 
 - **Search** box — case-insensitive substring filter.
 - **Prefix** dropdown — auto-populated with prefixes it finds in your feature names (`Cell:`, `Nucleus:`, `Membrane:`). Pick one, then **Select Prefix** / **Clear Prefix** to bulk-toggle just that group.
-- **Select All** / **Clear All** — operate on whatever's currently visible after filtering.
+- **Select All** / **Clear All** — operate on whatever's currently visible after filtering. Great for removing large groups of features
 - Checkbox per row to toggle individual features.
 - Counter at the bottom: `X / Y selected`.
+
+![Feature selection](doc_images/feature_selection.png)
 
 **Do you need to hand-prune for big panels?** Usually not. Both default models are gradient-boosted trees, which are robust to correlated and redundant features: at each split a tree picks the single most informative feature, so two near-duplicate columns don't distort the model the way they would in a linear/regression model — the worst case is wasted training time and *diluted* importance (a marker's signal gets split across its correlated columns, muddying SHAP plots). So extra features rarely hurt accuracy, but they do cost speed and interpretability.
 
@@ -151,7 +157,11 @@ Per-feature transforms applied during feature extraction. Same prefix/search/sel
     - **Cofactor = 100** for mass cytometry (MIBI, IMC).
   - **sqrt** — `sqrt(max(0, x))`. Simple variance stabilisation, no cofactor.
 
+![Normalise features](doc_images/normalise_features.png)
+
 You pick **which** features to transform and **one** transform/cofactor applied to all of them. Untouched features stay raw.
+
+**Do not** normalise morphological features like Cell Area or any pre-normalised features like foundation model embeddings.
 
 **What it buys you.** `Normalisation` compresses the bright outliers in raw intensities while keeping the low end (negative vs dim-positive) linear. This pulls each slide's intensity scale closer together, so the model generalises to unseen slides.
 
@@ -208,6 +218,8 @@ In review mode, ticking the **Auto-switch channels** checkbox makes QuPath show 
 
 Click **Manual Label Mode** in the sidebar. A floating toolbar appears:
 
+![Manual label mode](doc_images/manual_label_mode.png)
+
 - Click a cell in the QuPath viewer → its ID and current class show at the top, the status dot turns lime if labelled, white if not.
 - A **magenta ring** marks the selected cell (a lightweight overlay — won't slow down 50k+ cell images).
 - Up to 12 quick-access class buttons appear inline; the rest live under **All Classes ▼**.
@@ -220,6 +232,8 @@ Click **Manual Label Mode** in the sidebar. A floating toolbar appears:
 ### 5.2 Choose images to apply the classifier to
 
 Click **Apply to which images... (N)** above the train button.
+
+![Images to apply](doc_images/select_images.png)
 
 - Dual-list selector. Left = images the classifier will predict on, right = excluded.
 - Per-list search and Move-all/Move-selected arrows.
@@ -268,7 +282,7 @@ Defaults work for ~90% of cases. Switch to `SMOTE` alone if Tomek is removing to
 
 ### 5.5 Train
 
-Click **Train**. A progress dialog shows the current step (feature extraction, balancing, fold training, etc.). Before training starts, a timestamped backup of the label store is written to `<project>/celltune/labels_backup_*.json`.
+Click **Train**. A progress dialog shows the current step (feature extraction, balancing, fold training, etc.). Before training starts, a timestamped backup of the label store is written to `<project>/celltune/labels_backup_*.json`. You will recieve a notifcation if you have insufficent memory for training at this time.
 
 Status bar after success: `Training complete — 523 cells classified, 47 disagreements.`
 
