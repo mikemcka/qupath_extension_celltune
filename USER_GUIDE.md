@@ -220,6 +220,8 @@ Click **Apply to which images... (N)** above the train button.
 - The **currently open image is always included** and can't be moved out.
 - Click **OK**; the button label now shows the count, e.g. `Apply to which images... (12)`.
 
+This is a quick way to reduce prediction times but only focusing on one or a few images.
+
 ### 5.3 Crank up workers (if you have RAM)
 
 **Workers** spinner (1–8). One worker = one full slide loaded into memory at a time. On a 32 GB workstation with COMET-sized slides, 2–3 workers is a sweet spot. On 16 GB, leave at 1.
@@ -232,7 +234,7 @@ The defaults are tuned for typical multiplex panels. Adjust as follows:
 |---|---|---|---|
 | **Pool labels from all images** | ✅ | (always; auto-on in binary mode) | training a per-image model intentionally |
 | **Enable data balancing** + `SMOTE + Tomek` | ✅ | one class << others (typical multiplex) | classes are already balanced or you want raw counts |
-| **Auto-tune hyperparameters** | ❌ | first build of a new panel; willing to wait | iterating fast; defaults known to work |
+| **Auto-tune hyperparameters** | ❌ | first/Last build of a new panel; willing to wait | iterating fast; defaults known to work |
 | **Early stopping** | ✅ | (always — no downside) | reproducing a paper with a fixed round count |
 | **Show top 10 feature importance** | ✅ | (always — cheap) | reducing UI clutter |
 | **Auto-prune features** | ✅ | (always — non-destructive, faster training) | running a reproducible benchmark |
@@ -240,6 +242,8 @@ The defaults are tuned for typical multiplex panels. Adjust as follows:
 | **Sample current image only** | ❌ | drilling into one tricky FOV | (default — covers whole project) |
 
 **Resampling strategies** (visible when Enable data balancing is on):
+
+**Leave as default if you don't understand this** This is complicated and involves generating synthetic data or removing datapoints from a feature set which will vary as your training dataset chnages over time.
 
 | Strategy | Effect |
 |---|---|
@@ -307,7 +311,7 @@ There's also a **Validation Confusion Matrix** view (true class × predicted cla
 
 Top-N (up to 10) features by **mean |SHAP|** per class. Horizontal bars, one colour per class, dropdown to switch classes. SHAP is averaged across whichever models are active (TreeSHAP for XGBoost/LightGBM, normalised split counts for Random Forest).
 
-Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, your normalisation cofactor is probably wrong).
+Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, your normalisation cofactor is probably wrong). It's also where a stray feature you forgot to de-select in Select Features (§4.1) tends to show up — a non-biological column like a cell index or centroid coordinate ranking near the top is a red flag that it leaked into training.
 
 ### 5.7 Optional — restrict sampling to specific annotations
 
@@ -322,7 +326,7 @@ Leave both blank to sample across every cell in every project image (recommended
 
 ## 6. Binary + composite workflow in detail
 
-Use this when you want **per-marker** classifiers (one for CD3 positive/negative, another for CD8 positive/negative, etc.) and then combine them into composite cell types.
+Use this when you want **per-marker** classifiers (one for CD3 positive/negative, another for CD8 positive/negative, etc.) and then combine them into composite cell types. Great for smaller panels or functional markers like Ki67.
 
 ### 6.1 Create a binary classifier
 
@@ -380,6 +384,8 @@ Review mode samples the **disagreement** cells (where Model 1 ≠ Model 2) using
 | **3 — Preferred confusions** | User-specified pair (e.g. `CD4:CD8`) | ~8 per pair |
 | **4 — Random fill** | Use any remaining budget | up to 256 |
 
+> The budgets above are calibrated for the default 256-cell batch. If you request a different sample size, every tier budget scales linearly (`× sampleSize / 256`, floored at 1 per tier), so the tier mix stays proportional — a smaller batch isn't just the first tier truncated.
+
 **Toolbar buttons during review:**
 - **Previous / Next / Skip** — navigate the queue.
 - **XGB: ClassName (89%)** — accept Model 1's top prediction; blue background.
@@ -387,8 +393,6 @@ Review mode samples the **disagreement** cells (where Model 1 ≠ Model 2) using
 - **Both: ClassName (XX%)** — single combined button if M1 and M2 agree.
 - **All Classes ▼** — pick a different class if both models are wrong.
 - **Done** — exit; labels are merged back into the label store and saved per-image to `<project>/celltune/image-labels/`.
-
-The selection ring is the same magenta overlay used in Manual Label Mode (no expensive PathObject selection events fired).
 
 If you imported a marker table (§4.4), tick **Auto-switch channels** and the viewer will display only the markers relevant to whatever class the current cell was predicted as.
 

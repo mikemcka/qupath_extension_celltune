@@ -138,17 +138,22 @@ public class UncertaintySampler {
             return List.of();
         }
 
-        // ── 2. Use fixed per-tier budgets (matching Python balanceSelectCells defaults) ───
+        // ── 2. Per-tier budgets, scaled linearly from the 256-cell defaults ──
+        // The BASE_* constants are calibrated for sampleSize = 256 (matching
+        // Python balanceSelectCells). Scaling by sampleSize/256 keeps the tier
+        // proportions intact for smaller (or larger) review batches, so lower
+        // tiers still get representation instead of being truncated away.
+        double scale = sampleSize / 256.0;
         int fovBudget    = (fovMap == null || fovMap.isEmpty())
-                ? 0 : BASE_FOV_BUDGET;
-        int cellsPerFov  = BASE_CELLS_PER_FOV;
-        int typeBudget   = BASE_TYPE_BUDGET;
-        int rareBudget   = BASE_RARE_BUDGET;
+                ? 0 : scaleBudget(BASE_FOV_BUDGET, scale);
+        int cellsPerFov  = scaleBudget(BASE_CELLS_PER_FOV, scale);
+        int typeBudget   = scaleBudget(BASE_TYPE_BUDGET, scale);
+        int rareBudget   = scaleBudget(BASE_RARE_BUDGET, scale);
         int prefBudget   = (preferredConfusions.isEmpty() && preferredTypes.isEmpty())
-                ? 0 : BASE_PREF_BUDGET;
-        int cellsPerType = BASE_CELLS_PER_TYPE;
-        int cellsPerRare = BASE_CELLS_PER_RARE;
-        int cellsPerPref = BASE_CELLS_PER_PREF;
+                ? 0 : scaleBudget(BASE_PREF_BUDGET, scale);
+        int cellsPerType = scaleBudget(BASE_CELLS_PER_TYPE, scale);
+        int cellsPerRare = scaleBudget(BASE_CELLS_PER_RARE, scale);
+        int cellsPerPref = scaleBudget(BASE_CELLS_PER_PREF, scale);
 
         Set<String> used = new LinkedHashSet<>();
         List<String> result = new ArrayList<>();
@@ -267,6 +272,15 @@ public class UncertaintySampler {
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
+
+    /**
+     * Scale a 256-calibrated tier budget by the requested sample size.
+     * Floored at 1 so every tier still contributes at least one cell when its
+     * base budget is non-zero, even for very small review batches.
+     */
+    private static int scaleBudget(int base256, double scale) {
+        return Math.max(1, (int) Math.round(base256 * scale));
+    }
 
     /**
      * Sample from class-keyed pools in the given class order, respecting
