@@ -33,6 +33,7 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
     - [11.1 Filter Cells by Size & Circularity](#111-filter-cells-by-size--circularity)
     - [11.2 Resolve Hierarchy](#112-resolve-hierarchy)
     - [11.3 Delete Measurements by Keyword](#113-delete-measurements-by-keyword)
+    - [11.4 Import GeoJSON Objects](#114-import-geojson-objects)
 12. [Reference: every setting in the sidebar](#12-reference-every-setting-in-the-sidebar)
 13. [Reference: every CellTune menu item](#13-reference-every-celltune-menu-item)
 14. [Project directory layout](#14-project-directory-layout)
@@ -578,6 +579,12 @@ Rebuilds parent/child relationships from ROI containment — equivalent to the `
 
 Removes every detection measurement whose name contains a keyword (case-insensitive by default; tick **Case sensitive** to match exactly). Choose **Current image** or **All project images**. Before deleting, CellTune previews the exact list of matching columns and asks you to confirm — if nothing matches, it aborts. Project-wide saves each entry (open image first, the rest in the background).
 
+### 11.4 Import GeoJSON Objects
+
+> ⚠️ **For small-to-medium GeoJSON only.** This importer loads the whole file into QuPath's memory, so very large files (hundreds of MB / millions of objects) can exhaust the heap and crash QuPath. For those, use the dedicated headless pipeline instead: [github.com/BioimageAnalysisCoreWEHI/import_large_geojson](https://github.com/BioimageAnalysisCoreWEHI/import_large_geojson).
+
+Imports annotations and detections from a `.geojson` (or gzipped `.geojson.gz`) file into the **current image**. Pick the file, then choose whether to **clear existing objects first** and whether to **resolve the hierarchy** afterwards (off by default — it is O(n²) and slow for many objects). Parsing streams the file feature-by-feature on a background thread; objects are added annotations-first (locked), then detections, and the image data is saved automatically.
+
 ---
 
 ## 12. Reference: every setting in the sidebar
@@ -630,6 +637,7 @@ All under *Extensions → CellTune Classifier*.
 | Import ▸ Active Binary Ground Truth... | Binary mode active + open image | Same as above, scoped to active marker. |
 | Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[11.1](#111-filter-cells-by-size--circularity). |
 | Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[11.2](#112-resolve-hierarchy). |
+| Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[11.4](#114-import-geojson-objects). |
 | Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[11.3](#113-delete-measurements-by-keyword). |
 
 ---

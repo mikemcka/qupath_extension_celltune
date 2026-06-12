@@ -8,6 +8,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
@@ -21,6 +22,9 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import com.google.gson.JsonElement;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.DualModelClassifier;
@@ -58,6 +62,10 @@ import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.prefs.PathPrefs;
+import qupath.lib.gui.tools.GuiTools;
+import qupath.lib.io.GsonTools;
+import qupath.lib.objects.PathAnnotationObject;
+import qupath.lib.objects.PathDetectionObject;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.objects.PathObjectTools;
@@ -71,8 +79,12 @@ import qupath.ext.celltune.ui.BinaryClassifierPanel;
 import qupath.ext.celltune.ui.ClassControlDialog;
 import qupath.ext.celltune.ui.CompositeClassificationDialog;
 
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -92,6 +104,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.GZIPInputStream;
 
 /**
  * QuPath extension that provides CellTune-style active learning cell classification.
@@ -717,9 +730,13 @@ public class CellTuneExtension implements QuPathExtension {
         deleteMeasurementsItem.setOnAction(e -> deleteMeasurementsByKeyword(qupath));
         deleteMeasurementsItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem importGeoJsonItem = new MenuItem(resources.getString("menu.utility.import.geojson"));
+        importGeoJsonItem.setOnAction(e -> importGeoJsonObjects(qupath));
+        importGeoJsonItem.disableProperty().bind(enableExtensionProperty.not());
+
         Menu utilityScriptsMenu = new Menu(resources.getString("menu.group.utilities"));
         utilityScriptsMenu.disableProperty().bind(enableExtensionProperty.not());
-        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, deleteMeasurementsItem);
+        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, importGeoJsonItem, deleteMeasurementsItem);
 
         menu.getItems().addAll(
                 binaryItem,
@@ -1202,6 +1219,211 @@ public class CellTuneExtension implements QuPathExtension {
             if (changed) touched++;
         }
         return touched;
+    }
+
+    private static final String LARGE_GEOJSON_REPO =
+            "https://github.com/BioimageAnalysisCoreWEHI/import_large_geojson";
+
+    /**
+     * Import annotations/detections from a GeoJSON (or gzipped GeoJSON) file into the
+     * current image. Intended for small-to-medium files — it loads all objects into
+     * memory, so very large files should use the dedicated headless pipeline instead
+     * (linked from the dialog).
+     */
+    private void importGeoJsonObjects(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open. Open the target image first.");
+            return;
+        }
+
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Import GeoJSON objects");
+        chooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("GeoJSON", "*.geojson", "*.json", "*.geojson.gz", "*.json.gz"),
+                new FileChooser.ExtensionFilter("All files", "*.*"));
+        File file = chooser.showOpenDialog(qupath.getStage());
+        if (file == null) return;
+
+        double sizeMB = file.length() / (1024.0 * 1024.0);
+
+        // Disclaimer + options.
+        Label warning = new Label(
+                "This importer loads the entire GeoJSON into memory and is intended for "
+                + "small-to-medium files. Very large files (hundreds of MB / millions of "
+                + "objects) can exhaust QuPath's heap and crash the application — use the "
+                + "dedicated headless pipeline for those:");
+        warning.setWrapText(true);
+        warning.setMaxWidth(440);
+
+        Hyperlink link = new Hyperlink("github.com/BioimageAnalysisCoreWEHI/import_large_geojson");
+        link.setOnAction(ev -> {
+            try {
+                GuiTools.browseURI(new URI(LARGE_GEOJSON_REPO));
+            } catch (Exception ex) {
+                logger.warn("[CellTune] Could not open browser for {}: {}", LARGE_GEOJSON_REPO, ex.getMessage());
+            }
+        });
+
+        Label fileLabel = new Label(String.format("File: %s (%.1f MB)", file.getName(), sizeMB));
+        fileLabel.setWrapText(true);
+        fileLabel.setMaxWidth(440);
+
+        CheckBox clearCb = new CheckBox("Clear existing objects first");
+        CheckBox resolveCb = new CheckBox("Resolve hierarchy after import (slower; O(n²))");
+
+        VBox content = new VBox(10, warning, link, new javafx.scene.control.Separator(),
+                fileLabel, clearCb, resolveCb);
+        content.setPadding(new Insets(10));
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(EXTENSION_NAME);
+        dialog.setHeaderText("Import GeoJSON objects into the current image");
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        var choice = dialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != ButtonType.OK) return;
+
+        final boolean clearExisting = clearCb.isSelected();
+        final boolean doResolve = resolveCb.isSelected();
+        final var hierarchy = imageData.getHierarchy();
+        final var project = qupath.getProject();
+        final var entry = project != null ? project.getEntry(imageData) : null;
+
+        Dialogs.showInfoNotification(EXTENSION_NAME, "Importing GeoJSON — see the log for progress.");
+
+        Thread worker = new Thread(() -> {
+            List<PathObject> objects;
+            try {
+                objects = parseGeoJsonObjects(file);
+            } catch (Throwable t) {
+                logger.error("[CellTune] GeoJSON parse failed: {}", t.toString(), t);
+                Platform.runLater(() -> Dialogs.showErrorMessage(EXTENSION_NAME,
+                        "Failed to read GeoJSON: " + t.getMessage()));
+                return;
+            }
+            if (objects.isEmpty()) {
+                Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
+                        "No valid objects found in " + file.getName() + "."));
+                return;
+            }
+
+            List<PathObject> annotations = new ArrayList<>();
+            List<PathObject> detections = new ArrayList<>();
+            List<PathObject> others = new ArrayList<>();
+            for (PathObject o : objects) {
+                if (o instanceof PathAnnotationObject) annotations.add(o);
+                else if (o instanceof PathDetectionObject) detections.add(o);
+                else others.add(o);
+            }
+
+            // Hierarchy mutation happens on the FX thread (the viewer observes it).
+            Platform.runLater(() -> {
+                try {
+                    if (clearExisting) hierarchy.clearAll();
+                    if (!annotations.isEmpty()) {
+                        annotations.forEach(a -> a.setLocked(true));
+                        hierarchy.addObjects(annotations);
+                    }
+                    if (!detections.isEmpty()) {
+                        if (detections.size() > 200_000) {
+                            int chunk = 100_000;
+                            for (int i = 0; i < detections.size(); i += chunk) {
+                                hierarchy.addObjects(detections.subList(i, Math.min(i + chunk, detections.size())));
+                            }
+                        } else {
+                            hierarchy.addObjects(detections);
+                        }
+                    }
+                    if (!others.isEmpty()) hierarchy.addObjects(others);
+                    if (doResolve) hierarchy.resolveHierarchy();
+                    hierarchy.fireHierarchyChangedEvent(this);
+                    if (entry != null) {
+                        try {
+                            entry.saveImageData(imageData);
+                        } catch (Exception ex) {
+                            logger.warn("[CellTune] Failed to save image data after GeoJSON import: {}", ex.getMessage());
+                        }
+                    }
+                    Dialogs.showInfoNotification(EXTENSION_NAME, String.format(
+                            "Imported %d object(s): %d annotation(s), %d detection(s)%s.",
+                            objects.size(), annotations.size(), detections.size(),
+                            others.isEmpty() ? "" : ", " + others.size() + " other"));
+                    logger.info("[CellTune] GeoJSON import: {} objects ({} ann, {} det, {} other) from {}.",
+                            objects.size(), annotations.size(), detections.size(), others.size(), file.getName());
+                } catch (Throwable t) {
+                    logger.error("[CellTune] GeoJSON import (add) failed: {}", t.toString(), t);
+                    Dialogs.showErrorMessage(EXTENSION_NAME, "Failed to add objects: " + t.getMessage());
+                }
+            });
+        }, "celltune-import-geojson");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Stream-parse a GeoJSON file (FeatureCollection object or bare feature array,
+     * optionally gzipped) into a list of {@link PathObject}s, one feature at a time
+     * to avoid loading the whole JSON tree.
+     */
+    private List<PathObject> parseGeoJsonObjects(File file) throws IOException {
+        boolean gz = file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".gz");
+        var gson = GsonTools.getInstance();
+        com.google.gson.TypeAdapter<JsonElement> adapter = gson.getAdapter(JsonElement.class);
+        List<PathObject> out = new ArrayList<>();
+        long t0 = System.currentTimeMillis();
+        int[] errors = {0};
+
+        try (var fis = new FileInputStream(file);
+             var bis = new BufferedInputStream(fis, 16 * 1024 * 1024);
+             java.io.InputStream raw = gz ? new GZIPInputStream(bis, 16 * 1024 * 1024) : bis;
+             var isr = new InputStreamReader(raw, StandardCharsets.UTF_8);
+             JsonReader reader = new JsonReader(isr)) {
+            reader.setLenient(true);
+            JsonToken first = reader.peek();
+            if (first == JsonToken.BEGIN_OBJECT) {
+                reader.beginObject();
+                boolean foundFeatures = false;
+                while (reader.hasNext()) {
+                    if ("features".equals(reader.nextName())) {
+                        foundFeatures = true;
+                        readFeatureArray(reader, adapter, gson, out, errors);
+                    } else {
+                        reader.skipValue();
+                    }
+                }
+                reader.endObject();
+                if (!foundFeatures) {
+                    throw new IOException("GeoJSON object has no 'features' array — is it a valid FeatureCollection?");
+                }
+            } else if (first == JsonToken.BEGIN_ARRAY) {
+                readFeatureArray(reader, adapter, gson, out, errors);
+            } else {
+                throw new IOException("Unexpected JSON structure (expected object or array, got " + first + ").");
+            }
+        }
+        logger.info("[CellTune] Parsed GeoJSON: {} objects ({} errors) in {} ms.",
+                out.size(), errors[0], System.currentTimeMillis() - t0);
+        return out;
+    }
+
+    /** Read a JSON array of GeoJSON features, converting each to a {@link PathObject}. */
+    private static void readFeatureArray(JsonReader reader,
+                                         com.google.gson.TypeAdapter<JsonElement> adapter,
+                                         com.google.gson.Gson gson,
+                                         List<PathObject> out,
+                                         int[] errors) throws IOException {
+        reader.beginArray();
+        while (reader.hasNext()) {
+            JsonElement element = adapter.read(reader);
+            try {
+                PathObject obj = gson.fromJson(element, PathObject.class);
+                if (obj != null) out.add(obj);
+            } catch (Exception fe) {
+                errors[0]++;
+            }
+        }
+        reader.endArray();
     }
 
     // ── Placeholder actions (wired in later phases) ────────────────────────────
