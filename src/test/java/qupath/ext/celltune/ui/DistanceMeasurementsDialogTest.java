@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Random;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -106,6 +107,43 @@ class DistanceMeasurementsDialogTest {
         for (int i = 0; i < n; i++) {
             assertEquals(expected[i], actual[i], EPS, "Mismatch at index " + i);
         }
+    }
+
+    @Test
+    void matchesBruteForceOnLargeCloudExercisingParallelism() {
+        // Large enough that the parallel STRtree query loop splits across worker
+        // threads. Result must still match the brute-force reference exactly,
+        // guarding the parallelisation against any threading/ordering bug.
+        Random rng = new Random(7);
+        int n = 10_000;
+        double[] xs = new double[n];
+        double[] ys = new double[n];
+        for (int i = 0; i < n; i++) {
+            xs[i] = rng.nextDouble() * 5000.0;
+            ys[i] = rng.nextDouble() * 5000.0;
+        }
+        double[] actual = DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(xs, ys);
+        double[] expected = bruteForceNN(xs, ys);
+        for (int i = 0; i < n; i++) {
+            assertEquals(expected[i], actual[i], EPS, "Mismatch at index " + i);
+        }
+    }
+
+    @Test
+    void parallelResultIsDeterministic() {
+        // Computing the same input twice must yield identical results — a guard
+        // against data races in the parallel query loop (shared tree/index map).
+        Random rng = new Random(123);
+        int n = 4_000;
+        double[] xs = new double[n];
+        double[] ys = new double[n];
+        for (int i = 0; i < n; i++) {
+            xs[i] = rng.nextDouble() * 2000.0;
+            ys[i] = rng.nextDouble() * 2000.0;
+        }
+        double[] first = DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(xs, ys);
+        double[] second = DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(xs, ys);
+        assertArrayEquals(first, second, "Parallel computation must be reproducible");
     }
 
     private static double[] bruteForceNN(double[] xs, double[] ys) {
