@@ -6,6 +6,7 @@ import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.SeparatorMenuItem;
@@ -640,27 +641,27 @@ public class CellTuneExtension implements QuPathExtension {
         projectSummaryItem.setOnAction(e -> showProjectPredictionSummary(qupath));
         projectSummaryItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem exportItem = new MenuItem(resources.getString("menu.export"));
+        MenuItem exportItem = new MenuItem(resources.getString("menu.export.short"));
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem importMarkersItem = new MenuItem(resources.getString("menu.import.markers"));
+        MenuItem importMarkersItem = new MenuItem(resources.getString("menu.import.markers.short"));
         importMarkersItem.setOnAction(e -> importMarkerTable(qupath));
         importMarkersItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem exportGtItem = new MenuItem(resources.getString("menu.export.groundtruth"));
+        MenuItem exportGtItem = new MenuItem(resources.getString("menu.export.groundtruth.short"));
         exportGtItem.setOnAction(e -> exportGroundTruth(qupath));
         exportGtItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem importGtItem = new MenuItem(resources.getString("menu.import.groundtruth"));
+        MenuItem importGtItem = new MenuItem(resources.getString("menu.import.groundtruth.short"));
         importGtItem.setOnAction(e -> importGroundTruth(qupath));
         importGtItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem exportBinaryGroundTruthItem = new MenuItem(resources.getString("menu.export.binary.groundtruth"));
+        MenuItem exportBinaryGroundTruthItem = new MenuItem(resources.getString("menu.export.binary.groundtruth.short"));
         exportBinaryGroundTruthItem.setOnAction(e -> exportActiveBinaryGroundTruth(qupath));
         exportBinaryGroundTruthItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem importBinaryGroundTruthItem = new MenuItem(resources.getString("menu.import.binary.groundtruth"));
+        MenuItem importBinaryGroundTruthItem = new MenuItem(resources.getString("menu.import.binary.groundtruth.short"));
         importBinaryGroundTruthItem.setOnAction(e -> importActiveBinaryGroundTruth(qupath));
         importBinaryGroundTruthItem.disableProperty().bind(enableExtensionProperty.not());
 
@@ -688,6 +689,16 @@ public class CellTuneExtension implements QuPathExtension {
         distancesItem.setOnAction(e -> showDistanceMeasurements(qupath));
         distancesItem.disableProperty().bind(enableExtensionProperty.not());
 
+        // Group the export/import actions into two submenus to keep the
+        // top-level dropdown compact.
+        Menu exportMenu = new Menu(resources.getString("menu.group.export"));
+        exportMenu.disableProperty().bind(enableExtensionProperty.not());
+        exportMenu.getItems().addAll(exportItem, exportGtItem, exportBinaryGroundTruthItem);
+
+        Menu importMenu = new Menu(resources.getString("menu.group.import"));
+        importMenu.disableProperty().bind(enableExtensionProperty.not());
+        importMenu.getItems().addAll(importMarkersItem, importGtItem, importBinaryGroundTruthItem);
+
         menu.getItems().addAll(
                 binaryItem,
                 compositeItem,
@@ -698,13 +709,8 @@ public class CellTuneExtension implements QuPathExtension {
                 projectSummaryItem,
                 distancesItem,
                 new SeparatorMenuItem(),
-                importMarkersItem,
-                exportItem,
-                new SeparatorMenuItem(),
-                exportGtItem,
-                importGtItem,
-                exportBinaryGroundTruthItem,
-                importBinaryGroundTruthItem
+                exportMenu,
+                importMenu
         );
     }
 

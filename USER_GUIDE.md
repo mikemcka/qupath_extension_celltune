@@ -173,7 +173,7 @@ Type a class name, click **Add Class**. Just adds it to QuPath's class panel —
 
 ### 4.4 Import a marker table (auto channel switching)
 
-**Menu:** *Extensions → CellTune Classifier → Import Marker Table...*
+**Menu:** *Extensions → CellTune Classifier → Import ▸ Marker Table...*
 
 Optional. Maps cell types to marker channels so review mode can auto-switch channel visibility to the markers relevant to each predicted cell.
 
@@ -433,6 +433,12 @@ For each image:
 - `OUTLIER_COMPOSITION` — composition robust z ≥ 3.
 - `OUTLIER_DISAGREEMENT` — disagreement robust z ≥ 3.
 
+**Why these numbers?** Most are standard statistical conventions, not arbitrary:
+- **Robust z ≥ 3** is the classic *3-sigma* outlier rule. The robust z uses `0.6745 × (value − median) / MAD`, where `0.6745` is the constant that makes MAD a consistent estimator of the standard deviation for normal data — so the score sits on the same scale as an ordinary z-score and "≥ 3" means the same thing it always does (~0.1% one-tailed under normality).
+- **Rare enrichment (<1%, ≥20 cells, ≥3×)** is an **AND gate**: a class must be rare cohort-wide *and* have enough cells to not be noise *and* be meaningfully concentrated here. The ≥20-cell floor stops a handful of misclassifications from faking a "3× enrichment"; <1% and 3× are round "rare" / "real, not jitter" conventions.
+- **Laplace smoothing** (add-one) keeps a class with zero cells in one image from blowing up the composition distance.
+- **0.65 / 0.35 weighting** is the one judgement call. Composition drift (a slide whose whole class makeup differs) is a more trustworthy "this slide is different" signal than raw disagreement rate, which is noisier and partly an artefact of *which two model types* you picked — so composition gets the heavier weight. The two weights are forced to sum to 1, so the score is a convex blend, not two independent dials. Treat the score as a **ranking aid**, not a calibrated probability.
+
 **How to use it:**
 - Sort by Anomaly (default). Top rows = look at these first.
 - Flagged + high disagreement → the classifier doesn't understand this slide. **Open it, label 10–20 cells, re-train.**
@@ -488,7 +494,7 @@ Using 1 parallel image worker(s) (cores=14).
 
 Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for the same-class computation (a lone cell has no same-class neighbour). Each processed image is saved back to the project automatically. **Close** dismisses the dialog.
 
-> **Performance note.** The same-class nearest-neighbour computation uses a spatially-indexed search (JTS `STRtree`), not a brute-force pairwise loop, and parallelises its per-cell queries across cores. This keeps it tractable on 500k+ cell images, where a naïve O(n²) approach would take minutes to hours per class.
+> **Performance note.** For large numbers of small images (10-20K cells) use a higher number of workers, for large images (500k+ cells) use one or 2 workers.
 
 ---
 
@@ -496,7 +502,7 @@ Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for t
 
 ### 10.1 Cell table export
 
-**Menu:** *Extensions → CellTune Classifier → Export Cell Table...*
+**Menu:** *Extensions → CellTune Classifier → Export ▸ Cell Table...*
 
 For each selected image, writes `<ImageName>.csv` to your chosen folder with one row per detection:
 
@@ -509,7 +515,7 @@ For each selected image, writes `<ImageName>.csv` to your chosen folder with one
 | `Classification` | Current `PathClass` (empty if unclassified) |
 | `ParentAnnotations` | All ancestor annotations, joined with `; ` |
 | `Geometry` | WKT `POLYGON` of the ROI outline |
-| feature columns | `Cell: Area` plus all columns containing "mean" (case-insensitive); falls back to all features if no "mean" columns exist |
+| feature columns | `Cell: Area`, all columns containing "mean", and all columns containing "distance" (case-insensitive) — so any spatial distances generated in §[9](#9-distance-measurements-spatial-analysis) are included. Falls back to all features if none of those match. |
 
 RFC-4180 compliant (quotes escaped). The dialog asks which images to include if the project has more than one.
 
@@ -519,7 +525,7 @@ CellTune ground-truth files are a portable representation of your labelled cells
 
 #### Export
 
-**Menu:** *Extensions → CellTune Classifier → Export Ground Truth...*
+**Menu:** *Extensions → CellTune Classifier → Export ▸ Ground Truth...*
 
 Header (commented):
 ```
@@ -531,18 +537,18 @@ Image,Label,CentroidX,CentroidY,Feature1,Feature2,...[,Feature1__norm,...]
 
 Dialog asks whether to include raw features, normalised features (`__norm` suffix), or both. Only labelled cells are exported.
 
-In multi-class mode the export pools labels from the current image plus all other project images. In **binary mode** use the dedicated menu item **Export Active Binary Ground Truth...** — it scopes to the active marker and includes previously-imported training rows from prior projects (so you can losslessly round-trip between projects).
+In multi-class mode the export pools labels from the current image plus all other project images. In **binary mode** use the dedicated menu item **Export ▸ Active Binary Ground Truth...** — it scopes to the active marker and includes previously-imported training rows from prior projects (so you can losslessly round-trip between projects).
 
 #### Import
 
-**Menu:** *Extensions → CellTune Classifier → Import Ground Truth...*
+**Menu:** *Extensions → CellTune Classifier → Import ▸ Ground Truth...*
 
 After picking the CSV you choose one of two modes:
 
 1. **Spatial Match** (per-image) — each imported row is matched to the nearest detection by centroid distance (you set the max threshold, default 20 px). Rows outside the threshold are skipped. Use this when you're re-importing labels onto the **same** image they were exported from.
 2. **Training Data Only** (cross-project) — imports the feature vectors + labels without mapping back to cells. Use this when the source image isn't open in the current project; the rows feed straight into the next training run as if they were locally-labelled cells. The sidebar shows the count as `Imported rows: N`.
 
-The binary equivalents are **Import Active Binary Ground Truth...** — same modes, but scoped to the active marker.
+The binary equivalents are **Import ▸ Active Binary Ground Truth...** — same modes, but scoped to the active marker.
 
 > **There is no "ground truth bundle" (ZIP)** currently — only the per-CSV import/export described here. The `.planning/phases/12` document scopes a bundle format as a future feature.
 
@@ -590,12 +596,12 @@ All under *Extensions → CellTune Classifier*.
 | Normalise Features | Project | Per-feature arcsinh/sqrt with shared cofactor. |
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
 | Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[9](#9-distance-measurements-spatial-analysis). |
-| Import Marker Table... | Open image | Load cell-type → markers mapping for review channel switching. |
-| Export Cell Table... | Open image with detections | One CSV per selected image. |
-| Export Ground Truth... | Open image with labels (multi-class) | Portable labels + feature vectors CSV. |
-| Import Ground Truth... | Open image (multi-class) | Spatial-match or training-data-only mode. |
-| Export Active Binary Ground Truth... | Binary mode active + open image with labels | Same as above, scoped to active marker. |
-| Import Active Binary Ground Truth... | Binary mode active + open image | Same as above, scoped to active marker. |
+| Export ▸ Cell Table... | Open image with detections | One CSV per selected image. |
+| Export ▸ Ground Truth... | Open image with labels (multi-class) | Portable labels + feature vectors CSV. |
+| Export ▸ Active Binary Ground Truth... | Binary mode active + open image with labels | Same as above, scoped to active marker. |
+| Import ▸ Marker Table... | Open image | Load cell-type → markers mapping for review channel switching. |
+| Import ▸ Ground Truth... | Open image (multi-class) | Spatial-match or training-data-only mode. |
+| Import ▸ Active Binary Ground Truth... | Binary mode active + open image | Same as above, scoped to active marker. |
 
 ---
 
