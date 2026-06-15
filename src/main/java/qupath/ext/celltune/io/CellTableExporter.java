@@ -19,9 +19,22 @@ import java.util.stream.IntStream;
 /**
  * Exports cell spatial data and marker intensities to CSV.
  * <p>
- * Columns: Image, CellID, CentroidX, CentroidY, Area, Classification,
- * ParentAnnotations, Geometry (WKT polygon), then one column per
- * Cell: Mean feature.
+ * Columns: Image, CellID, CentroidX_um, CentroidY_um, Area_um2, Classification,
+ * ParentAnnotations, ContainingAnnotations, Geometry_um (WKT polygon in microns),
+ * then one column per feature name supplied by the caller.
+ * <p>
+ * {@code ParentAnnotations} reflects QuPath's single-parent hierarchy (each cell
+ * has exactly one parent path). {@code ContainingAnnotations} is computed by an
+ * explicit geometric point-in-polygon test of the cell centroid against every
+ * annotation, so it captures membership in overlapping annotations (e.g. Ignore
+ * regions) that the hierarchy discards.
+ * <p>
+ * Centroids, area and geometry are written in microns: the {@code "Centroid X µm"} /
+ * {@code "Centroid Y µm"} / {@code "Cell: Area µm^2"} measurements are used when
+ * present, otherwise the pixel values are converted using the supplied pixel
+ * calibration. The polygon vertices are always scaled from pixels to microns
+ * using the supplied pixel calibration. Any measurement that cannot be made is
+ * written as {@code NA}.
  */
 public class CellTableExporter {
 
@@ -33,16 +46,22 @@ public class CellTableExporter {
     /**
      * Export cell spatial data and Cell: Mean features to CSV.
      *
-     * @param outputPath   destination CSV file
-     * @param cells        detection objects to export
-     * @param imageName    image name written to the Image column
-     * @param featureNames ordered list of measurement names to export as feature columns
+     * @param outputPath         destination CSV file
+     * @param cells              detection objects to export
+     * @param annotations        annotation objects tested for geometric containment
+     * @param imageName          image name written to the Image column
+     * @param featureNames       ordered list of measurement names to export as feature columns
+     * @param pixelWidthMicrons  microns per pixel in X (centroid fallback conversion)
+     * @param pixelHeightMicrons microns per pixel in Y (centroid fallback conversion)
      * @throws IOException if writing fails
      */
     public static void export(Path outputPath,
                               Collection<PathObject> cells,
+                              Collection<PathObject> annotations,
                               String imageName,
-                              List<String> featureNames) throws IOException {
+                              List<String> featureNames,
+                              double pixelWidthMicrons,
+                              double pixelHeightMicrons) throws IOException {
         logger.info("Exporting cell table ({} features) to {}", featureNames.size(), outputPath);
 
         String resolvedImageName = (imageName != null && !imageName.isBlank()) ? imageName : "image";
@@ -54,12 +73,13 @@ public class CellTableExporter {
             hdr.append(String.join(DELIMITER,
                     "Image",
                     "CellID",
-                    "CentroidX",
-                    "CentroidY",
-                    "Area",
+                    "CentroidX_um",
+                    "CentroidY_um",
+                    "Area_um2",
                     "Classification",
                     "ParentAnnotations",
-                    "Geometry"));
+                    "ContainingAnnotations",
+                    "Geometry_um"));
             for (String feat : featureNames) {
                 hdr.append(DELIMITER).append(csvQuote(feat));
             }
@@ -77,19 +97,57 @@ public class CellTableExporter {
                         featureRows[i] = extractFeatures(cellList.get(i), featureNames));
             }
 
+            // ── Pre-compute geometric containment in parallel ───────────
+            // Test each cell's pixel centroid against every annotation ROI so
+            // that membership in overlapping annotations (e.g. Ignore regions)
+            // is captured, unlike the single-parent hierarchy.
+            List<PathObject> annoList = annotations == null
+                    ? List.of()
+                    : new ArrayList<>(annotations);
+            int nAnnos = annoList.size();
+            ROI[] annoRois = new ROI[nAnnos];
+            String[] annoLabels = new String[nAnnos];
+            for (int a = 0; a < nAnnos; a++) {
+                annoRois[a] = annoList.get(a).getROI();
+                annoLabels[a] = annotationLabel(annoList.get(a));
+            }
+            String[] containingRows = new String[nCells];
+            if (nAnnos > 0) {
+                IntStream.range(0, nCells).parallel().forEach(i ->
+                        containingRows[i] = containingAnnotations(
+                                cellList.get(i), annoRois, annoLabels));
+            }
+
             // ── Rows ────────────────────────────────────────────────────
             int exported = 0;
             for (int idx = 0; idx < nCells; idx++) {
                 PathObject cell = cellList.get(idx);
                 ROI roi = cell.getROI();
 
-                double cx   = roi != null ? roi.getCentroidX() : Double.NaN;
-                double cy   = roi != null ? roi.getCentroidY() : Double.NaN;
-                double area = roi != null ? roi.getArea()      : Double.NaN;
+                // Prefer QuPath's calibrated centroid measurements; fall back to
+                // converting the pixel centroid with the supplied calibration.
+                var ml = cell.getMeasurementList();
+                double cx = ml.get("Centroid X µm");
+                double cy = ml.get("Centroid Y µm");
+                if (Double.isNaN(cx)) {
+                    cx = roi != null ? roi.getCentroidX() * pixelWidthMicrons : Double.NaN;
+                }
+                if (Double.isNaN(cy)) {
+                    cy = roi != null ? roi.getCentroidY() * pixelHeightMicrons : Double.NaN;
+                }
+                // Prefer QuPath's calibrated cell area (µm²); fall back to
+                // converting the pixel area with the supplied pixel calibration.
+                double area = ml.get("Cell: Area µm^2");
+                if (Double.isNaN(area)) {
+                    area = roi != null
+                            ? roi.getArea() * pixelWidthMicrons * pixelHeightMicrons
+                            : Double.NaN;
+                }
 
                 String classification = classificationName(cell);
                 String parents        = parentAnnotations(cell);
-                String geometry       = roiToWkt(roi);
+                String containing     = (containingRows[idx] != null) ? containingRows[idx] : "";
+                String geometry       = roiToWkt(roi, pixelWidthMicrons, pixelHeightMicrons);
 
                 StringBuilder row = new StringBuilder();
                 row.append(resolvedImageName).append(DELIMITER)
@@ -99,12 +157,13 @@ public class CellTableExporter {
                    .append(fmt(area)).append(DELIMITER)
                    .append(csvQuote(classification)).append(DELIMITER)
                    .append(csvQuote(parents)).append(DELIMITER)
+                   .append(csvQuote(containing)).append(DELIMITER)
                    .append(csvQuote(geometry));
 
                 if (!featureNames.isEmpty()) {
                     float[] fv = featureRows[idx];
                     for (float v : fv) {
-                        row.append(DELIMITER).append(Float.isNaN(v) ? "" : v);
+                        row.append(DELIMITER).append(Float.isNaN(v) ? "NA" : v);
                     }
                 }
 
@@ -139,25 +198,52 @@ public class CellTableExporter {
         PathObject parent = cell.getParent();
         while (parent != null && !parent.isRootObject()) {
             if (parent.isAnnotation()) {
-                String name    = parent.getName();
-                PathClass cls  = parent.getPathClass();
-                String clsName = cls != null ? cls.getName() : null;
-
-                String label;
-                if (name != null && !name.isBlank() && clsName != null) {
-                    label = name + " [" + clsName + "]";
-                } else if (name != null && !name.isBlank()) {
-                    label = name;
-                } else if (clsName != null) {
-                    label = "[" + clsName + "]";
-                } else {
-                    label = "Annotation";
-                }
-                parts.add(label);
+                parts.add(annotationLabel(parent));
             }
             parent = parent.getParent();
         }
         return String.join("; ", parts);
+    }
+
+    /**
+     * Return every annotation whose ROI geometrically contains the cell's pixel
+     * centroid, formatted with {@link #annotationLabel} and joined with "; ".
+     * Unlike {@link #parentAnnotations}, this captures overlapping annotations
+     * (e.g. Ignore regions) that QuPath's single-parent hierarchy discards.
+     * Containment is tested in pixel coordinates, so no calibration is needed.
+     */
+    private static String containingAnnotations(PathObject cell, ROI[] annoRois, String[] annoLabels) {
+        ROI roi = cell.getROI();
+        if (roi == null) return "";
+        double px = roi.getCentroidX();
+        double py = roi.getCentroidY();
+        if (Double.isNaN(px) || Double.isNaN(py)) return "";
+        List<String> parts = new ArrayList<>();
+        for (int a = 0; a < annoRois.length; a++) {
+            ROI ar = annoRois[a];
+            if (ar != null && ar.contains(px, py)) {
+                parts.add(annoLabels[a]);
+            }
+        }
+        return String.join("; ", parts);
+    }
+
+    /**
+     * Format an annotation's label as "Name [Class]", "Name", "[Class]", or
+     * "Annotation" when neither a name nor a class is present.
+     */
+    private static String annotationLabel(PathObject annotation) {
+        String name    = annotation.getName();
+        PathClass cls  = annotation.getPathClass();
+        String clsName = cls != null ? cls.getName() : null;
+        if (name != null && !name.isBlank() && clsName != null) {
+            return name + " [" + clsName + "]";
+        } else if (name != null && !name.isBlank()) {
+            return name;
+        } else if (clsName != null) {
+            return "[" + clsName + "]";
+        }
+        return "Annotation";
     }
 
     /** Return the cell's PathClass name, or empty string if unclassified. */
@@ -167,11 +253,12 @@ public class CellTableExporter {
     }
 
     /**
-     * Convert a QuPath ROI to a WKT POLYGON string.
+     * Convert a QuPath ROI to a WKT POLYGON string with vertices in microns.
      * e.g. {@code POLYGON ((x1 y1, x2 y2, x3 y3, x1 y1))}
+     * Each pixel vertex is scaled by the supplied pixel calibration.
      * Returns an empty string for null ROIs or ROIs with no points.
      */
-    private static String roiToWkt(ROI roi) {
+    private static String roiToWkt(ROI roi, double pixelWidthMicrons, double pixelHeightMicrons) {
         if (roi == null) return "";
         var points = roi.getAllPoints();
         if (points == null || points.isEmpty()) return "";
@@ -179,15 +266,15 @@ public class CellTableExporter {
         StringBuilder sb = new StringBuilder("POLYGON ((");
         for (int i = 0; i < points.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(String.format("%.2f", points.get(i).getX()))
+            sb.append(String.format("%.2f", points.get(i).getX() * pixelWidthMicrons))
               .append(" ")
-              .append(String.format("%.2f", points.get(i).getY()));
+              .append(String.format("%.2f", points.get(i).getY() * pixelHeightMicrons));
         }
         // Close the ring (WKT requires first == last point)
         sb.append(", ")
-          .append(String.format("%.2f", points.get(0).getX()))
+          .append(String.format("%.2f", points.get(0).getX() * pixelWidthMicrons))
           .append(" ")
-          .append(String.format("%.2f", points.get(0).getY()));
+          .append(String.format("%.2f", points.get(0).getY() * pixelHeightMicrons));
         sb.append("))");
         return sb.toString();
     }
@@ -202,6 +289,6 @@ public class CellTableExporter {
     }
 
     private static String fmt(double v) {
-        return Double.isNaN(v) ? "" : String.format("%.2f", v);
+        return Double.isNaN(v) ? "NA" : String.format("%.2f", v);
     }
 }

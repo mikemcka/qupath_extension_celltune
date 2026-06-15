@@ -744,6 +744,10 @@ public class CellTuneExtension implements QuPathExtension {
         resolveHierarchyItem.setOnAction(e -> resolveHierarchy(qupath));
         resolveHierarchyItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem lockAnnotationsItem = new MenuItem(resources.getString("menu.utility.lock.annotations"));
+        lockAnnotationsItem.setOnAction(e -> lockAllAnnotations(qupath));
+        lockAnnotationsItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem deleteMeasurementsItem = new MenuItem(resources.getString("menu.utility.delete.measurements"));
         deleteMeasurementsItem.setOnAction(e -> deleteMeasurementsByKeyword(qupath));
         deleteMeasurementsItem.disableProperty().bind(enableExtensionProperty.not());
@@ -758,8 +762,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         Menu utilityScriptsMenu = new Menu(resources.getString("menu.group.utilities"));
         utilityScriptsMenu.disableProperty().bind(enableExtensionProperty.not());
-        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, importGeoJsonItem, exportRegionsItem, deleteMeasurementsItem);
-
+        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, lockAnnotationsItem, importGeoJsonItem, exportRegionsItem, deleteMeasurementsItem);
         menu.getItems().addAll(
                 binaryItem,
                 compositeItem,
@@ -1023,6 +1026,137 @@ public class CellTuneExtension implements QuPathExtension {
         }, "celltune-resolve-hierarchy");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Lock every annotation object so they cannot be moved, edited, or deleted in
+     * the viewer. Locking does not change cell classifications or the object
+     * hierarchy. Offers a choice between the current image and every image in the
+     * project; project-wide runs on a background thread and saves each entry.
+     * Equivalent to running
+     * {@code getAnnotationObjects().each { it.setLocked(true) }} in the script
+     * editor.
+     */
+    private void lockAllAnnotations(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        var project = qupath.getProject();
+        if (imageData == null && project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image or project is open.");
+            return;
+        }
+
+        final String currentChoice = "Current image";
+        final String projectChoice = "All project images";
+        String choice;
+        if (project == null) {
+            choice = currentChoice;
+        } else if (imageData == null) {
+            choice = projectChoice;
+        } else {
+            choice = Dialogs.showChoiceDialog(EXTENSION_NAME,
+                    "Lock all annotations for:",
+                    List.of(currentChoice, projectChoice), currentChoice);
+            if (choice == null) return;
+        }
+
+        // Current image only — lock and refresh on the FX thread.
+        if (choice.equals(currentChoice)) {
+            var hierarchy = imageData.getHierarchy();
+            var annotations = hierarchy.getAnnotationObjects();
+            if (annotations.isEmpty()) {
+                Dialogs.showInfoNotification(EXTENSION_NAME, "No annotations found on the current image.");
+                return;
+            }
+            int locked = lockAnnotations(annotations);
+            hierarchy.fireHierarchyChangedEvent(this);
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Locked " + locked + " annotation(s)."
+                    + (locked < annotations.size()
+                            ? " " + (annotations.size() - locked) + " were already locked."
+                            : ""));
+            logger.info("[CellTune] Locked {} of {} annotation(s) on the current image.",
+                    locked, annotations.size());
+            return;
+        }
+
+        // Project-wide.
+        @SuppressWarnings("unchecked")
+        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        if (entries.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
+            return;
+        }
+        if (!Dialogs.showConfirmDialog(EXTENSION_NAME,
+                "Lock all annotations for all " + entries.size() + " project image(s) and save each?")) {
+            return;
+        }
+
+        var currentEntry = imageData != null ? project.getEntry(imageData) : null;
+
+        // Lock the open image immediately so its view updates; the rest are
+        // processed off the UI thread to keep QuPath responsive.
+        int doneImages = 0;
+        int lockedSoFar = 0;
+        if (imageData != null && currentEntry != null) {
+            try {
+                var hierarchy = imageData.getHierarchy();
+                lockedSoFar = lockAnnotations(hierarchy.getAnnotationObjects());
+                hierarchy.fireHierarchyChangedEvent(this);
+                currentEntry.saveImageData(imageData);
+                doneImages = 1;
+            } catch (Exception ex) {
+                logger.warn("[CellTune] Failed to lock annotations for current image {}: {}",
+                        currentEntry.getImageName(), ex.getMessage());
+            }
+        }
+
+        final int alreadyDoneImages = doneImages;
+        final int alreadyLocked = lockedSoFar;
+        final var currentEntryF = currentEntry;
+        Thread worker = new Thread(() -> {
+            int okImages = alreadyDoneImages;
+            int failed = 0;
+            int totalLocked = alreadyLocked;
+            for (var entry : entries) {
+                if (entry == null) continue;
+                if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
+                try {
+                    var data = entry.readImageData();
+                    totalLocked += lockAnnotations(data.getHierarchy().getAnnotationObjects());
+                    entry.saveImageData(data);
+                    okImages++;
+                } catch (Exception ex) {
+                    failed++;
+                    logger.warn("[CellTune] Failed to lock annotations for {}: {}",
+                            entry.getImageName(), ex.getMessage());
+                }
+            }
+            final int okImagesF = okImages;
+            final int failedF = failed;
+            final int totalLockedF = totalLocked;
+            Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "Locked " + totalLockedF + " annotation(s) across " + okImagesF + " image(s)."
+                    + (failedF > 0 ? " " + failedF + " failed (see log)." : "")));
+            logger.info("[CellTune] Project-wide lock complete: {} annotation(s), {} ok, {} failed.",
+                    totalLockedF, okImagesF, failedF);
+        }, "celltune-lock-annotations");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Lock any not-yet-locked annotations in the supplied collection, returning the
+     * number newly locked.
+     */
+    private static int lockAnnotations(Collection<PathObject> annotations) {
+        int locked = 0;
+        for (PathObject annotation : annotations) {
+            if (!annotation.isLocked()) {
+                annotation.setLocked(true);
+                locked++;
+            }
+        }
+        return locked;
     }
 
     /**
@@ -3014,22 +3148,39 @@ public class CellTuneExtension implements QuPathExtension {
                                 .filter(PathObjectFilter.DETECTIONS_ALL)
                                 .toList();
 
+                        // All annotations for geometric containment testing
+                        // (captures overlapping regions the hierarchy discards).
+                        Collection<PathObject> annotations =
+                                data.getHierarchy().getAnnotationObjects();
+
                         List<String> allFeats = CellFeatureExtractor.discoverFeatureNames(cells);
                         List<String> feats = allFeats.stream()
                                 .filter(f -> {
                                     String lc = f.toLowerCase(java.util.Locale.ROOT);
-                                    return f.equalsIgnoreCase("Cell: Area")
-                                            || lc.contains("mean")
+                                    // Marker-specific measurements: keep only the whole-cell
+                                    // mean (e.g. "CD8: Cell: Mean"). This excludes cytoplasm/
+                                    // membrane means, erosion/expansion bins, environment, and
+                                    // neighbour-aggregated means (e.g. "Neighbors: Mean: ...").
+                                    return f.matches("^[^:]+: Cell: Mean$")
+                                            // Keep all distance measurements.
                                             || lc.contains("distance");
                                 })
                                 .collect(java.util.stream.Collectors.toList());
                         if (feats.isEmpty()) feats = allFeats;
 
+                        // Pixel calibration for centroid conversion to microns
+                        var cal = data.getServer().getPixelCalibration();
+                        double pixelWidthUm  = cal.getPixelWidthMicrons();
+                        double pixelHeightUm = cal.getPixelHeightMicrons();
+                        if (Double.isNaN(pixelWidthUm))  pixelWidthUm  = 1.0;
+                        if (Double.isNaN(pixelHeightUm)) pixelHeightUm = 1.0;
+
                         // Sanitise the image name to produce a safe file name
                         String safeFileName = imgName.replaceAll("[\\\\/:*?\"<>|]", "_") + ".csv";
                         Path outputPath = outDir.toPath().resolve(safeFileName);
 
-                        CellTableExporter.export(outputPath, cells, imgName, feats);
+                        CellTableExporter.export(outputPath, cells, annotations, imgName, feats,
+                                pixelWidthUm, pixelHeightUm);
                         exported.incrementAndGet();
                         int d = done.incrementAndGet();
                         Platform.runLater(() -> {
