@@ -108,3 +108,7 @@ Unit tests live under `src/test/java/qupath/ext/celltune/`, mirroring the main p
 ## Commits
 
 Commit messages in this repo are freeform — no Conventional Commits enforcement and no pre-commit hooks.
+
+## Clarifying questions
+
+Always ask any questions required.
