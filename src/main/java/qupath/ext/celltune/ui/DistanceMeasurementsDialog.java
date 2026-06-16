@@ -207,11 +207,7 @@ public class DistanceMeasurementsDialog {
                 new Label("(of " + cores + " cores)"));
         workerRow.setAlignment(Pos.CENTER_LEFT);
         Label workerHint = new Label(
-                "Number of images processed simultaneously. The distance computations for a single "
-              + "image already use all CPU cores, so raising this mostly overlaps disk load/save with "
-              + "compute rather than making the maths itself faster. Higher values can speed up batches "
-              + "of many small images, but for a few very large images (hundreds of thousands of cells) "
-              + "1–2 workers is often fastest, since each image then gets the full CPU and uses less memory. "
+                "1–2 workers is often fastest for large images, ie 500k+ cells, use more workers for smaller images. "
               + "Default: " + defaultWorkers + ".");
         workerHint.setWrapText(true);
         workerHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");

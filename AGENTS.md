@@ -23,10 +23,10 @@ Entry point: `src/main/java/qupath/ext/celltune/CellTuneExtension.java` — regi
 
 | Package | Key Classes | Purpose |
 |---------|-------------|---------|
-| `model/` | `CellFeatureExtractor`, `LabelStore`, `FeatureNormalizer`, `CellPrediction`, `CellTypeTable`, `PopulationSet`, `CohortAnomalyAnalyzer`, `CohortAnomalyReport` | Feature extraction, label storage, normalization, cell predictions, population definitions, cohort-level anomaly scoring |
+| `model/` | `CellFeatureExtractor`, `LabelStore`, `FeatureNormalizer`, `CellPrediction`, `CellTypeTable`, `PopulationSet`, `CohortAnomalyAnalyzer`, `CohortAnomalyReport`, `IntensityHeatmap` | Feature extraction, label storage, normalization, cell predictions, population definitions, cohort-level anomaly scoring, per-class mean marker-intensity heatmap computation |
 | `classifier/` | `DualModelClassifier`, `XGBoostModel`, `LightGBMModel`, `RandomForestModel`, `CompositeClassifier`, `CompositeClassificationRule`, `ClassifierState`, `FeaturePruner`, `HyperparameterTuner`, `Resampler`, `ResamplingStrategy`, `TrainingMetrics`, `UncertaintySampler`, `ModelType` | ML training/inference (XGBoost, LightGBM, Random Forest), composite multi-marker rules, sampling, resampling, hyperparameter tuning |
 | `gating/` | `GatingExpression`, `GatingRule` | Marker-based landmark gating (AST expression parser, multi-threshold cascade) |
-| `ui/` | `ClassificationPanel`, `BinaryClassifierPanel`, `CompositeClassificationDialog`, `ClassControlDialog`, `PopulationPanel`, `ReviewController`, `ReviewToolbar`, `ManualLabelToolbar`, `FeatureImportanceView`, `FeatureSelectionPane`, `TrainingMetricsView`, `ConfusionMatrixView`, `ValidationConfusionMatrixView`, `ProjectPredictionSummaryView`, `ChannelSelector`, `NormalizationPane`, `ImageSelectionPane`, `SelectionHighlightOverlay`, `TrainingTileExtractor`, `DistanceMeasurementsDialog` | All JavaFX panels, dialogs, and toolbars |
+| `ui/` | `ClassificationPanel`, `BinaryClassifierPanel`, `CompositeClassificationDialog`, `ClassControlDialog`, `PopulationPanel`, `ReviewController`, `ReviewToolbar`, `ManualLabelToolbar`, `FeatureImportanceView`, `FeatureSelectionPane`, `CellTableExportPane`, `TrainingMetricsView`, `ConfusionMatrixView`, `ValidationConfusionMatrixView`, `ProjectPredictionSummaryView`, `IntensityHeatmapView`, `ChannelSelector`, `NormalizationPane`, `ImageSelectionPane`, `SelectionHighlightOverlay`, `TrainingTileExtractor`, `DistanceMeasurementsDialog` | All JavaFX panels, dialogs, and toolbars |
 | `io/` | `ProjectStateManager`, `BinaryClassifierRegistry`, `ClassManager`, `CellTableExporter`, `GroundTruthIO`, `MarkerTableImporter`, `ProjectSummaryCsvExporter` | Export (cell table, ground truth CSV, project summary CSV) and import (marker table, project state); binary classifier registry tracks named classifiers across a project; `ClassManager` backs the Class Control dialog (add/delete/merge/undo-merge on PathClasses + persisted label files) |
 
 See [USER_GUIDE.md](USER_GUIDE.md) for end-user workflows and [RISKS.md](RISKS.md) for the full risk register.
@@ -74,8 +74,9 @@ Unit tests live under `src/test/java/qupath/ext/celltune/` mirroring the main pa
 | `classifier/TrainingMetricsTest` | Metrics calculation |
 | `gating/GatingExpressionTest`, `GatingRuleTest` | AST parsing and gating evaluation |
 | `io/ProjectStateManagerBinaryGroundTruthTest` | Binary ground truth export/import round-trip |
+| `io/CellTableExporterTest` | Cell table CSV: optional polygon column (micron vs pixel), feature column selection, NA for missing measurements |
 | `io/ProjectSummaryCsvExporterTest` | CSV output format |
-| `model/CellPredictionTest`, `CellTypeTableTest`, `CohortAnomalyAnalyzerTest`, `FeatureNormalizerTest`, `LabelStoreTest`, `PopulationSetTest` | Core model logic |
+| `model/CellPredictionTest`, `CellTypeTableTest`, `CohortAnomalyAnalyzerTest`, `FeatureNormalizerTest`, `IntensityHeatmapTest`, `LabelStoreTest`, `PopulationSetTest` | Core model logic |
 | `ui/DistanceMeasurementsDialogTest` | STRtree-based same-class nearest-neighbour distances: self-exclusion, NaN handling, brute-force agreement on random clouds |
 
 Run all tests with `./gradlew test`.

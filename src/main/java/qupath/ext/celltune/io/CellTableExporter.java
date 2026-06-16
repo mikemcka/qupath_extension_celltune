@@ -20,8 +20,10 @@ import java.util.stream.IntStream;
  * Exports cell spatial data and marker intensities to CSV.
  * <p>
  * Columns: Image, CellID, CentroidX_um, CentroidY_um, Area_um2, Classification,
- * ParentAnnotations, ContainingAnnotations, Geometry_um (WKT polygon in microns),
- * then one column per feature name supplied by the caller.
+ * ParentAnnotations, ContainingAnnotations, an optional polygon column
+ * ({@code Geometry_um} in microns or {@code Geometry_px} in pixels, written only
+ * when {@code includeGeometry} is set), then one column per feature name supplied
+ * by the caller.
  * <p>
  * {@code ParentAnnotations} reflects QuPath's single-parent hierarchy (each cell
  * has exactly one parent path). {@code ContainingAnnotations} is computed by an
@@ -32,9 +34,10 @@ import java.util.stream.IntStream;
  * Centroids, area and geometry are written in microns: the {@code "Centroid X µm"} /
  * {@code "Centroid Y µm"} / {@code "Cell: Area µm^2"} measurements are used when
  * present, otherwise the pixel values are converted using the supplied pixel
- * calibration. The polygon vertices are always scaled from pixels to microns
- * using the supplied pixel calibration. Any measurement that cannot be made is
- * written as {@code NA}.
+ * calibration. When geometry is exported, the polygon vertices are written in
+ * microns (scaled using the supplied pixel calibration) or left in pixel
+ * coordinates, depending on the caller's choice. Any measurement that cannot be
+ * made is written as {@code NA}.
  */
 public class CellTableExporter {
 
@@ -53,6 +56,10 @@ public class CellTableExporter {
      * @param featureNames       ordered list of measurement names to export as feature columns
      * @param pixelWidthMicrons  microns per pixel in X (centroid fallback conversion)
      * @param pixelHeightMicrons microns per pixel in Y (centroid fallback conversion)
+     * @param includeGeometry    when {@code true}, a polygon (WKT) column is written
+     * @param geometryInMicrons  when {@code true}, polygon vertices are scaled to
+     *                           microns ({@code Geometry_um}); otherwise they are
+     *                           written in pixel coordinates ({@code Geometry_px})
      * @throws IOException if writing fails
      */
     public static void export(Path outputPath,
@@ -61,7 +68,9 @@ public class CellTableExporter {
                               String imageName,
                               List<String> featureNames,
                               double pixelWidthMicrons,
-                              double pixelHeightMicrons) throws IOException {
+                              double pixelHeightMicrons,
+                              boolean includeGeometry,
+                              boolean geometryInMicrons) throws IOException {
         logger.info("Exporting cell table ({} features) to {}", featureNames.size(), outputPath);
 
         String resolvedImageName = (imageName != null && !imageName.isBlank()) ? imageName : "image";
@@ -78,8 +87,10 @@ public class CellTableExporter {
                     "Area_um2",
                     "Classification",
                     "ParentAnnotations",
-                    "ContainingAnnotations",
-                    "Geometry_um"));
+                    "ContainingAnnotations"));
+            if (includeGeometry) {
+                hdr.append(DELIMITER).append(geometryInMicrons ? "Geometry_um" : "Geometry_px");
+            }
             for (String feat : featureNames) {
                 hdr.append(DELIMITER).append(csvQuote(feat));
             }
@@ -147,7 +158,6 @@ public class CellTableExporter {
                 String classification = classificationName(cell);
                 String parents        = parentAnnotations(cell);
                 String containing     = (containingRows[idx] != null) ? containingRows[idx] : "";
-                String geometry       = roiToWkt(roi, pixelWidthMicrons, pixelHeightMicrons);
 
                 StringBuilder row = new StringBuilder();
                 row.append(resolvedImageName).append(DELIMITER)
@@ -157,8 +167,14 @@ public class CellTableExporter {
                    .append(fmt(area)).append(DELIMITER)
                    .append(csvQuote(classification)).append(DELIMITER)
                    .append(csvQuote(parents)).append(DELIMITER)
-                   .append(csvQuote(containing)).append(DELIMITER)
-                   .append(csvQuote(geometry));
+                   .append(csvQuote(containing));
+
+                if (includeGeometry) {
+                    double scaleX = geometryInMicrons ? pixelWidthMicrons : 1.0;
+                    double scaleY = geometryInMicrons ? pixelHeightMicrons : 1.0;
+                    String geometry = roiToWkt(roi, scaleX, scaleY);
+                    row.append(DELIMITER).append(csvQuote(geometry));
+                }
 
                 if (!featureNames.isEmpty()) {
                     float[] fv = featureRows[idx];

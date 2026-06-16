@@ -65,9 +65,11 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 8. **Feature importance** (optional) — *Extensions > CellTune Classifier > Feature Importance…* — opens a bar chart of the top 10 features by mean |SHAP| value with a class selector. Alternatively tick **"Show top 10 feature importance after training"** in the training dialog to show it automatically.
 9. **Review** — click *Enter Review Mode*. You'll be prompted for how many disagreement cells to review (default 200), then step through disputed cells one-by-one. Each cell shows coloured prediction buttons (e.g. `XGB: CD4 (87%)`, `LGB: Bcell (65%)`) — click to accept. Use the *All Classes* dropdown if neither prediction is correct. If you switch to a different image, the trained classifier is automatically applied so you can review that image immediately.
 10. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
-11. **Export** — *Export Cell Table* saves all cells with predictions and confidence scores as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
+11. **Export** — *Export Cell Table* opens a column picker (same search/prefix/select-all controls as *Select Features*) so you can choose which measurement columns to export, with an optional tick-box to include cell polygons in micron or pixel coordinates, then saves all cells as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
 
 After running predictions, use *Extensions > CellTune Classifier > Project Prediction Summary...* to compare per-image agreement/disagreement counts, jump to a selected image, or export the summary as CSV.
+
+Use *Extensions > CellTune Classifier > Intensity Heatmaps...* to view a phenotype × marker mean-intensity heatmap (mean whole-cell intensity per predicted class, coloured by per-marker z-score across phenotypes). Switch between the current image, any individual project image, or a project-combined view, and export to PNG or CSV.
 
 ### Marker Table Format For Automated Channel Switching
 

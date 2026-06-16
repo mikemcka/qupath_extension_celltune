@@ -25,20 +25,21 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 6. [Binary + composite workflow in detail](#6-binary--composite-workflow-in-detail)
 7. [After training — Review mode](#7-after-training--review-mode)
 8. [Project Prediction Summary](#8-project-prediction-summary)
-9. [Distance measurements (spatial analysis)](#9-distance-measurements-spatial-analysis)
-10. [Exporting results](#10-exporting-results)
-    - [10.1 Cell table export](#101-cell-table-export)
-    - [10.2 Ground truth export & import](#102-ground-truth-export--import)
-11. [Utility scripts](#11-utility-scripts)
-    - [11.1 Filter Cells by Size & Circularity](#111-filter-cells-by-size--circularity)
-    - [11.2 Resolve Hierarchy](#112-resolve-hierarchy)
-    - [11.3 Delete Measurements by Keyword](#113-delete-measurements-by-keyword)
-    - [11.4 Import GeoJSON Objects](#114-import-geojson-objects)
-    - [11.5 Export Annotation Regions](#115-export-annotation-regions)
-12. [Reference: every setting in the sidebar](#12-reference-every-setting-in-the-sidebar)
-13. [Reference: every CellTune menu item](#13-reference-every-celltune-menu-item)
-14. [Project directory layout](#14-project-directory-layout)
-15. [Tips, gotchas, and known limitations](#15-tips-gotchas-and-known-limitations)
+9. [Intensity heatmaps](#9-intensity-heatmaps)
+10. [Distance measurements (spatial analysis)](#10-distance-measurements-spatial-analysis)
+11. [Exporting results](#11-exporting-results)
+    - [11.1 Cell table export](#111-cell-table-export)
+    - [11.2 Ground truth export & import](#112-ground-truth-export--import)
+12. [Utility scripts](#12-utility-scripts)
+    - [12.1 Filter Cells by Size & Circularity](#121-filter-cells-by-size--circularity)
+    - [12.2 Resolve Hierarchy](#122-resolve-hierarchy)
+    - [12.3 Delete Measurements by Keyword](#123-delete-measurements-by-keyword)
+    - [12.4 Import GeoJSON Objects](#124-import-geojson-objects)
+    - [12.5 Export Annotation Regions](#125-export-annotation-regions)
+13. [Reference: every setting in the sidebar](#13-reference-every-setting-in-the-sidebar)
+14. [Reference: every CellTune menu item](#14-reference-every-celltune-menu-item)
+15. [Project directory layout](#15-project-directory-layout)
+16. [Tips, gotchas, and known limitations](#16-tips-gotchas-and-known-limitations)
 
 ---
 
@@ -469,7 +470,30 @@ For each image:
 
 ---
 
-## 9. Distance measurements (spatial analysis)
+## 9. Intensity heatmaps
+
+**Menu:** *Extensions → CellTune Classifier → Intensity Heatmaps...*
+
+A phenotype × marker heatmap of **mean whole-cell intensity per predicted cell class** — the standard "mean marker expression per phenotype" view used to sanity-check that each class actually expresses the markers it should (e.g. CD8⁺ T-cells are high for CD8, Tregs high for FOXP3).
+
+Rows are cell classes (the `PathClass` assigned to each detection), columns are markers (every `"<marker>: Cell: Mean"` whole-cell measurement), and each cell is the mean intensity of that marker across all cells of that class.
+
+**Colour = z-score across phenotypes.** Each marker column is standardised across the class rows, so the colour highlights *which phenotype is relatively high (red) or low (blue)* for that marker, independent of the marker's absolute brightness. A diverging blue↔white↔red scale is used with a colorbar legend; grey means "no cells of that class had a valid value for that marker". The numeric mean can be overlaid in each cell via **Show mean values**.
+
+**Image selector** (top of the window):
+- **The current image** (selected by default).
+- **Any other project image** — loads that image's saved data in the background and computes its heatmap on demand (results are cached after the first load).
+- **All Images (Project Combined)** — a project-wide heatmap computed from **true pooled means** (every cell across every image contributes equally), not an average of per-image averages.
+
+**Buttons:**
+- **Export PNG** — saves the heatmap exactly as drawn (white background).
+- **Export CSV** — a `Class, CellCount, <marker>…` table of the underlying mean intensities (`NA` where a class had no valid value).
+
+> The heatmap needs whole-cell mean intensity measurements (`"<marker>: Cell: Mean"`). If your detections don't have them, run QuPath cell detection / intensity measurement first. Classes come straight from the predictions in the viewer, so run a classifier (or apply gating) before opening the heatmap.
+
+---
+
+## 10. Distance measurements (spatial analysis)
 
 **Menu:** *Extensions → CellTune Classifier → Generate Distance Measurements...*
 
@@ -518,9 +542,9 @@ Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for t
 
 ---
 
-## 10. Exporting results
+## 11. Exporting results
 
-### 10.1 Cell table export
+### 11.1 Cell table export
 
 **Menu:** *Extensions → CellTune Classifier → Export ▸ Cell Table...*
 
@@ -530,16 +554,19 @@ For each selected image, writes `<ImageName>.csv` to your chosen folder with one
 |---|---|
 | `Image` | Source image name |
 | `CellID` | QuPath cell UUID |
-| `CentroidX` / `CentroidY` | Pixel coordinates, 2 decimals |
-| `Area` | Pixels², 2 decimals |
+| `CentroidX_um` / `CentroidY_um` | Centroid in microns, 2 decimals (falls back to pixel × calibration) |
+| `Area_um2` | Cell area in microns², 2 decimals |
 | `Classification` | Current `PathClass` (empty if unclassified) |
 | `ParentAnnotations` | All ancestor annotations, joined with `; ` |
-| `Geometry` | WKT `POLYGON` of the ROI outline |
-| feature columns | `Cell: Area`, all columns containing "mean", and all columns containing "distance" (case-insensitive) — so any spatial distances generated in §[9](#9-distance-measurements-spatial-analysis) are included. Falls back to all features if none of those match. |
+| `ContainingAnnotations` | Every annotation whose ROI geometrically contains the cell centroid (captures overlapping regions the hierarchy discards), joined with `; ` |
+| `Geometry_um` / `Geometry_px` | *(optional)* WKT `POLYGON` of the ROI outline, in microns or pixels — only written when polygon export is enabled |
+| feature columns | One column per measurement you tick in the export dialog |
+
+Before exporting, a **Select Columns for Cell Table Export** dialog opens. It mirrors the *Select Features* dialog — search box, prefix dropdown, **Select Prefix** / **Clear Prefix**, **Select All** / **Clear All**, and a per-row checkbox — so you can pick exactly which measurement columns land in the CSV. It pre-selects the curated subset (whole-cell means + any distance measurements). Below the list, tick **Export cell polygons (geometry)** to include the ROI outline, and use the **Units** dropdown to choose **Microns (µm)** (`Geometry_um`) or **Pixels** (`Geometry_px`). Missing measurements are written as `NA`.
 
 RFC-4180 compliant (quotes escaped). The dialog asks which images to include if the project has more than one.
 
-### 10.2 Ground truth export & import
+### 11.2 Ground truth export & import
 
 CellTune ground-truth files are a portable representation of your labelled cells **and** their feature vectors — they let you reuse labels across projects/workstations.
 
@@ -574,33 +601,33 @@ The binary equivalents are **Import ▸ Active Binary Ground Truth...** — same
 
 ---
 
-## 11. Utility scripts
+## 12. Utility scripts
 
 *Extensions → CellTune Classifier → **Utility Scripts***
 
 A grab-bag of common housekeeping operations that would otherwise live in one-off Groovy scripts. Each prompts for its parameters and reports what it did.
 
-### 11.1 Filter Cells by Size & Circularity
+### 12.1 Filter Cells by Size & Circularity
 
 Removes cell detections that are likely mis-segmented or artefacts. A dialog takes an optional **Min** and **Max** for both **Cell area (µm²)** and **Circularity** — leave any field blank for no bound. A cell is removed if it violates *any* active bound (e.g. `area > 500` **or** `circularity < 0.7`). Cells missing either measurement are skipped, not removed. The number of cells to be removed is shown for confirmation first; the operation acts on the **current image** only.
 
-### 11.2 Resolve Hierarchy
+### 12.2 Resolve Hierarchy
 
 Rebuilds parent/child relationships from ROI containment — equivalent to the `resolveHierarchy()` scripting call. Choose **Current image** (resolves and refreshes immediately) or **All project images** (confirms first, then resolves and saves every entry). Project-wide work runs in the background so QuPath stays responsive; the open image updates straight away.
 
-### 11.3 Delete Measurements by Keyword
+### 12.3 Delete Measurements by Keyword
 
 > ⚠️ **Destructive and not undoable.** Double-check the keyword against your actual measurement names — a loose keyword can delete more columns than you intend.
 
 Removes every detection measurement whose name contains a keyword (case-insensitive by default; tick **Case sensitive** to match exactly). Choose **Current image** or **All project images**. Before deleting, CellTune previews the exact list of matching columns and asks you to confirm — if nothing matches, it aborts. Project-wide saves each entry (open image first, the rest in the background).
 
-### 11.4 Import GeoJSON Objects
+### 12.4 Import GeoJSON Objects
 
 > ⚠️ **For small-to-medium GeoJSON only.** This importer loads the whole file into QuPath's memory, so very large files (hundreds of MB / millions of objects) can exhaust the heap and crash QuPath. For those, use the dedicated headless pipeline instead: [github.com/BioimageAnalysisCoreWEHI/import_large_geojson](https://github.com/BioimageAnalysisCoreWEHI/import_large_geojson).
 
 Imports annotations and detections from a `.geojson` (or gzipped `.geojson.gz`) file into the **current image**. Pick the file, then choose whether to **clear existing objects first** and whether to **resolve the hierarchy** afterwards (off by default — it is O(n²) and slow for many objects). Parsing streams the file feature-by-feature on a background thread; objects are added annotations-first (locked), then detections, and the image data is saved automatically.
 
-### 11.5 Export Annotation Regions
+### 12.5 Export Annotation Regions
 
 > ⚠️ **Single-image, small-to-medium exports.** Pixels are streamed tile-by-tile so memory stays bounded, but very large regions or whole-project batch exports are far faster headless on HPC. For those, use the dedicated pipeline: [github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions](https://github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions).
 
@@ -608,7 +635,7 @@ Exports one or more annotation ROIs from the **current image** as polygon-**mask
 
 ---
 
-## 12. Reference: every setting in the sidebar
+## 13. Reference: every setting in the sidebar
 
 | Control | Default | What it does |
 |---|---|---|
@@ -637,7 +664,7 @@ Exports one or more annotation ROIs from the **current image** as polygon-**mask
 
 ---
 
-## 13. Reference: every CellTune menu item
+## 14. Reference: every CellTune menu item
 
 All under *Extensions → CellTune Classifier*.
 
@@ -649,22 +676,23 @@ All under *Extensions → CellTune Classifier*.
 | Select Features... | Project | Pick which measurement columns are used for training. |
 | Normalise Features | Project | Per-feature arcsinh/sqrt with shared cofactor. |
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
-| Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[9](#9-distance-measurements-spatial-analysis). |
+| Intensity Heatmaps... | Open image with detections | Phenotype × marker mean-intensity heatmap (z-score coloured), per-image / project-combined, PNG/CSV export. See §[9](#9-intensity-heatmaps). |
+| Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[10](#10-distance-measurements-spatial-analysis). |
 | Export ▸ Cell Table... | Open image with detections | One CSV per selected image. |
 | Export ▸ Ground Truth... | Open image with labels (multi-class) | Portable labels + feature vectors CSV. |
 | Export ▸ Active Binary Ground Truth... | Binary mode active + open image with labels | Same as above, scoped to active marker. |
 | Import ▸ Marker Table... | Open image | Load cell-type → markers mapping for review channel switching. |
 | Import ▸ Ground Truth... | Open image (multi-class) | Spatial-match or training-data-only mode. |
 | Import ▸ Active Binary Ground Truth... | Binary mode active + open image | Same as above, scoped to active marker. |
-| Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[11.1](#111-filter-cells-by-size--circularity). |
-| Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[11.2](#112-resolve-hierarchy). |
-| Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[11.4](#114-import-geojson-objects). |
-| Utility Scripts ▸ Export Annotation Regions... | Open image | Export annotation ROIs from the current image as polygon-masked OME-TIFF(s) — **single-image, small-to-medium**. See §[11.5](#115-export-annotation-regions). |
-| Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[11.3](#113-delete-measurements-by-keyword). |
+| Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[12.1](#121-filter-cells-by-size--circularity). |
+| Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[12.2](#122-resolve-hierarchy). |
+| Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[12.4](#124-import-geojson-objects). |
+| Utility Scripts ▸ Export Annotation Regions... | Open image | Export annotation ROIs from the current image as polygon-masked OME-TIFF(s) — **single-image, small-to-medium**. See §[12.5](#125-export-annotation-regions). |
+| Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[12.3](#123-delete-measurements-by-keyword). |
 
 ---
 
-## 14. Project directory layout
+## 15. Project directory layout
 
 Everything CellTune writes is under `<project>/celltune/`:
 
@@ -697,7 +725,7 @@ JSON throughout. Model bytes are Base64-encoded inside the state files. Safe to 
 
 ---
 
-## 15. Tips, gotchas, and known limitations
+## 16. Tips, gotchas, and known limitations
 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.

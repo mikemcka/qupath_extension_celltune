@@ -43,15 +43,18 @@ import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellTypeTable;
 import qupath.ext.celltune.model.CohortAnomalyAnalyzer;
 import qupath.ext.celltune.model.CohortAnomalyReport;
+import qupath.ext.celltune.model.IntensityHeatmap;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.ext.celltune.ui.ChannelSelector;
 import qupath.ext.celltune.ui.ClassificationPanel;
+import qupath.ext.celltune.ui.CellTableExportPane;
 import qupath.ext.celltune.ui.ConfusionMatrixView;
 import qupath.ext.celltune.ui.FeatureSelectionPane;
 import qupath.ext.celltune.ui.NormalizationPane;
 import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.ui.ImageSelectionPane;
+import qupath.ext.celltune.ui.IntensityHeatmapView;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
@@ -677,6 +680,10 @@ public class CellTuneExtension implements QuPathExtension {
         projectSummaryItem.setOnAction(e -> showProjectPredictionSummary(qupath));
         projectSummaryItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem intensityHeatmapItem = new MenuItem(resources.getString("menu.intensity.heatmaps"));
+        intensityHeatmapItem.setOnAction(e -> showIntensityHeatmaps(qupath));
+        intensityHeatmapItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem exportItem = new MenuItem(resources.getString("menu.export.short"));
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
@@ -771,6 +778,7 @@ public class CellTuneExtension implements QuPathExtension {
                 normalizeItem,
                 new SeparatorMenuItem(),
                 projectSummaryItem,
+                intensityHeatmapItem,
                 distancesItem,
                 new SeparatorMenuItem(),
                 exportMenu,
@@ -786,6 +794,57 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
         new qupath.ext.celltune.ui.DistanceMeasurementsDialog(qupath).show();
+    }
+
+    /**
+     * Open the intensity-heatmap window: mean whole-cell marker intensity per
+     * predicted cell class, coloured by per-marker z-score across classes. The
+     * window can switch between the current image, any individual project image,
+     * or a project-wide pooled heatmap, and exports to PNG/CSV.
+     */
+    private void showIntensityHeatmaps(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+
+        Collection<PathObject> cells = imageData.getHierarchy()
+                .getObjects(null, PathObject.class).stream()
+                .filter(PathObjectFilter.DETECTIONS_ALL)
+                .toList();
+        if (cells.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No detections found. Run cell detection first.");
+            return;
+        }
+
+        List<String> allFeatures = CellFeatureExtractor.discoverFeatureNames(cells);
+        List<String> markerFeatures = IntensityHeatmap.discoverMarkerFeatures(allFeatures);
+        if (markerFeatures.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No whole-cell mean marker measurements (\"<marker>: Cell: Mean\") were found.");
+            return;
+        }
+
+        String currentImageName = null;
+        var project = qupath.getProject();
+        if (project != null) {
+            var entry = project.getEntry(imageData);
+            if (entry != null) {
+                currentImageName = entry.getImageName();
+            }
+        }
+        if (currentImageName == null || currentImageName.isBlank()) {
+            currentImageName = imageData.getServer().getMetadata().getName();
+        }
+
+        var acc = new IntensityHeatmap.Accumulator(markerFeatures);
+        acc.add(cells);
+        IntensityHeatmap.Result result = acc.build();
+
+        new IntensityHeatmapView(qupath.getStage(), qupath, currentImageName,
+                markerFeatures, result).show();
     }
 
     // ── Utility scripts ────────────────────────────────────────────────────────
@@ -3058,6 +3117,36 @@ public class CellTuneExtension implements QuPathExtension {
             selectedImages = new ArrayList<>(allImageNames);
         }
 
+        // Column + polygon options — discover features from the current image so
+        // the user can choose which measurement columns to export (mirrors the
+        // Select Features dialog) and whether to include cell polygons.
+        Collection<PathObject> currentCells = imageData.getHierarchy()
+                .getObjects(null, PathObject.class).stream()
+                .filter(PathObjectFilter.DETECTIONS_ALL)
+                .toList();
+        List<String> allCurrentFeatures = CellFeatureExtractor.discoverFeatureNames(currentCells);
+        if (allCurrentFeatures.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No cell measurements found to export.");
+            return;
+        }
+        // Default pre-selection: the curated whole-cell mean + distance subset.
+        List<String> defaultFeatures = allCurrentFeatures.stream()
+                .filter(f -> {
+                    String lc = f.toLowerCase(java.util.Locale.ROOT);
+                    return f.matches("^[^:]+: Cell: Mean$") || lc.contains("distance");
+                })
+                .collect(java.util.stream.Collectors.toList());
+        if (defaultFeatures.isEmpty()) defaultFeatures = allCurrentFeatures;
+
+        var exportPane = new CellTableExportPane(
+                qupath.getStage(), allCurrentFeatures, defaultFeatures, true, true);
+        CellTableExportPane.Result exportResult = exportPane.showAndWait();
+        if (exportResult == null) return;
+
+        final List<String> selectedFeats = exportResult.features();
+        final boolean includeGeometry = exportResult.includeGeometry();
+        final boolean geometryInMicrons = exportResult.geometryInMicrons();
+
         // Output directory
         DirectoryChooser dc = new DirectoryChooser();
         dc.setTitle("Select Output Folder for Cell Table(s)");
@@ -3153,20 +3242,9 @@ public class CellTuneExtension implements QuPathExtension {
                         Collection<PathObject> annotations =
                                 data.getHierarchy().getAnnotationObjects();
 
-                        List<String> allFeats = CellFeatureExtractor.discoverFeatureNames(cells);
-                        List<String> feats = allFeats.stream()
-                                .filter(f -> {
-                                    String lc = f.toLowerCase(java.util.Locale.ROOT);
-                                    // Marker-specific measurements: keep only the whole-cell
-                                    // mean (e.g. "CD8: Cell: Mean"). This excludes cytoplasm/
-                                    // membrane means, erosion/expansion bins, environment, and
-                                    // neighbour-aggregated means (e.g. "Neighbors: Mean: ...").
-                                    return f.matches("^[^:]+: Cell: Mean$")
-                                            // Keep all distance measurements.
-                                            || lc.contains("distance");
-                                })
-                                .collect(java.util.stream.Collectors.toList());
-                        if (feats.isEmpty()) feats = allFeats;
+                        // Use the user-selected measurement columns. Missing
+                        // measurements are written as NA by the exporter.
+                        List<String> feats = selectedFeats;
 
                         // Pixel calibration for centroid conversion to microns
                         var cal = data.getServer().getPixelCalibration();
@@ -3180,7 +3258,7 @@ public class CellTuneExtension implements QuPathExtension {
                         Path outputPath = outDir.toPath().resolve(safeFileName);
 
                         CellTableExporter.export(outputPath, cells, annotations, imgName, feats,
-                                pixelWidthUm, pixelHeightUm);
+                                pixelWidthUm, pixelHeightUm, includeGeometry, geometryInMicrons);
                         exported.incrementAndGet();
                         int d = done.incrementAndGet();
                         Platform.runLater(() -> {
