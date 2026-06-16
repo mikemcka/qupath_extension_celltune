@@ -45,7 +45,7 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 
 ## 1. Install & launch
 
-1. Build (or download) `qupath-extension-celltune-0.1.0-SNAPSHOT-all.jar`. See [BUILD.md](BUILD.md) for build instructions.
+1. Build (or download) `qupath-extension-celltune-0.1.0-SNAPSHOT-all.jar`. See [CLAUDE.md](CLAUDE.md#build--test) for build instructions.
 2. Drop the JAR into QuPath's `extensions/` folder, or drag-and-drop it onto the running QuPath window.
 3. Restart QuPath. The **CellTune Classifier** panel docks into the analysis tab pane on the right.
 4. All commands also live under the **Extensions → CellTune Classifier** menu.

@@ -85,7 +85,7 @@ Treg,CD4,CD25,FOXP3,CD3,
 
 ## Building from Source
 
-See [BUILD.md](BUILD.md) for prerequisites (JDK 25), platform-specific commands, and install steps. In short:
+See [CLAUDE.md](CLAUDE.md#build--test) for prerequisites (JDK 25), platform-specific commands, and install steps. In short:
 
 ```bash
 export JAVA_HOME=/path/to/jdk-25
@@ -95,7 +95,7 @@ export JAVA_HOME=/path/to/jdk-25
 
 ## Project Structure
 
-Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`, `classifier/`, `gating/`, `ui/`, and `io/` packages, with `CellTuneExtension.java` as the entry point. See [AGENTS.md](AGENTS.md#architecture) for the package-by-package architecture and key classes.
+Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`, `classifier/`, `gating/`, `ui/`, and `io/` packages, with `CellTuneExtension.java` as the entry point. See [CLAUDE.md](CLAUDE.md#architecture) for the package-by-package architecture and key classes.
 
 
 ## Technology Stack
@@ -104,7 +104,7 @@ Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`
 |-------|-----------|
 | Build system | Gradle 9.2.1 (Kotlin DSL) + QuPath conventions plugin |
 | Extension host | QuPath 0.7 |
-| ML model 1 | XGBoost4J 3.2.0 |
+| ML model 1 | XGBoost4J 2.1.4 (Scala 2.13) |
 | ML model 2 | LightGBM4J 4.6.0-2 |
 | ML model 3 | Random Forest (pure Java, no external dependency) |
 | UI framework | JavaFX (bundled with QuPath) |

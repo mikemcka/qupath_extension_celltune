@@ -13,7 +13,7 @@ Treat documentation like a product feature with clear goals, ownership, and upda
 ## Three-Layer Doc Model
 
 - Layer 1: Quick start and key feature usage in `README.md`.
-- Layer 2: Build and environment setup in `BUILD.md`.
+- Layer 2: Build and environment setup in `CLAUDE.md` (Build & test section).
 - Layer 3: Concept deep-dives (for example, anomaly score and rare enrichment) in dedicated sections, then split into separate pages as complexity grows.
 
 ## Organize by User Tasks

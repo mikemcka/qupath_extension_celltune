@@ -820,10 +820,26 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         List<String> allFeatures = CellFeatureExtractor.discoverFeatureNames(cells);
-        List<String> markerFeatures = IntensityHeatmap.discoverMarkerFeatures(allFeatures);
+        if (allFeatures.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No cell measurements found.");
+            return;
+        }
+
+        // Let the user choose which measurements to plot. Pre-select the
+        // auto-discovered whole-cell marker means ("<marker>: Cell: Mean"); a
+        // null/empty pre-selection makes FeatureSelectionPane default to all.
+        List<String> markerDefaults = IntensityHeatmap.discoverMarkerFeatures(allFeatures);
+        var selectionPane = new FeatureSelectionPane(
+                qupath.getStage(), allFeatures,
+                markerDefaults.isEmpty() ? null : markerDefaults);
+        selectionPane.setTitle("Select Measurements for Intensity Heatmap");
+        List<String> markerFeatures = selectionPane.showAndWait();
+        if (markerFeatures == null) {
+            return; // user cancelled
+        }
         if (markerFeatures.isEmpty()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No whole-cell mean marker measurements (\"<marker>: Cell: Mean\") were found.");
+            Dialogs.showWarningNotification(EXTENSION_NAME,
+                    "No measurements selected — nothing to plot.");
             return;
         }
 

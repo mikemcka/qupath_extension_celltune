@@ -137,6 +137,17 @@ public class FeatureSelectionPane {
     }
 
     /**
+     * Override the dialog window title (default: "Select Features for Training").
+     * Lets the same pane be reused for non-training selection (e.g. choosing
+     * which measurements feed the intensity heatmap).
+     *
+     * @param title the window title to display
+     */
+    public void setTitle(String title) {
+        stage.setTitle(title);
+    }
+
+    /**
      * Show the dialog and block until the user confirms or cancels.
      *
      * @return the selected feature names, or null if cancelled
