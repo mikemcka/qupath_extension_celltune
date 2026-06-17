@@ -1,14 +1,10 @@
 package qupath.ext.celltune.ui;
 
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
-import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.control.cell.CheckBoxTreeCell;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -18,27 +14,48 @@ import java.util.stream.Collectors;
 
 /**
  * A dialog for selecting which cell measurement features to include in ML
- * training.
+ * training (also reused for choosing measurements for the intensity heatmap and
+ * scatter plot).
  * <p>
- * Designed for large panels (COMET, MIBI, etc.) with 2000+ features per cell.
- * Provides:
+ * Designed for large panels (COMET, MIBI, etc.) with 1000+ features per cell.
+ * Features are grouped into a checkbox tree so the list is navigable at scale:
  * <ul>
- *   <li>Instant search/filter box</li>
- *   <li>Select by prefix (e.g. "Cell:", "Nucleus:", "Membrane:", etc.)</li>
- *   <li>Select All / Clear All</li>
- *   <li>Counter showing selected / total</li>
- *   <li>Pre-selects all features by default; user can refine</li>
+ *   <li>One group per <b>marker</b> (the name before the first {@code ": "},
+ *       e.g. {@code "DAPI_AF"}, {@code "mCherry_S1 - TRITC_AF"}). The group's
+ *       parent checkbox selects/clears every feature for that marker at once.</li>
+ *   <li>A <b>Morphology / Shape</b> group for compartment-only measurements
+ *       ({@code "Cell: Area µm^2"}, {@code "Cell: ErosionBin_1: …"}, etc.).</li>
+ *   <li>An <b>Embeddings</b> group for dimensionality-reduction features
+ *       (UMAP / PCA / t-SNE / embedding columns), when present.</li>
  * </ul>
+ * Plus an instant search box, expand/collapse and select-all/clear-all helpers,
+ * and a selected/total counter. Pre-selects all features by default; the caller
+ * may pass a subset to pre-select instead.
  */
 public class FeatureSelectionPane {
 
+    /** Group label for compartment-only shape/morphology measurements. */
+    static final String GROUP_MORPHOLOGY = "Morphology / Shape";
+    /** Group label for dimensionality-reduction / embedding features. */
+    static final String GROUP_EMBEDDINGS = "Embeddings";
+
+    /** Compartment tokens that mark a measurement as morphology rather than a marker. */
+    private static final Set<String> COMPARTMENTS =
+            Set.of("Cell", "Cytoplasm", "Membrane", "Nucleus");
+
+    /** Tokens (case-insensitive, whole-token match) that mark an embedding feature. */
+    private static final Set<String> EMBEDDING_TOKENS =
+            Set.of("umap", "tsne", "pca", "phenograph", "leiden", "latent");
+
     private final Stage stage;
-    private final ObservableList<FeatureItem> allFeatures = FXCollections.observableArrayList();
-    private final FilteredList<FeatureItem> filteredFeatures;
-    private final ListView<FeatureItem> listView;
+    private final List<FeatureItem> allFeatures = new ArrayList<>();
+    private final List<String> groupOrder = new ArrayList<>();
+    private final Map<String, List<FeatureItem>> itemsByGroup = new LinkedHashMap<>();
+
+    private final TreeView<Node> tree;
     private final TextField searchField;
-    private final ComboBox<String> prefixCombo;
     private final Label countLabel;
+    private final List<CheckBoxTreeItem<Node>> visibleLeaves = new ArrayList<>();
 
     private boolean confirmed = false;
 
@@ -52,7 +69,6 @@ public class FeatureSelectionPane {
     public FeatureSelectionPane(Stage owner, List<String> featureNames, List<String> preSelected) {
         stage = new Stage();
 
-        // Build items
         Set<String> selected = (preSelected != null && !preSelected.isEmpty())
                 ? new LinkedHashSet<>(preSelected)
                 : new LinkedHashSet<>(featureNames);
@@ -60,54 +76,39 @@ public class FeatureSelectionPane {
         for (String name : featureNames) {
             allFeatures.add(new FeatureItem(name, selected.contains(name)));
         }
+        buildGroups();
 
-        // Search/filter
+        // Search/filter.
         searchField = new TextField();
         searchField.setPromptText("Search features…");
         HBox.setHgrow(searchField, Priority.ALWAYS);
+        searchField.textProperty().addListener((o, a, b) -> rebuildTree());
 
-        // Prefix combo
-        prefixCombo = new ComboBox<>();
-        prefixCombo.getItems().add("All prefixes");
-        prefixCombo.getItems().addAll(discoverPrefixes(featureNames));
-        prefixCombo.getSelectionModel().selectFirst();
-        prefixCombo.setPrefWidth(180);
+        // Tree with checkboxes.
+        tree = new TreeView<>();
+        tree.setShowRoot(false);
+        tree.setCellFactory(CheckBoxTreeCell.forTreeView());
+        tree.setPrefSize(560, 460);
+        VBox.setVgrow(tree, Priority.ALWAYS);
 
-        // Filtered list
-        filteredFeatures = new FilteredList<>(allFeatures, p -> true);
-        searchField.textProperty().addListener((o, a, b) -> updateFilter());
-        prefixCombo.valueProperty().addListener((o, a, b) -> updateFilter());
-
-        // ListView with checkboxes
-        listView = new ListView<>(filteredFeatures);
-        listView.setCellFactory(lv -> new CheckBoxListCell());
-        listView.setPrefHeight(400);
-        listView.setPrefWidth(500);
-        VBox.setVgrow(listView, Priority.ALWAYS);
-
-        // Count label
         countLabel = new Label();
-        updateCount();
 
-        // Buttons row
+        // Group / selection helpers.
         Button selectAllBtn = new Button("Select All");
-        selectAllBtn.setOnAction(e -> setAllVisible(true));
-
+        selectAllBtn.setOnAction(e -> setVisible(true));
         Button clearAllBtn = new Button("Clear All");
-        clearAllBtn.setOnAction(e -> setAllVisible(false));
-
-        Button selectPrefixBtn = new Button("Select Prefix");
-        selectPrefixBtn.setOnAction(e -> selectCurrentPrefix());
-
-        Button clearPrefixBtn = new Button("Clear Prefix");
-        clearPrefixBtn.setOnAction(e -> clearCurrentPrefix());
+        clearAllBtn.setOnAction(e -> setVisible(false));
+        Button expandBtn = new Button("Expand All");
+        expandBtn.setOnAction(e -> setExpanded(true));
+        Button collapseBtn = new Button("Collapse All");
+        collapseBtn.setOnAction(e -> setExpanded(false));
 
         HBox btnRow = new HBox(6, selectAllBtn, clearAllBtn,
                 new Separator(javafx.geometry.Orientation.VERTICAL),
-                selectPrefixBtn, clearPrefixBtn);
+                expandBtn, collapseBtn);
         btnRow.setAlignment(Pos.CENTER_LEFT);
 
-        // OK / Cancel
+        // OK / Cancel.
         Button okBtn = new Button("OK");
         okBtn.setDefaultButton(true);
         okBtn.setPrefWidth(80);
@@ -118,28 +119,29 @@ public class FeatureSelectionPane {
         cancelBtn.setPrefWidth(80);
         cancelBtn.setOnAction(e -> stage.close());
 
-        HBox okCancelRow = new HBox(8, countLabel, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, okBtn, cancelBtn);
+        HBox okCancelRow = new HBox(8, countLabel,
+                new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, okBtn, cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
-        // Filter row
-        HBox filterRow = new HBox(6, new Label("Filter:"), searchField, prefixCombo);
+        HBox filterRow = new HBox(6, new Label("Filter:"), searchField);
         filterRow.setAlignment(Pos.CENTER_LEFT);
 
-        VBox root = new VBox(8, filterRow, btnRow, listView, okCancelRow);
+        VBox root = new VBox(8, filterRow, btnRow, tree, okCancelRow);
         root.setPadding(new Insets(10));
+
+        rebuildTree();
+        updateCount();
 
         stage.initOwner(owner);
         stage.initModality(Modality.APPLICATION_MODAL);
         stage.setTitle("Select Features for Training");
-        stage.setScene(new Scene(root, 600, 550));
-        stage.setMinWidth(400);
-        stage.setMinHeight(350);
+        stage.setScene(new Scene(root, 640, 600));
+        stage.setMinWidth(420);
+        stage.setMinHeight(380);
     }
 
     /**
      * Override the dialog window title (default: "Select Features for Training").
-     * Lets the same pane be reused for non-training selection (e.g. choosing
-     * which measurements feed the intensity heatmap).
      *
      * @param title the window title to display
      */
@@ -163,71 +165,79 @@ public class FeatureSelectionPane {
                 .collect(Collectors.toList());
     }
 
-    // ── Filter logic ────────────────────────────────────────────────────────────
+    // ── Grouping ─────────────────────────────────────────────────────────────────
 
-    private void updateFilter() {
-        String search = searchField.getText() == null ? "" : searchField.getText().toLowerCase().strip();
-        String prefix = prefixCombo.getValue();
-        boolean allPrefixes = "All prefixes".equals(prefix);
-
-        filteredFeatures.setPredicate(item -> {
-            boolean matchesSearch = search.isEmpty() || item.getName().toLowerCase().contains(search);
-            boolean matchesPrefix = allPrefixes || item.getName().startsWith(prefix);
-            return matchesSearch && matchesPrefix;
-        });
-    }
-
-    private void setAllVisible(boolean selected) {
-        for (FeatureItem item : filteredFeatures) {
-            item.setSelected(selected);
-        }
-        listView.refresh();
-        updateCount();
-    }
-
-    private void selectCurrentPrefix() {
-        String prefix = prefixCombo.getValue();
-        if ("All prefixes".equals(prefix)) {
-            setAllVisible(true);
-            return;
-        }
+    /** Bucket every feature into its group and compute the group display order. */
+    private void buildGroups() {
         for (FeatureItem item : allFeatures) {
-            if (item.getName().startsWith(prefix)) {
-                item.setSelected(true);
-            }
+            String group = groupOf(item.getName());
+            itemsByGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(item);
         }
-        listView.refresh();
-        updateCount();
-    }
 
-    private void clearCurrentPrefix() {
-        String prefix = prefixCombo.getValue();
-        if ("All prefixes".equals(prefix)) {
-            setAllVisible(false);
-            return;
+        // Markers first (alphabetical), then Morphology, then Embeddings.
+        List<String> markers = itemsByGroup.keySet().stream()
+                .filter(g -> !g.equals(GROUP_MORPHOLOGY) && !g.equals(GROUP_EMBEDDINGS))
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .collect(Collectors.toList());
+        groupOrder.addAll(markers);
+        if (itemsByGroup.containsKey(GROUP_MORPHOLOGY)) {
+            groupOrder.add(GROUP_MORPHOLOGY);
         }
-        for (FeatureItem item : allFeatures) {
-            if (item.getName().startsWith(prefix)) {
-                item.setSelected(false);
-            }
+        if (itemsByGroup.containsKey(GROUP_EMBEDDINGS)) {
+            groupOrder.add(GROUP_EMBEDDINGS);
         }
-        listView.refresh();
-        updateCount();
     }
-
-    private void updateCount() {
-        long selected = allFeatures.stream().filter(FeatureItem::isSelected).count();
-        countLabel.setText(selected + " / " + allFeatures.size() + " selected");
-    }
-
-    // ── Discover measurement name prefixes ──────────────────────────────────────
 
     /**
-     * Extract common prefixes from feature names.
-     * <p>
-     * QuPath measurement names typically look like:
-     * {@code "Cell: Area"}, {@code "Nucleus: Mean"}, {@code "Membrane: CD3 mean"}, etc.
-     * This extracts the part before the first ": " as the prefix group.
+     * Classify a feature name into a group: the marker name, {@link #GROUP_MORPHOLOGY},
+     * or {@link #GROUP_EMBEDDINGS}.
+     */
+    static String groupOf(String name) {
+        if (name == null) {
+            return GROUP_MORPHOLOGY;
+        }
+        if (isEmbedding(name)) {
+            return GROUP_EMBEDDINGS;
+        }
+        int idx = name.indexOf(": ");
+        if (idx <= 0) {
+            return GROUP_MORPHOLOGY;
+        }
+        String prefix = name.substring(0, idx);
+        if (COMPARTMENTS.contains(prefix)) {
+            return GROUP_MORPHOLOGY;
+        }
+        return prefix;
+    }
+
+    /**
+     * Detect dimensionality-reduction / embedding feature names by splitting on
+     * non-alphanumeric separators and matching whole tokens. This recognises
+     * forms like {@code "UMAP 1"}, {@code "Embedding_0"}, and {@code "PCA_2"}
+     * without misfiring on markers that merely contain the letters (e.g.
+     * {@code "PECAM"}).
+     */
+    static boolean isEmbedding(String name) {
+        if (name == null) {
+            return false;
+        }
+        for (String token : name.split("[^A-Za-z0-9]+")) {
+            String t = token.toLowerCase(Locale.ROOT);
+            if (t.isEmpty()) {
+                continue;
+            }
+            if (t.startsWith("embedding") || EMBEDDING_TOKENS.contains(t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extract common prefixes (text before the first {@code ": "}) from feature
+     * names, sorted case-insensitively. Retained as a shared utility for other
+     * panes ({@code CellTableExportPane}, {@code NormalizationPane}) that build
+     * their own prefix dropdowns.
      */
     static List<String> discoverPrefixes(List<String> featureNames) {
         Set<String> prefixes = new LinkedHashSet<>();
@@ -242,6 +252,82 @@ public class FeatureSelectionPane {
         return sorted;
     }
 
+    /** Display label for a leaf — strips the marker prefix for marker groups. */
+    static String leafLabel(String name, String group) {
+        if (name == null) {
+            return "";
+        }
+        if (!group.equals(GROUP_MORPHOLOGY) && !group.equals(GROUP_EMBEDDINGS)) {
+            String prefix = group + ": ";
+            if (name.startsWith(prefix)) {
+                return name.substring(prefix.length());
+            }
+        }
+        return name;
+    }
+
+    // ── Tree building / filtering ────────────────────────────────────────────────
+
+    private void rebuildTree() {
+        String search = searchField.getText() == null ? "" : searchField.getText().toLowerCase(Locale.ROOT).strip();
+        boolean searching = !search.isEmpty();
+
+        visibleLeaves.clear();
+        CheckBoxTreeItem<Node> root = new CheckBoxTreeItem<>(new Node("root", null, null));
+
+        for (String group : groupOrder) {
+            List<FeatureItem> items = itemsByGroup.get(group);
+            List<FeatureItem> matching = search.isEmpty()
+                    ? items
+                    : items.stream()
+                        .filter(i -> i.getName().toLowerCase(Locale.ROOT).contains(search))
+                        .collect(Collectors.toList());
+            if (matching.isEmpty()) {
+                continue;
+            }
+
+            String groupLabel = group + " (" + items.size() + ")";
+            CheckBoxTreeItem<Node> groupNode = new CheckBoxTreeItem<>(new Node(groupLabel, null, group));
+            groupNode.setExpanded(searching);
+
+            for (FeatureItem item : matching) {
+                CheckBoxTreeItem<Node> leaf =
+                        new CheckBoxTreeItem<>(new Node(leafLabel(item.getName(), group), item, group));
+                groupNode.getChildren().add(leaf);
+                leaf.setSelected(item.isSelected());
+                leaf.selectedProperty().addListener((o, was, is) -> {
+                    item.setSelected(is);
+                    updateCount();
+                });
+                visibleLeaves.add(leaf);
+            }
+            root.getChildren().add(groupNode);
+        }
+
+        tree.setRoot(root);
+    }
+
+    private void setVisible(boolean selected) {
+        for (CheckBoxTreeItem<Node> leaf : visibleLeaves) {
+            leaf.setSelected(selected);
+        }
+        updateCount();
+    }
+
+    private void setExpanded(boolean expanded) {
+        if (tree.getRoot() == null) {
+            return;
+        }
+        for (TreeItem<Node> group : tree.getRoot().getChildren()) {
+            group.setExpanded(expanded);
+        }
+    }
+
+    private void updateCount() {
+        long selected = allFeatures.stream().filter(FeatureItem::isSelected).count();
+        countLabel.setText(selected + " / " + allFeatures.size() + " selected");
+    }
+
     // ── Inner classes ───────────────────────────────────────────────────────────
 
     /** A feature with a selected state. */
@@ -254,40 +340,31 @@ public class FeatureSelectionPane {
             this.selected = selected;
         }
 
-        String getName()           { return name; }
-        boolean isSelected()       { return selected; }
+        String getName()            { return name; }
+        boolean isSelected()        { return selected; }
         void setSelected(boolean s) { this.selected = s; }
 
         @Override
         public String toString() { return name; }
     }
 
-    /** ListView cell with a CheckBox. */
-    private class CheckBoxListCell extends ListCell<FeatureItem> {
-        private final CheckBox checkBox = new CheckBox();
+    /** Tree node value: a group header (item == null) or a leaf feature. */
+    static final class Node {
+        private final String label;
+        private final FeatureItem item;
+        private final String group;
 
-        CheckBoxListCell() {
-            checkBox.setOnAction(e -> {
-                FeatureItem item = getItem();
-                if (item != null) {
-                    item.setSelected(checkBox.isSelected());
-                    updateCount();
-                }
-            });
+        Node(String label, FeatureItem item, String group) {
+            this.label = label;
+            this.item = item;
+            this.group = group;
         }
+
+        boolean isGroup() { return item == null; }
+        FeatureItem item() { return item; }
+        String group() { return group; }
 
         @Override
-        protected void updateItem(FeatureItem item, boolean empty) {
-            super.updateItem(item, empty);
-            if (empty || item == null) {
-                setGraphic(null);
-                setText(null);
-            } else {
-                checkBox.setSelected(item.isSelected());
-                checkBox.setText(item.getName());
-                setGraphic(checkBox);
-                setText(null);
-            }
-        }
+        public String toString() { return label; }
     }
 }
