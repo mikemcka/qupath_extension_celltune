@@ -60,6 +60,7 @@ import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
 import qupath.ext.celltune.ui.ScatterPlotView;
 import qupath.ext.celltune.ui.TrainingTileExtractor;
+import qupath.ext.celltune.util.JvmModuleOpener;
 import qupath.ext.celltune.ui.ProjectPredictionSummaryView;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
@@ -208,6 +209,10 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
         isInstalled = true;
+        // Open java.base/java.lang so Smile's native PCA/UMAP (loaded via JavaCPP)
+        // work without the user setting --add-opens. Must run before the cell
+        // scatter plot first touches a Smile native class.
+        JvmModuleOpener.ensureJavaLangOpen();
         suppressImageTypePromptOnce();
         addPreferenceToPane(qupath);
         addMenuItems(qupath);
@@ -685,7 +690,7 @@ public class CellTuneExtension implements QuPathExtension {
         intensityHeatmapItem.setOnAction(e -> showIntensityHeatmaps(qupath));
         intensityHeatmapItem.disableProperty().bind(enableExtensionProperty.not());
 
-        MenuItem scatterPlotItem = new MenuItem("Cell Scatter Plot...");
+        MenuItem scatterPlotItem = new MenuItem("Scatter Plots and Clustering...");
         scatterPlotItem.setOnAction(e -> showScatterPlot(qupath));
         scatterPlotItem.disableProperty().bind(enableExtensionProperty.not());
 

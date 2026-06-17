@@ -9,21 +9,30 @@ import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.MenuButton;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
+import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.WritableImage;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Font;
 import javafx.scene.text.TextAlignment;
 import javafx.stage.FileChooser;
@@ -34,11 +43,13 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.PopulationSet;
+import qupath.ext.celltune.util.JvmModuleOpener;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
 
@@ -47,8 +58,11 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import smile.clustering.KMeans;
@@ -112,16 +126,28 @@ public class ScatterPlotView {
     private final Stage stage;
     private final Canvas canvas;
     private final ComboBox<Embedding> embeddingCombo;
+    private final CheckBox fullUmapCheck;
     private final Spinner<Integer> kSpinner;
     private final ComboBox<ColorMode> colorCombo;
     private final ComboBox<String> markerCombo;
+    private final TextField annotationField;
+    private final ComboBox<String> classField;
+    private final MenuButton clusterMarkersBtn;
+    private final List<CheckMenuItem> clusterMarkerItems = new ArrayList<>();
     private final ToggleButton boxToggle;
     private final ToggleButton lassoToggle;
+    private final Button applyClustersBtn;
     private final ProgressIndicator progress;
     private final Label statusLabel;
 
     private PathObjectSelectionListener selectionListener;
     private boolean updatingSelection = false; // guard against self-triggered redraws
+    private volatile boolean applying = false; // guard against concurrent apply runs
+    private String statusNotice = ""; // scope/filter suffix, persisted across redraws
+
+    // ── Cluster-legend hit-testing geometry (updated each drawLegend) ──────────
+    private double legendClusterX, legendClusterY, legendClusterLineH;
+    private int legendClusterCount = 0;
 
     // ── Current view geometry (recomputed each redraw) ─────────────────────────
     private double minX, maxX, minY, maxY;
@@ -186,12 +212,69 @@ public class ScatterPlotView {
         embeddingCombo.getItems().addAll(Embedding.PCA, Embedding.UMAP);
         embeddingCombo.setValue(Embedding.PCA);
 
-        kSpinner = new Spinner<>(2, 20, 8);
+        fullUmapCheck = new CheckBox("Full UMAP");
+        fullUmapCheck.setTooltip(new javafx.scene.control.Tooltip(
+                "Embed ALL cells in UMAP instead of a "
+                + String.format("%,d", MAX_UMAP_CELLS)
+                + "-cell sample. Much slower and more memory-hungry on large "
+                + "images, but plots every cell. Only affects UMAP — k-means "
+                + "already clusters all cells regardless."));
+        fullUmapCheck.setDisable(embeddingCombo.getValue() != Embedding.UMAP);
+        embeddingCombo.valueProperty().addListener((o, a, b) ->
+                fullUmapCheck.setDisable(b != Embedding.UMAP));
+
+        kSpinner = new Spinner<>(2, 50, 8);
         kSpinner.setEditable(true);
         kSpinner.setPrefWidth(70);
 
+        annotationField = new TextField();
+        annotationField.setPromptText("name (blank = all cells)");
+        annotationField.setPrefWidth(150);
+        annotationField.setTooltip(new javafx.scene.control.Tooltip(
+                "Only cluster cells whose centroid falls inside an annotation "
+                + "whose name (or classification) contains this text. "
+                + "Leave blank to use all cells."));
+        annotationField.setOnAction(e -> recompute()); // Enter re-runs
+
+        classField = new ComboBox<>();
+        classField.setEditable(true);
+        classField.setPromptText("class (blank = all)");
+        classField.setPrefWidth(150);
+        classField.getItems().add("");
+        for (PathClass pc : qupath.getAvailablePathClasses()) {
+            if (pc != null && pc.getName() != null) {
+                classField.getItems().add(pc.toString());
+            }
+        }
+        classField.setValue("");
+        classField.setTooltip(new javafx.scene.control.Tooltip(
+                "Only cluster cells whose current QuPath classification contains "
+                + "this text — e.g. assign Immune/Tumour/Other via Apply Clusters, "
+                + "then drill in with \"Immune\". Combines with the annotation "
+                + "filter. Leave blank for all classes."));
+        classField.setOnAction(e -> recompute());
+
+        clusterMarkersBtn = new MenuButton("Cluster markers (all)");
+        clusterMarkersBtn.setTooltip(new javafx.scene.control.Tooltip(
+                "Markers used for k-means and the embedding. Uncheck markers to "
+                + "sub-cluster on a focused panel (e.g. immune markers only). "
+                + "Values are re-standardized over the active cells each run."));
+        for (String marker : this.markerFeatures) {
+            CheckMenuItem item = new CheckMenuItem(marker);
+            item.setSelected(true);
+            item.selectedProperty().addListener((o, a, b) -> updateClusterMarkersLabel());
+            clusterMarkerItems.add(item);
+            clusterMarkersBtn.getItems().add(item);
+        }
+
         Button recomputeBtn = new Button("Recompute");
         recomputeBtn.setOnAction(e -> recompute());
+
+        Button projectBtn = new Button("Project Clustering…");
+        projectBtn.setTooltip(new javafx.scene.control.Tooltip(
+                "Cluster the whole project (or selected images) consistently, "
+                + "using the currently-checked cluster markers."));
+        projectBtn.setOnAction(e -> openProjectClustering());
 
         progress = new ProgressIndicator();
         progress.setPrefSize(20, 20);
@@ -231,6 +314,9 @@ public class ScatterPlotView {
             }
         });
 
+        applyClustersBtn = new Button("Apply Clusters…");
+        applyClustersBtn.setOnAction(e -> applyClustersToClasses());
+
         Button exportBtn = new Button("Export PNG…");
         exportBtn.setOnAction(e -> exportAsPng());
 
@@ -238,10 +324,16 @@ public class ScatterPlotView {
         closeBtn.setOnAction(e -> stage.close());
 
         HBox row1 = new HBox(8,
-                new Label("Embedding:"), embeddingCombo,
+                new Label("Embedding:"), embeddingCombo, fullUmapCheck,
                 new Label("Clusters (k):"), kSpinner,
-                recomputeBtn, progress);
+                recomputeBtn, projectBtn, progress);
         row1.setAlignment(Pos.CENTER_LEFT);
+
+        HBox rowFilter = new HBox(8,
+                new Label("Annotation:"), annotationField,
+                new Label("Within class:"), classField,
+                clusterMarkersBtn);
+        rowFilter.setAlignment(Pos.CENTER_LEFT);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -250,10 +342,10 @@ public class ScatterPlotView {
                 new Label("Marker:"), markerCombo,
                 spacer,
                 new Label("Select:"), boxToggle, lassoToggle,
-                exportBtn, closeBtn);
+                applyClustersBtn, exportBtn, closeBtn);
         row2.setAlignment(Pos.CENTER_LEFT);
 
-        VBox top = new VBox(6, row1, row2);
+        VBox top = new VBox(6, row1, rowFilter, row2);
         top.setPadding(new Insets(8));
 
         statusLabel = new Label("");
@@ -269,6 +361,7 @@ public class ScatterPlotView {
         canvas.setOnMousePressed(this::onMousePressed);
         canvas.setOnMouseDragged(this::onMouseDragged);
         canvas.setOnMouseReleased(this::onMouseReleased);
+        canvas.setOnMouseMoved(this::onMouseMoved);
 
         BorderPane root = new BorderPane();
         root.setTop(top);
@@ -326,8 +419,18 @@ public class ScatterPlotView {
         final Embedding embedding = embeddingCombo.getValue();
         final int k = kSpinner.getValue();
         final int n = cells.length;
+        final String keyword = annotationField.getText();
+        final String classKeyword = classField.getValue();
+        final int[] selCols = selectedMarkerColumns();
+        final int umapCap = fullUmapCheck.isSelected()
+                ? Integer.MAX_VALUE : MAX_UMAP_CELLS;
         if (n == 0) {
             statusLabel.setText("No cells to plot.");
+            return;
+        }
+        if (selCols.length < 2) {
+            statusLabel.setText(
+                    "Select at least 2 cluster markers (see “Cluster markers”).");
             return;
         }
 
@@ -338,53 +441,112 @@ public class ScatterPlotView {
         new Thread(() -> {
             String notice = "";
             try {
-                // ── k-means on all cells (cluster identity independent of axes) ──
-                int kEff = Math.min(k, n);
-                int[] newCluster = new int[n];
-                if (kEff >= 2) {
-                    KMeans km = KMeans.fit(std, kEff);
-                    System.arraycopy(km.y, 0, newCluster, 0, n);
-                } else {
-                    java.util.Arrays.fill(newCluster, 0);
-                }
+                // Smile's PCA/UMAP load native libs via JavaCPP, which needs
+                // java.base/java.lang opened. The extension opens it at startup;
+                // this is a defensive no-op if already done.
+                JvmModuleOpener.ensureJavaLangOpen();
 
-                // ── Embedding ────────────────────────────────────────────────────
+                // Restrict clustering/embedding to cells inside matching
+                // annotation(s) AND of the matching class (all cells when blank).
+                int[] activeIdx = computeActiveIndices(keyword, classKeyword);
+                final int m = activeIdx.length;
+
+                // Full-length outputs; non-active cells stay unclustered/unplotted.
+                int[] newCluster = new int[n];
+                java.util.Arrays.fill(newCluster, -1);
                 double[] nx = new double[n];
                 double[] ny = new double[n];
                 java.util.Arrays.fill(nx, Double.NaN);
                 java.util.Arrays.fill(ny, Double.NaN);
 
+                boolean annoFilter = keyword != null && !keyword.isBlank();
+                boolean classFilter = classKeyword != null && !classKeyword.isBlank();
+                boolean filtered = annoFilter || classFilter;
+                String scopeDesc = describeScope(keyword, classKeyword);
+                if (m == 0) {
+                    final String fNotice = filtered
+                            ? " (no cells matching " + scopeDesc + ")"
+                            : "";
+                    Platform.runLater(() -> {
+                        System.arraycopy(nx, 0, ex, 0, n);
+                        System.arraycopy(ny, 0, ey, 0, n);
+                        cluster = newCluster;
+                        progress.setVisible(false);
+                        setControlsDisabled(false);
+                        redraw();
+                        appendStatusNotice(fNotice);
+                    });
+                    return;
+                }
+
+                // Active feature matrix: the selected marker columns of the active
+                // cells, re-standardized over that subset so sub-clustering scales
+                // to the subpopulation (not the whole image).
+                double[][] activeRaw = new double[m][selCols.length];
+                for (int j = 0; j < m; j++) {
+                    double[] src = raw[activeIdx[j]];
+                    for (int c = 0; c < selCols.length; c++) {
+                        activeRaw[j][c] = src[selCols[c]];
+                    }
+                }
+                double[][] active = standardizeColumns(activeRaw);
+
+                // ── k-means on the active subset ─────────────────────────────────
+                int kEff = Math.min(k, m);
+                int[] subCluster = new int[m];
+                if (kEff >= 2) {
+                    KMeans km = KMeans.fit(active, kEff);
+                    System.arraycopy(km.y, 0, subCluster, 0, m);
+                }
+                for (int j = 0; j < m; j++) {
+                    newCluster[activeIdx[j]] = subCluster[j];
+                }
+
+                // ── Embedding on the active subset ───────────────────────────────
+                double[] subX = new double[m];
+                double[] subY = new double[m];
+                java.util.Arrays.fill(subX, Double.NaN);
+                java.util.Arrays.fill(subY, Double.NaN);
+
                 if (embedding == Embedding.PCA) {
-                    double[][] proj = PCA.fit(std).getProjection(2).apply(std);
-                    for (int i = 0; i < n; i++) {
-                        nx[i] = proj[i][0];
-                        ny[i] = proj[i][1];
-                    }
+                    fillPca(active, m, subX, subY);
                 } else {
-                    // UMAP: subsample if very large; embed a connected subset.
-                    int[] sub = (n > MAX_UMAP_CELLS)
-                            ? randomSubsample(n, MAX_UMAP_CELLS)
-                            : identity(n);
-                    if (n > MAX_UMAP_CELLS) {
-                        notice = String.format(
-                                " (UMAP on %,d of %,d cells)", MAX_UMAP_CELLS, n);
+                    try {
+                        notice = fillUmap(active, m, subX, subY, umapCap);
+                    } catch (LinkageError err) {
+                        // UMAP's spectral layout loads the native ARPACK library
+                        // through JavaCPP, which uses reflection into java.base.
+                        // On JVMs started without
+                        // --add-opens=java.base/java.lang=ALL-UNNAMED that load
+                        // fails with an Error (ExceptionInInitializerError, then
+                        // NoClassDefFoundError on retries, or UnsatisfiedLinkError)
+                        // — all LinkageError, not Exception. Fall back to PCA so the
+                        // plot still renders on any system.
+                        logger.warn(
+                                "UMAP unavailable ({}); falling back to PCA. Launch "
+                                + "QuPath with "
+                                + "--add-opens=java.base/java.lang=ALL-UNNAMED to "
+                                + "enable UMAP.",
+                                err.toString());
+                        logger.debug("UMAP native load failure detail", err);
+                        java.util.Arrays.fill(subX, Double.NaN);
+                        java.util.Arrays.fill(subY, Double.NaN);
+                        fillPca(active, m, subX, subY);
+                        notice = " (UMAP unavailable — showing PCA)";
                     }
-                    double[][] subMatrix = new double[sub.length][];
-                    for (int s = 0; s < sub.length; s++) {
-                        subMatrix[s] = std[sub[s]];
-                    }
-                    int neighbors = Math.min(15, subMatrix.length - 1);
-                    if (neighbors < 2) {
-                        throw new IllegalStateException(
-                                "Too few cells for UMAP (need at least 3).");
-                    }
-                    UMAP umap = UMAP.of(subMatrix, neighbors);
-                    // coordinates[j] corresponds to subMatrix row umap.index[j].
-                    for (int j = 0; j < umap.coordinates.length; j++) {
-                        int orig = sub[umap.index[j]];
-                        nx[orig] = umap.coordinates[j][0];
-                        ny[orig] = umap.coordinates[j][1];
-                    }
+                }
+                for (int j = 0; j < m; j++) {
+                    nx[activeIdx[j]] = subX[j];
+                    ny[activeIdx[j]] = subY[j];
+                }
+
+                if (filtered) {
+                    notice = notice + String.format(
+                            " (%,d cells in %s)", m, scopeDesc);
+                }
+                if (selCols.length < markerFeatures.size()) {
+                    notice = notice + String.format(
+                            " · %d/%d markers", selCols.length, markerFeatures.size());
                 }
 
                 final String fNotice = notice;
@@ -397,20 +559,478 @@ public class ScatterPlotView {
                     redraw();
                     appendStatusNotice(fNotice);
                 });
-            } catch (Exception ex) {
+            } catch (Throwable ex) {
+                // Throwable, not Exception: Smile's native loaders fail with
+                // Errors (e.g. ExceptionInInitializerError) when java.lang is not
+                // open. Catch them here so they never reach the uncaught-exception
+                // dialog, and give the user an actionable message.
                 logger.error("Failed to compute scatter embedding", ex);
+                boolean nativeIssue = ex instanceof LinkageError;
+                final String msg = nativeIssue
+                        ? "Embedding failed: native math libraries unavailable. "
+                                + "Launch QuPath with "
+                                + "--add-opens=java.base/java.lang=ALL-UNNAMED."
+                        : "Embedding failed: " + ex.getMessage();
                 Platform.runLater(() -> {
                     progress.setVisible(false);
                     setControlsDisabled(false);
-                    statusLabel.setText("Embedding failed: " + ex.getMessage());
+                    statusLabel.setText(msg);
                 });
             }
         }, "CellTune-ScatterEmbedding").start();
     }
 
+    /**
+     * Indices of cells eligible for clustering/embedding, intersecting two
+     * optional filters: inside an annotation whose label contains
+     * {@code annoKeyword}, and whose current classification contains
+     * {@code classKeyword} (both case-insensitive; blank = no restriction). The
+     * annotation test mirrors Review-mode's membership check.
+     */
+    private int[] computeActiveIndices(String annoKeyword, String classKeyword) {
+        int n = cells.length;
+        boolean annoFilter = annoKeyword != null && !annoKeyword.isBlank();
+        boolean classFilter = classKeyword != null && !classKeyword.isBlank();
+        if (!annoFilter && !classFilter) {
+            int[] all = new int[n];
+            for (int i = 0; i < n; i++) {
+                all[i] = i;
+            }
+            return all;
+        }
+
+        // Matching annotation ROIs (only needed for the annotation filter).
+        List<ROI> rois = new ArrayList<>();
+        if (annoFilter && hierarchy != null) {
+            String kw = annoKeyword.trim().toLowerCase();
+            for (PathObject anno : hierarchy.getAnnotationObjects()) {
+                ROI roi = anno.getROI();
+                if (roi == null) {
+                    continue;
+                }
+                String label = annotationLabel(anno);
+                if (label != null && label.toLowerCase().contains(kw)) {
+                    rois.add(roi);
+                }
+            }
+            if (rois.isEmpty()) {
+                return new int[0];
+            }
+        }
+        String classKw = classFilter ? classKeyword.trim().toLowerCase() : null;
+
+        List<Integer> idx = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (classFilter) {
+                PathClass pc = cells[i].getPathClass();
+                if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
+                    continue;
+                }
+            }
+            if (annoFilter) {
+                ROI cr = cells[i].getROI();
+                if (cr == null) {
+                    continue;
+                }
+                double cx = cr.getCentroidX();
+                double cy = cr.getCentroidY();
+                boolean inside = false;
+                for (ROI r : rois) {
+                    if (r.contains(cx, cy)) {
+                        inside = true;
+                        break;
+                    }
+                }
+                if (!inside) {
+                    continue;
+                }
+            }
+            idx.add(i);
+        }
+        int[] out = new int[idx.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = idx.get(i);
+        }
+        return out;
+    }
+
+    /** Human-readable description of the active-subset filters for the status bar. */
+    private static String describeScope(String annoKeyword, String classKeyword) {
+        boolean anno = annoKeyword != null && !annoKeyword.isBlank();
+        boolean cls = classKeyword != null && !classKeyword.isBlank();
+        if (anno && cls) {
+            return String.format("class “%s” inside “%s”",
+                    classKeyword.trim(), annoKeyword.trim());
+        }
+        if (cls) {
+            return "class “" + classKeyword.trim() + "”";
+        }
+        if (anno) {
+            return "annotation “" + annoKeyword.trim() + "”";
+        }
+        return "all cells";
+    }
+
+    /** Annotation display label: explicit name, else PathClass name, else null. */
+    private static String annotationLabel(PathObject anno) {
+        String name = anno.getName();
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+        PathClass pc = anno.getPathClass();
+        if (pc != null) {
+            String pcName = pc.getName();
+            if (pcName != null && !pcName.isBlank()) {
+                return pcName;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Opens the project-wide clustering dialog, seeded with the currently-checked
+     * cluster markers (or all markers if fewer than 2 are checked).
+     */
+    private void openProjectClustering() {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage("CellTune",
+                    "Open a project to cluster across multiple images.");
+            return;
+        }
+        int[] cols = selectedMarkerColumns();
+        List<String> markers = new ArrayList<>();
+        if (cols.length >= 2) {
+            for (int c : cols) {
+                markers.add(markerFeatures.get(c));
+            }
+        } else {
+            markers.addAll(markerFeatures);
+        }
+        List<String> allImageNames = new ArrayList<>();
+        for (var entry : project.getImageList()) {
+            allImageNames.add(entry.getImageName());
+        }
+        new ProjectClusteringDialog(qupath, markers, allImageNames, imageName).show();
+    }
+
+    // ── Apply clusters → QuPath classifications ─────────────────────────────────
+
+    private static final String SKIP_CLASS = "— skip —";
+
+    /**
+     * Opens a dialog mapping each non-empty k-means cluster to an existing (or
+     * newly typed) QuPath class, then writes those classes onto the cells'
+     * {@link PathClass} (the displayed classification — not the CellTune
+     * ground-truth label store). Clusters left as "skip" are untouched.
+     */
+    private void applyClustersToClasses() {
+        if (applying) {
+            return;
+        }
+        final int n = cells.length;
+        final int k = kSpinner.getValue();
+
+        // Tally cells per cluster; only non-empty clusters get a row.
+        int[] counts = new int[k];
+        boolean any = false;
+        for (int i = 0; i < n; i++) {
+            int c = cluster[i];
+            if (c >= 0 && c < k) {
+                counts[c]++;
+                any = true;
+            }
+        }
+        if (!any) {
+            Dialogs.showWarningNotification(
+                    "CellTune", "No clusters available yet — run Recompute first.");
+            return;
+        }
+        if (hierarchy == null) {
+            Dialogs.showWarningNotification(
+                    "CellTune", "No image is open to classify.");
+            return;
+        }
+
+        // Existing project class names to seed the (editable) dropdowns.
+        List<String> classNames = new ArrayList<>();
+        for (PathClass pc : qupath.getAvailablePathClasses()) {
+            if (pc != null && pc.getName() != null) {
+                classNames.add(pc.toString());
+            }
+        }
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(6);
+        grid.setPadding(new Insets(4, 4, 4, 4));
+        grid.add(boldLabel("Cluster"), 0, 0);
+        grid.add(boldLabel("Cells"), 2, 0);
+        grid.add(boldLabel("Assign to class"), 3, 0);
+
+        Map<Integer, ComboBox<String>> selectors = new LinkedHashMap<>();
+        int row = 1;
+        for (int c = 0; c < k; c++) {
+            if (counts[c] == 0) {
+                continue;
+            }
+            Rectangle swatch = new Rectangle(14, 14, clusterColor(c));
+            swatch.setStroke(Color.gray(0.4));
+
+            ComboBox<String> combo = new ComboBox<>();
+            combo.setEditable(true);
+            combo.getItems().add(SKIP_CLASS);
+            combo.getItems().addAll(classNames);
+            combo.setValue(SKIP_CLASS);
+            combo.setPrefWidth(190);
+            selectors.put(c, combo);
+
+            HBox label = new HBox(6, swatch, new Label("Cluster " + c));
+            label.setAlignment(Pos.CENTER_LEFT);
+            grid.add(label, 0, row);
+            grid.add(new Label(String.format("%,d", counts[c])), 2, row);
+            grid.add(combo, 3, row);
+            row++;
+        }
+
+        Label warn = new Label(
+                "Apply overwrites the QuPath classification of every cell in the "
+                + "mapped clusters. Clusters left as “" + SKIP_CLASS
+                + "” are left unchanged. This does not affect CellTune "
+                + "training labels.");
+        warn.setWrapText(true);
+        warn.setMaxWidth(440);
+
+        VBox content = new VBox(10, grid, new Separator(), warn);
+        content.setPadding(new Insets(8));
+
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.initOwner(stage);
+        dlg.setTitle("Assign Clusters to Classes");
+        dlg.getDialogPane().setContent(content);
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.APPLY, ButtonType.CANCEL);
+
+        Optional<ButtonType> result = dlg.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.APPLY) {
+            return;
+        }
+
+        // Resolve the chosen mappings (skip blanks / "skip").
+        Map<Integer, PathClass> mapping = new LinkedHashMap<>();
+        for (var e : selectors.entrySet()) {
+            String v = e.getValue().getValue();
+            if (v == null) {
+                continue;
+            }
+            v = v.trim();
+            if (v.isEmpty() || v.equals(SKIP_CLASS)) {
+                continue;
+            }
+            mapping.put(e.getKey(), PathClass.fromString(v));
+        }
+        if (mapping.isEmpty()) {
+            statusLabel.setText("No clusters mapped — nothing changed.");
+            return;
+        }
+
+        int affected = 0;
+        for (int i = 0; i < n; i++) {
+            if (mapping.containsKey(cluster[i])) {
+                affected++;
+            }
+        }
+
+        boolean confirmed = Dialogs.showConfirmDialog(
+                "Replace classifications",
+                String.format(
+                        "Set the QuPath classification of %,d cell(s) across "
+                        + "%d cluster(s)? This replaces any existing class on "
+                        + "those cells.",
+                        affected, mapping.size()));
+        if (!confirmed) {
+            return;
+        }
+
+        applyClusterMapping(mapping);
+    }
+
+    /**
+     * Writes the cluster→class mapping onto the cells on a background thread,
+     * applying {@code setPathClass} in chunks marshalled to the FX thread so the
+     * UI stays responsive (and shows progress) for large cell counts.
+     */
+    private void applyClusterMapping(Map<Integer, PathClass> mapping) {
+        // Register any newly typed classes so they appear in the project list
+        // (we are on the FX thread here, before the worker starts).
+        var available = qupath.getAvailablePathClasses();
+        for (PathClass pc : mapping.values()) {
+            if (pc != null && !available.contains(pc)) {
+                available.add(pc);
+            }
+        }
+
+        applying = true;
+        setControlsDisabled(true);
+        progress.setProgress(0);
+        progress.setVisible(true);
+        statusLabel.setText("Applying cluster classifications…");
+
+        new Thread(() -> {
+            final int n = cells.length;
+            final int chunk = 5000;
+            final List<PathObject> changed = new ArrayList<>();
+            try {
+                for (int start = 0; start < n; start += chunk) {
+                    final int end = Math.min(n, start + chunk);
+                    final List<PathObject> objs = new ArrayList<>();
+                    final List<PathClass> classes = new ArrayList<>();
+                    for (int i = start; i < end; i++) {
+                        PathClass pc = mapping.get(cluster[i]);
+                        if (pc != null) {
+                            objs.add(cells[i]);
+                            classes.add(pc);
+                        }
+                    }
+
+                    final java.util.concurrent.CountDownLatch latch =
+                            new java.util.concurrent.CountDownLatch(1);
+                    Platform.runLater(() -> {
+                        try {
+                            for (int j = 0; j < objs.size(); j++) {
+                                objs.get(j).setPathClass(classes.get(j));
+                            }
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+                    latch.await();
+
+                    changed.addAll(objs);
+                    final double frac = end / (double) n;
+                    final int done = changed.size();
+                    Platform.runLater(() -> {
+                        progress.setProgress(frac);
+                        statusLabel.setText(
+                                String.format("Applying classifications… %,d cells", done));
+                    });
+                }
+
+                Platform.runLater(() -> {
+                    hierarchy.fireObjectClassificationsChangedEvent(this, changed);
+                    QuPathViewer viewer = qupath.getViewer();
+                    if (viewer != null) {
+                        viewer.repaint();
+                    }
+                    redraw(); // refresh CLASS colouring on the plot
+                    statusLabel.setText(String.format(
+                            "Applied %d cluster→class mapping(s) to %,d cell(s).",
+                            mapping.size(), changed.size()));
+                });
+                logger.info("Applied cluster→class mapping to {} cells ({} clusters)",
+                        changed.size(), mapping.size());
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                Platform.runLater(() ->
+                        statusLabel.setText("Apply cancelled."));
+            } finally {
+                Platform.runLater(() -> {
+                    progress.setVisible(false);
+                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                    setControlsDisabled(false);
+                    applying = false;
+                });
+            }
+        }, "CellTune-ApplyClusters").start();
+    }
+
+    private static Label boldLabel(String text) {
+        Label l = new Label(text);
+        l.setStyle("-fx-font-weight: bold;");
+        return l;
+    }
+
     private void setControlsDisabled(boolean disabled) {
         embeddingCombo.setDisable(disabled);
+        fullUmapCheck.setDisable(
+                disabled || embeddingCombo.getValue() != Embedding.UMAP);
         kSpinner.setDisable(disabled);
+        annotationField.setDisable(disabled);
+        classField.setDisable(disabled);
+        clusterMarkersBtn.setDisable(disabled);
+        applyClustersBtn.setDisable(disabled);
+    }
+
+    private void updateClusterMarkersLabel() {
+        int total = clusterMarkerItems.size();
+        int sel = 0;
+        for (CheckMenuItem it : clusterMarkerItems) {
+            if (it.isSelected()) {
+                sel++;
+            }
+        }
+        clusterMarkersBtn.setText(sel == total
+                ? "Cluster markers (all)"
+                : String.format("Cluster markers (%d/%d)", sel, total));
+    }
+
+    /** Indices into {@link #markerFeatures} of the checked cluster markers. */
+    private int[] selectedMarkerColumns() {
+        List<Integer> cols = new ArrayList<>();
+        for (int j = 0; j < clusterMarkerItems.size(); j++) {
+            if (clusterMarkerItems.get(j).isSelected()) {
+                cols.add(j);
+            }
+        }
+        int[] out = new int[cols.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = cols.get(i);
+        }
+        return out;
+    }
+
+    /** Projects all rows onto their first two principal components. */
+    private static void fillPca(double[][] std, int n, double[] nx, double[] ny) {
+        double[][] proj = PCA.fit(std).getProjection(2).apply(std);
+        for (int i = 0; i < n; i++) {
+            nx[i] = proj[i][0];
+            ny[i] = proj[i][1];
+        }
+    }
+
+    /**
+     * Embeds the rows with UMAP, subsampling to {@code maxCells} when the input is
+     * larger (pass {@link Integer#MAX_VALUE} to embed everything). Returns a
+     * status notice (currently empty).
+     *
+     * @throws LinkageError if the native ARPACK library cannot be loaded (caller
+     *     falls back to PCA)
+     */
+    private static String fillUmap(double[][] std, int n, double[] nx, double[] ny,
+                                   int maxCells) {
+        // UMAP: subsample if larger than the cap; embed a connected subset.
+        int[] sub = (n > maxCells)
+                ? randomSubsample(n, maxCells)
+                : identity(n);
+        // The status bar's "clustered · plotted" counts convey the subsample, so
+        // no extra notice is emitted here.
+        String notice = "";
+        double[][] subMatrix = new double[sub.length][];
+        for (int s = 0; s < sub.length; s++) {
+            subMatrix[s] = std[sub[s]];
+        }
+        int neighbors = Math.min(15, subMatrix.length - 1);
+        if (neighbors < 2) {
+            throw new IllegalStateException(
+                    "Too few cells for UMAP (need at least 3).");
+        }
+        UMAP umap = UMAP.of(subMatrix, neighbors);
+        // coordinates[j] corresponds to subMatrix row umap.index[j].
+        for (int j = 0; j < umap.coordinates.length; j++) {
+            int orig = sub[umap.index[j]];
+            nx[orig] = umap.coordinates[j][0];
+            ny[orig] = umap.coordinates[j][1];
+        }
+        return notice;
     }
 
     private static int[] identity(int n) {
@@ -635,16 +1255,27 @@ public class ScatterPlotView {
         gc.setTextAlign(TextAlignment.LEFT);
         double sw = 12;
         double lineH = 18;
+        legendClusterCount = 0; // cleared unless CLUSTER legend is drawn below
         if (mode == ColorMode.CLUSTER) {
             int k = kSpinner.getValue();
+            // Shrink the row height (and swatch) so many clusters still fit the
+            // canvas and every row stays clickable for click-to-select.
+            double avail = canvas.getHeight() - y - PLOT_MARGIN_BOTTOM;
+            double clusterLineH = Math.min(lineH, Math.max(10, avail / Math.max(1, k)));
+            double clusterSw = Math.min(sw, clusterLineH - 2);
+            // Record geometry so legend rows can be hit-tested for click-to-select.
+            legendClusterX = x;
+            legendClusterY = y;
+            legendClusterLineH = clusterLineH;
+            legendClusterCount = k;
             gc.setFill(Color.BLACK);
             gc.fillText("Clusters", x, y - 6);
             for (int c = 0; c < k; c++) {
-                double yy = y + c * lineH;
+                double yy = y + c * clusterLineH;
                 gc.setFill(clusterColor(c));
-                gc.fillRect(x, yy, sw, sw);
+                gc.fillRect(x, yy, clusterSw, clusterSw);
                 gc.setFill(Color.gray(0.2));
-                gc.fillText("Cluster " + c, x + sw + 6, yy + sw - 2);
+                gc.fillText("Cluster " + c, x + clusterSw + 6, yy + clusterSw - 1);
             }
         } else if (mode == ColorMode.CLASS) {
             // Distinct classes present among plotted cells (capped).
@@ -705,7 +1336,21 @@ public class ScatterPlotView {
 
     // ── Mouse selection ──────────────────────────────────────────────────────────
 
+    private void onMouseMoved(MouseEvent e) {
+        // Hint that cluster legend entries are clickable.
+        boolean overLegend = clusterAtPoint(e.getX(), e.getY()) >= 0;
+        canvas.setCursor(overLegend ? javafx.scene.Cursor.HAND : javafx.scene.Cursor.DEFAULT);
+    }
+
     private void onMousePressed(MouseEvent e) {
+        // Clicking a cluster in the legend selects that cluster's cells in the
+        // viewer instead of starting a drag-selection gesture.
+        int legendCluster = clusterAtPoint(e.getX(), e.getY());
+        if (legendCluster >= 0) {
+            dragging = false;
+            selectCluster(legendCluster);
+            return;
+        }
         dragging = true;
         dragStartX = e.getX();
         dragStartY = e.getY();
@@ -819,6 +1464,56 @@ public class ScatterPlotView {
         }
     }
 
+    /**
+     * Returns the cluster index whose legend row contains the canvas point, or
+     * -1 if the point is not on a clickable cluster legend entry. Only valid in
+     * CLUSTER colour mode (geometry is recorded by {@link #drawLegend}).
+     */
+    private int clusterAtPoint(double mx, double my) {
+        if (colorCombo.getValue() != ColorMode.CLUSTER || legendClusterCount <= 0) {
+            return -1;
+        }
+        if (mx < legendClusterX - 4 || mx > canvas.getWidth()) {
+            return -1;
+        }
+        double rel = my - (legendClusterY - 3);
+        if (rel < 0) {
+            return -1;
+        }
+        int c = (int) (rel / legendClusterLineH);
+        return (c >= 0 && c < legendClusterCount) ? c : -1;
+    }
+
+    /** Selects every cell assigned to the given k-means cluster in the viewer. */
+    private void selectCluster(int c) {
+        List<PathObject> hits = new ArrayList<>();
+        for (int i = 0; i < cells.length; i++) {
+            if (cluster[i] == c) {
+                hits.add(cells[i]);
+            }
+        }
+        if (hierarchy != null) {
+            updatingSelection = true;
+            try {
+                if (hits.isEmpty()) {
+                    hierarchy.getSelectionModel().clearSelection();
+                } else {
+                    hierarchy.getSelectionModel().setSelectedObjects(hits, null);
+                }
+            } finally {
+                updatingSelection = false;
+            }
+            QuPathViewer viewer = qupath.getViewer();
+            if (viewer != null) {
+                viewer.repaint();
+            }
+        }
+        applySelection(hits);
+        redraw();
+        statusLabel.setText(
+                String.format("Selected cluster %d — %,d cell(s).", c, hits.size()));
+    }
+
     private static boolean pointInPolygon(double x, double y, List<double[]> poly) {
         boolean in = false;
         int n = poly.size();
@@ -871,6 +1566,7 @@ public class ScatterPlotView {
     private void updateStatus() {
         int plotted = 0;
         int sel = 0;
+        int clustered = 0;
         for (int i = 0; i < cells.length; i++) {
             if (!Double.isNaN(ex[i])) {
                 plotted++;
@@ -878,16 +1574,26 @@ public class ScatterPlotView {
             if (selected[i]) {
                 sel++;
             }
+            if (cluster[i] >= 0) {
+                clustered++;
+            }
         }
+        // When UMAP is subsampled, k-means still clusters every (active) cell but
+        // only a subset is drawn — show both so the gap is never mistaken for
+        // "only N cells were clustered".
+        String counts = (plotted == clustered)
+                ? String.format("%,d cells", clustered)
+                : String.format("%,d clustered · %,d plotted", clustered, plotted);
         statusLabel.setText(String.format(
-                "%s  ·  %s  ·  %,d cells plotted  ·  k=%d  ·  %,d selected",
-                imageName, embeddingCombo.getValue(), plotted, kSpinner.getValue(), sel));
+                "%s  ·  %s  ·  %s  ·  k=%d  ·  %,d selected%s",
+                imageName, embeddingCombo.getValue(), counts,
+                kSpinner.getValue(), sel, statusNotice));
     }
 
     private void appendStatusNotice(String notice) {
-        if (notice != null && !notice.isBlank()) {
-            statusLabel.setText(statusLabel.getText() + notice);
-        }
+        // Persisted across redraws via updateStatus() (redraw() rebuilds the label).
+        statusNotice = (notice == null) ? "" : notice;
+        updateStatus();
     }
 
     private void exportAsPng() {
