@@ -26,6 +26,15 @@ dependencies {
     implementation("io.github.metarank:lightgbm4j:4.6.0-2")
     shadow("io.github.metarank:lightgbm4j:4.6.0-2")
 
+    // SMILE — PCA / UMAP / k-means for the cell scatter plot. Bundled into the
+    // shadow jar. NOTE: SMILE's PCA (Matrix.svd) and UMAP (spectral init) call
+    // into native BLAS/LAPACK via org.bytedeco openblas + arpack-ng — there is
+    // no pure-Java fallback in 3.1.1, so the bytedeco natives must be bundled.
+    // This adds the platform native binaries (multiple OS classifiers) to the
+    // jar; accepted to keep PCA/UMAP working and cross-platform portable.
+    implementation("com.github.haifengl:smile-core:3.1.1")
+    shadow("com.github.haifengl:smile-core:3.1.1")
+
     // For testing
     testImplementation(libs.bundles.qupath)
     testImplementation(libs.junit)

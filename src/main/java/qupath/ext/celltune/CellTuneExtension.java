@@ -58,7 +58,9 @@ import qupath.ext.celltune.ui.IntensityHeatmapView;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
+import qupath.ext.celltune.ui.ScatterPlotView;
 import qupath.ext.celltune.ui.TrainingTileExtractor;
+import qupath.ext.celltune.util.JvmModuleOpener;
 import qupath.ext.celltune.ui.ProjectPredictionSummaryView;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
@@ -207,6 +209,10 @@ public class CellTuneExtension implements QuPathExtension {
             return;
         }
         isInstalled = true;
+        // Open java.base/java.lang so Smile's native PCA/UMAP (loaded via JavaCPP)
+        // work without the user setting --add-opens. Must run before the cell
+        // scatter plot first touches a Smile native class.
+        JvmModuleOpener.ensureJavaLangOpen();
         suppressImageTypePromptOnce();
         addPreferenceToPane(qupath);
         addMenuItems(qupath);
@@ -684,6 +690,10 @@ public class CellTuneExtension implements QuPathExtension {
         intensityHeatmapItem.setOnAction(e -> showIntensityHeatmaps(qupath));
         intensityHeatmapItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem scatterPlotItem = new MenuItem("Scatter Plots and Clustering...");
+        scatterPlotItem.setOnAction(e -> showScatterPlot(qupath));
+        scatterPlotItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem exportItem = new MenuItem(resources.getString("menu.export.short"));
         exportItem.setOnAction(e -> exportCellTable(qupath));
         exportItem.disableProperty().bind(enableExtensionProperty.not());
@@ -779,6 +789,7 @@ public class CellTuneExtension implements QuPathExtension {
                 new SeparatorMenuItem(),
                 projectSummaryItem,
                 intensityHeatmapItem,
+                scatterPlotItem,
                 distancesItem,
                 new SeparatorMenuItem(),
                 exportMenu,
@@ -861,6 +872,69 @@ public class CellTuneExtension implements QuPathExtension {
 
         new IntensityHeatmapView(qupath.getStage(), qupath, currentImageName,
                 markerFeatures, result).show();
+    }
+
+    /**
+     * Open the interactive scatter-plot window: cells projected into a 2D PCA or
+     * UMAP embedding of their selected marker means, coloured by k-means cluster,
+     * predicted class, or marker intensity. Box/lasso selection on the plot
+     * selects the corresponding cells in the viewer, and viewer selection is
+     * mirrored back onto the plot. Mirrors {@link #showIntensityHeatmaps} for the
+     * cell/feature/marker discovery flow.
+     */
+    private void showScatterPlot(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+
+        List<PathObject> cells = imageData.getHierarchy()
+                .getObjects(null, PathObject.class).stream()
+                .filter(PathObjectFilter.DETECTIONS_ALL)
+                .toList();
+        if (cells.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "No detections found. Run cell detection first.");
+            return;
+        }
+
+        List<String> allFeatures = CellFeatureExtractor.discoverFeatureNames(cells);
+        if (allFeatures.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No cell measurements found.");
+            return;
+        }
+
+        // Default to the whole-cell marker means; let the user adjust.
+        List<String> markerDefaults = IntensityHeatmap.discoverMarkerFeatures(allFeatures);
+        var selectionPane = new FeatureSelectionPane(
+                qupath.getStage(), allFeatures,
+                markerDefaults.isEmpty() ? null : markerDefaults);
+        selectionPane.setTitle("Select Measurements for Scatter Plot");
+        List<String> markerFeatures = selectionPane.showAndWait();
+        if (markerFeatures == null) {
+            return; // user cancelled
+        }
+        if (markerFeatures.isEmpty()) {
+            Dialogs.showWarningNotification(EXTENSION_NAME,
+                    "No measurements selected — nothing to plot.");
+            return;
+        }
+
+        String currentImageName = null;
+        var project = qupath.getProject();
+        if (project != null) {
+            var entry = project.getEntry(imageData);
+            if (entry != null) {
+                currentImageName = entry.getImageName();
+            }
+        }
+        if (currentImageName == null || currentImageName.isBlank()) {
+            currentImageName = imageData.getServer().getMetadata().getName();
+        }
+
+        new ScatterPlotView(qupath.getStage(), qupath, currentImageName,
+                markerFeatures, cells, predAll).show();
     }
 
     // ── Utility scripts ────────────────────────────────────────────────────────

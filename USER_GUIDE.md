@@ -27,19 +27,25 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 8. [Project Prediction Summary](#8-project-prediction-summary)
 9. [Intensity heatmaps](#9-intensity-heatmaps)
 10. [Distance measurements (spatial analysis)](#10-distance-measurements-spatial-analysis)
-11. [Exporting results](#11-exporting-results)
-    - [11.1 Cell table export](#111-cell-table-export)
-    - [11.2 Ground truth export & import](#112-ground-truth-export--import)
-12. [Utility scripts](#12-utility-scripts)
-    - [12.1 Filter Cells by Size & Circularity](#121-filter-cells-by-size--circularity)
-    - [12.2 Resolve Hierarchy](#122-resolve-hierarchy)
-    - [12.3 Delete Measurements by Keyword](#123-delete-measurements-by-keyword)
-    - [12.4 Import GeoJSON Objects](#124-import-geojson-objects)
-    - [12.5 Export Annotation Regions](#125-export-annotation-regions)
-13. [Reference: every setting in the sidebar](#13-reference-every-setting-in-the-sidebar)
-14. [Reference: every CellTune menu item](#14-reference-every-celltune-menu-item)
-15. [Project directory layout](#15-project-directory-layout)
-16. [Tips, gotchas, and known limitations](#16-tips-gotchas-and-known-limitations)
+11. [Cell scatter plot — clustering & gating](#11-cell-scatter-plot--clustering--gating)
+    - [11.1 Controls](#111-controls)
+    - [11.2 Selecting cells](#112-selecting-cells)
+    - [11.3 Apply Clusters — assign classes to clusters](#113-apply-clusters--assign-classes-to-clusters)
+    - [11.4 Cluster-within-clusters (hierarchical gating)](#114-cluster-within-clusters-hierarchical-gating)
+    - [11.5 Project-wide clustering across images](#115-project-wide-clustering-across-images)
+12. [Exporting results](#12-exporting-results)
+    - [12.1 Cell table export](#121-cell-table-export)
+    - [12.2 Ground truth export & import](#122-ground-truth-export--import)
+13. [Utility scripts](#13-utility-scripts)
+    - [13.1 Filter Cells by Size & Circularity](#131-filter-cells-by-size--circularity)
+    - [13.2 Resolve Hierarchy](#132-resolve-hierarchy)
+    - [13.3 Delete Measurements by Keyword](#133-delete-measurements-by-keyword)
+    - [13.4 Import GeoJSON Objects](#134-import-geojson-objects)
+    - [13.5 Export Annotation Regions](#135-export-annotation-regions)
+14. [Reference: every setting in the sidebar](#14-reference-every-setting-in-the-sidebar)
+15. [Reference: every CellTune menu item](#15-reference-every-celltune-menu-item)
+16. [Project directory layout](#16-project-directory-layout)
+17. [Tips, gotchas, and known limitations](#17-tips-gotchas-and-known-limitations)
 
 ---
 
@@ -135,7 +141,7 @@ QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000
 
 **Do you need to hand-prune for big panels?** Usually not. Both default models are gradient-boosted trees, which are robust to correlated and redundant features: at each split a tree picks the single most informative feature, so two near-duplicate columns don't distort the model the way they would in a linear/regression model — the worst case is wasted training time and *diluted* importance (a marker's signal gets split across its correlated columns, muddying SHAP plots). So extra features rarely hurt accuracy, but they do cost speed and interpretability.
 
-Rather than manually paring the list down, leave **Auto-prune features** (§[12](#12-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round:
+Rather than manually paring the list down, leave **Auto-prune features** (§[14](#14-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round:
 
 1. **Sparsity / variance filter** — drops features that are effectively constant (non-zero in fewer than ~5 of your labelled cells, or zero variance). A feature that never varies can't help a tree split.
 2. **Within-marker correlation removal** — features are grouped by their prefix (`Cell:`, `Nucleus:`, `Membrane:`…); within each group it keeps the **highest-variance** feature and drops any peer whose absolute Pearson correlation with a kept feature exceeds ~0.95. This is what collapses `Cell: CD3 Mean` / `Cell: CD3 Median` / `Cell: CD3 Max` down to one representative column.
@@ -542,9 +548,144 @@ Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for t
 
 ---
 
-## 11. Exporting results
+## 11. Cell scatter plot — clustering & gating
 
-### 11.1 Cell table export
+**Extensions → CellTune Classifier → Scatter Plots and Clustering...** opens an interactive
+2D scatter plot for **unsupervised exploration**: cells are clustered by k-means
+on their marker measurements and projected into a 2D embedding so you can see,
+label, and sub-cluster populations. This is independent of the trained
+classifier — it writes to QuPath classifications, not CellTune training labels.
+
+When you open it you first pick which measurements to embed (a *Select
+Measurements for Scatter Plot* dialog). The window then computes an initial
+embedding on a background thread.
+
+### 11.1 Controls
+
+**Top row**
+- **Embedding** — `PCA` (fast, linear) or `UMAP` (slower, non-linear, separates
+  overlapping populations better). The embedding is **for visualisation only**;
+  k-means always clusters in the original marker space, not on the 2D coords.
+- **Full UMAP** (checkbox, UMAP only) — by default UMAP *plots* a 20,000-cell
+  sample for responsiveness (k-means still clusters **all** cells; the status bar
+  shows e.g. *"309,584 clustered · 19,432 plotted"*). Tick **Full UMAP** to embed
+  every cell instead — much slower and more memory-hungry on large images, but
+  nothing is left out of the plot. PCA always plots all cells.
+- **Clusters (k)** — number of k-means clusters (2–50). The legend shrinks to
+  keep all clusters visible and clickable.
+- **Recompute** — re-run clustering + embedding with the current settings.
+- **Project Clustering…** — cluster the whole cohort consistently across images;
+  see §[11.5](#115-project-wide-clustering-across-images).
+
+**Filter row (this is the gating row)**
+- **Annotation** — type a keyword to cluster only cells whose centroid falls
+  inside an annotation whose name (or classification) contains that text. Blank =
+  all cells. Same membership test as Review mode.
+- **Within class** — restrict clustering to cells whose current QuPath
+  classification contains this text (pick from the dropdown or type). Combines
+  with the annotation filter (both must match).
+- **Cluster markers** — a checklist of the embedded markers, all ticked by
+  default. Untick markers to cluster on a focused panel (e.g. immune markers
+  only). Values are **re-standardised over the active subset** each run, so
+  sub-clustering scales to the subpopulation rather than the whole image. At
+  least 2 markers must be ticked.
+
+**Bottom row**
+- **Colour by** — `CLUSTER` (k-means id), `CLASS` (current/predicted class), or
+  `MARKER` (single-marker intensity gradient; pick the marker alongside).
+- **Select: Box / Lasso** — drag on the plot to select those cells in the QuPath
+  viewer.
+- **Apply Clusters…** — see §11.3.
+- **Export PNG…** — save the current plot.
+
+### 11.2 Selecting cells
+
+- **Box / Lasso** drag selects the enclosed points in the viewer.
+- **Click a cluster in the legend** (CLUSTER colour mode) to select **all** that
+  cluster's cells in the viewer — the cursor turns to a hand over clickable
+  legend rows.
+
+Selection is two-way: selecting cells in the viewer outlines them on the plot.
+
+### 11.3 Apply Clusters — assign classes to clusters
+
+**Apply Clusters…** opens a dialog with one row per non-empty cluster (colour
+swatch + cell count) and a dropdown to map each cluster to an existing class, a
+newly typed class, or **— skip —**. After you confirm (a second dialog shows the
+exact cell count), the chosen classes are written to those cells'
+**classification** on a background thread with a progress bar. Skipped clusters
+and unmapped cells are left untouched. This replaces any existing class on the
+mapped cells; it does **not** touch CellTune ground-truth training labels.
+
+### 11.4 Cluster-within-clusters (hierarchical gating)
+
+The filter row lets you gate, then re-cluster inside a gate — the standard
+two-level phenotyping workflow:
+
+1. Cluster all cells on all markers → **Apply Clusters** → assign the cardinal
+   classes (e.g. **Tumour / Immune / Other**).
+2. Set **Within class: Immune**, open **Cluster markers** and tick only the
+   immune markers (CD45, CD3d, CD8A, CD4, CD20, PD1, FOXP3) → **Recompute**.
+   Only immune cells re-cluster, on immune markers, re-standardised within the
+   immune subset.
+3. **Apply Clusters** again to name the sub-populations — type derived names like
+   `Immune: CD8 T` (QuPath treats `Parent: Child` as a derived class).
+
+Repeat to go deeper. The status bar reports the active scope and marker count,
+e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
+
+> **Native libraries / `--add-opens`.** PCA and UMAP use native math libraries
+> (OpenBLAS / ARPACK via JavaCPP). CellTune opens the required JVM module access
+> automatically at startup, so no launch flags are normally needed. If that ever
+> fails on a locked-down JVM, the plot falls back to PCA and the status bar
+> suggests launching QuPath with
+> `--add-opens=java.base/java.lang=ALL-UNNAMED`.
+
+### 11.5 Project-wide clustering across images
+
+The scatter plot above is interactive but single-image. To cluster a **whole
+cohort consistently**, click the **Project Clustering…** button inside the
+scatter plot window (it seeds the dialog with your currently-checked cluster
+markers). It fits **one** k-means model on a sample pooled across the images you
+choose, then assigns *every* cell in *every* selected image to its nearest cohort
+centroid — so cluster 3 means the same phenotype in every image (unlike
+clustering each image separately, which gives non-comparable cluster ids).
+
+In the dialog:
+
+1. **Select Images…** — choose which project images to include (defaults to all).
+2. **Clusters (k)** and **Sample size** — the sample is the number of cells
+   pooled to *fit* the model (default 50,000, drawn evenly per image). **Every
+   cell is still classified** in the assignment pass — the sample only bounds the
+   *fit*, keeping memory flat regardless of project size. 50,000 is statistically
+   ample to place stable centroids (more cells barely move them but cost time);
+   raise it if you want the fit to see more cells.
+3. **Run Clustering** — streams each image, samples cells, fits k-means once, and
+   logs per-cluster sizes.
+   - **Show Plot…** (enabled after clustering) opens a **PCA/UMAP scatter** of the
+     pooled sample, coloured by cluster — visualisation only (clustering still
+     uses all markers in full space, not the 2D embedding). Toggle PCA/UMAP and
+     **Recompute** in that window.
+4. **Assign Classes…** — shows a **cluster × marker heatmap** (per-cluster mean
+   z-scored intensity: red = high, blue = low) so you can name each cluster from
+   its high markers, with a class dropdown per cluster (or skip). On confirm,
+   CellTune opens each image, assigns all cells to their nearest centroid, writes
+   the mapped classes, and **saves each image**, with a progress bar.
+
+> **Batch effects.** Because cells are pooled across images, comparable staining
+> across the cohort matters — normalise features (§[4.2](#42-normalise-features))
+> first if your images differ in intensity scale, or the pooled clusters will
+> partly reflect staining differences rather than biology.
+
+> **This writes classifications and saves every selected image.** It replaces the
+> existing class on assigned cells (CellTune training labels are untouched). The
+> currently-open image updates live; others are saved to disk.
+
+---
+
+## 12. Exporting results
+
+### 12.1 Cell table export
 
 **Menu:** *Extensions → CellTune Classifier → Export ▸ Cell Table...*
 
@@ -566,7 +707,7 @@ Before exporting, a **Select Columns for Cell Table Export** dialog opens. It mi
 
 RFC-4180 compliant (quotes escaped). The dialog asks which images to include if the project has more than one.
 
-### 11.2 Ground truth export & import
+### 12.2 Ground truth export & import
 
 CellTune ground-truth files are a portable representation of your labelled cells **and** their feature vectors — they let you reuse labels across projects/workstations.
 
@@ -601,33 +742,33 @@ The binary equivalents are **Import ▸ Active Binary Ground Truth...** — same
 
 ---
 
-## 12. Utility scripts
+## 13. Utility scripts
 
 *Extensions → CellTune Classifier → **Utility Scripts***
 
 A grab-bag of common housekeeping operations that would otherwise live in one-off Groovy scripts. Each prompts for its parameters and reports what it did.
 
-### 12.1 Filter Cells by Size & Circularity
+### 13.1 Filter Cells by Size & Circularity
 
 Removes cell detections that are likely mis-segmented or artefacts. A dialog takes an optional **Min** and **Max** for both **Cell area (µm²)** and **Circularity** — leave any field blank for no bound. A cell is removed if it violates *any* active bound (e.g. `area > 500` **or** `circularity < 0.7`). Cells missing either measurement are skipped, not removed. The number of cells to be removed is shown for confirmation first; the operation acts on the **current image** only.
 
-### 12.2 Resolve Hierarchy
+### 13.2 Resolve Hierarchy
 
 Rebuilds parent/child relationships from ROI containment — equivalent to the `resolveHierarchy()` scripting call. Choose **Current image** (resolves and refreshes immediately) or **All project images** (confirms first, then resolves and saves every entry). Project-wide work runs in the background so QuPath stays responsive; the open image updates straight away.
 
-### 12.3 Delete Measurements by Keyword
+### 13.3 Delete Measurements by Keyword
 
 > ⚠️ **Destructive and not undoable.** Double-check the keyword against your actual measurement names — a loose keyword can delete more columns than you intend.
 
 Removes every detection measurement whose name contains a keyword (case-insensitive by default; tick **Case sensitive** to match exactly). Choose **Current image** or **All project images**. Before deleting, CellTune previews the exact list of matching columns and asks you to confirm — if nothing matches, it aborts. Project-wide saves each entry (open image first, the rest in the background).
 
-### 12.4 Import GeoJSON Objects
+### 13.4 Import GeoJSON Objects
 
 > ⚠️ **For small-to-medium GeoJSON only.** This importer loads the whole file into QuPath's memory, so very large files (hundreds of MB / millions of objects) can exhaust the heap and crash QuPath. For those, use the dedicated headless pipeline instead: [github.com/BioimageAnalysisCoreWEHI/import_large_geojson](https://github.com/BioimageAnalysisCoreWEHI/import_large_geojson).
 
 Imports annotations and detections from a `.geojson` (or gzipped `.geojson.gz`) file into the **current image**. Pick the file, then choose whether to **clear existing objects first** and whether to **resolve the hierarchy** afterwards (off by default — it is O(n²) and slow for many objects). Parsing streams the file feature-by-feature on a background thread; objects are added annotations-first (locked), then detections, and the image data is saved automatically.
 
-### 12.5 Export Annotation Regions
+### 13.5 Export Annotation Regions
 
 > ⚠️ **Single-image, small-to-medium exports.** Pixels are streamed tile-by-tile so memory stays bounded, but very large regions or whole-project batch exports are far faster headless on HPC. For those, use the dedicated pipeline: [github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions](https://github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions).
 
@@ -635,7 +776,7 @@ Exports one or more annotation ROIs from the **current image** as polygon-**mask
 
 ---
 
-## 13. Reference: every setting in the sidebar
+## 14. Reference: every setting in the sidebar
 
 | Control | Default | What it does |
 |---|---|---|
@@ -664,7 +805,7 @@ Exports one or more annotation ROIs from the **current image** as polygon-**mask
 
 ---
 
-## 14. Reference: every CellTune menu item
+## 15. Reference: every CellTune menu item
 
 All under *Extensions → CellTune Classifier*.
 
@@ -678,21 +819,22 @@ All under *Extensions → CellTune Classifier*.
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
 | Intensity Heatmaps... | Open image with detections | Phenotype × marker mean-intensity heatmap (z-score coloured), per-image / project-combined, PNG/CSV export. See §[9](#9-intensity-heatmaps). |
 | Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[10](#10-distance-measurements-spatial-analysis). |
+| Scatter Plots and Clustering... | Open image with detections | Interactive PCA/UMAP embedding + k-means clustering, annotation/class gating, cluster→class assignment, and a **Project Clustering…** button for cohort-wide clustering across images. See §[11](#11-cell-scatter-plot--clustering--gating). |
 | Export ▸ Cell Table... | Open image with detections | One CSV per selected image. |
 | Export ▸ Ground Truth... | Open image with labels (multi-class) | Portable labels + feature vectors CSV. |
 | Export ▸ Active Binary Ground Truth... | Binary mode active + open image with labels | Same as above, scoped to active marker. |
 | Import ▸ Marker Table... | Open image | Load cell-type → markers mapping for review channel switching. |
 | Import ▸ Ground Truth... | Open image (multi-class) | Spatial-match or training-data-only mode. |
 | Import ▸ Active Binary Ground Truth... | Binary mode active + open image | Same as above, scoped to active marker. |
-| Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[12.1](#121-filter-cells-by-size--circularity). |
-| Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[12.2](#122-resolve-hierarchy). |
-| Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[12.4](#124-import-geojson-objects). |
-| Utility Scripts ▸ Export Annotation Regions... | Open image | Export annotation ROIs from the current image as polygon-masked OME-TIFF(s) — **single-image, small-to-medium**. See §[12.5](#125-export-annotation-regions). |
-| Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[12.3](#123-delete-measurements-by-keyword). |
+| Utility Scripts ▸ Filter Cells by Size & Circularity... | Open image with cells | Remove cells outside optional area/circularity bounds (current image). See §[13.1](#131-filter-cells-by-size--circularity). |
+| Utility Scripts ▸ Resolve Hierarchy... | Open image or project | Rebuild parent/child relationships (`resolveHierarchy()`); current image or whole project. See §[13.2](#132-resolve-hierarchy). |
+| Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[13.4](#134-import-geojson-objects). |
+| Utility Scripts ▸ Export Annotation Regions... | Open image | Export annotation ROIs from the current image as polygon-masked OME-TIFF(s) — **single-image, small-to-medium**. See §[13.5](#135-export-annotation-regions). |
+| Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[13.3](#133-delete-measurements-by-keyword). |
 
 ---
 
-## 15. Project directory layout
+## 16. Project directory layout
 
 Everything CellTune writes is under `<project>/celltune/`:
 
@@ -725,7 +867,7 @@ JSON throughout. Model bytes are Base64-encoded inside the state files. Safe to 
 
 ---
 
-## 16. Tips, gotchas, and known limitations
+## 17. Tips, gotchas, and known limitations
 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.
