@@ -43,8 +43,11 @@ import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellTypeTable;
 import qupath.ext.celltune.model.CohortAnomalyAnalyzer;
 import qupath.ext.celltune.model.CohortAnomalyReport;
+import qupath.ext.celltune.model.ImagePixelStats;
+import qupath.ext.celltune.model.ImagePixelStatsReader;
 import qupath.ext.celltune.model.IntensityHeatmap;
 import qupath.ext.celltune.model.LabelStore;
+import qupath.ext.celltune.model.PixelCohortAnalyzer;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.ext.celltune.ui.ChannelSelector;
 import qupath.ext.celltune.ui.ClassificationPanel;
@@ -56,6 +59,7 @@ import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.ui.ImageSelectionPane;
 import qupath.ext.celltune.ui.IntensityHeatmapView;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
+import qupath.ext.celltune.ui.PixelPrescreenView;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
 import qupath.ext.celltune.ui.ScatterPlotView;
@@ -690,6 +694,10 @@ public class CellTuneExtension implements QuPathExtension {
         intensityHeatmapItem.setOnAction(e -> showIntensityHeatmaps(qupath));
         intensityHeatmapItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem pixelPrescreenItem = new MenuItem(resources.getString("menu.pixel.prescreen"));
+        pixelPrescreenItem.setOnAction(e -> showImagePixelPrescreen(qupath));
+        pixelPrescreenItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem scatterPlotItem = new MenuItem("Scatter Plots and Clustering...");
         scatterPlotItem.setOnAction(e -> showScatterPlot(qupath));
         scatterPlotItem.disableProperty().bind(enableExtensionProperty.not());
@@ -769,6 +777,10 @@ public class CellTuneExtension implements QuPathExtension {
         deleteMeasurementsItem.setOnAction(e -> deleteMeasurementsByKeyword(qupath));
         deleteMeasurementsItem.disableProperty().bind(enableExtensionProperty.not());
 
+        MenuItem resetProjectItem = new MenuItem(resources.getString("menu.utility.reset.project"));
+        resetProjectItem.setOnAction(e -> showResetProjectState(qupath));
+        resetProjectItem.disableProperty().bind(enableExtensionProperty.not());
+
         MenuItem importGeoJsonItem = new MenuItem(resources.getString("menu.utility.import.geojson"));
         importGeoJsonItem.setOnAction(e -> importGeoJsonObjects(qupath));
         importGeoJsonItem.disableProperty().bind(enableExtensionProperty.not());
@@ -779,7 +791,7 @@ public class CellTuneExtension implements QuPathExtension {
 
         Menu utilityScriptsMenu = new Menu(resources.getString("menu.group.utilities"));
         utilityScriptsMenu.disableProperty().bind(enableExtensionProperty.not());
-        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, lockAnnotationsItem, importGeoJsonItem, exportRegionsItem, deleteMeasurementsItem);
+        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, lockAnnotationsItem, importGeoJsonItem, exportRegionsItem, deleteMeasurementsItem, new SeparatorMenuItem(), resetProjectItem);
         menu.getItems().addAll(
                 binaryItem,
                 compositeItem,
@@ -789,6 +801,7 @@ public class CellTuneExtension implements QuPathExtension {
                 new SeparatorMenuItem(),
                 projectSummaryItem,
                 intensityHeatmapItem,
+                pixelPrescreenItem,
                 scatterPlotItem,
                 distancesItem,
                 new SeparatorMenuItem(),
@@ -2076,6 +2089,306 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     // ── Placeholder actions (wired in later phases) ────────────────────────────
+
+    /**
+     * Completely reset CellTune's saved state for the current project — a clean
+     * slate for trying different ML options on a copied project.
+     * <p>
+     * Deletes the whole {@code <project>/celltune/} folder (labels, trained
+     * models, predictions, feature selection, normalization, marker table, binary
+     * classifiers, review state) and resets the in-memory session. A timestamped
+     * {@code celltune_backup_*.zip} is written to the project folder first as a
+     * safety net. Images and detections are untouched unless the user opts in to
+     * also clearing CellTune label points and cell classifications from every
+     * image. Guarded by a typed "RESET" confirmation.
+     */
+    private void showResetProjectState(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
+            return;
+        }
+
+        CheckBox stripBox = new CheckBox(
+                "Also clear CellTune label points and all cell classifications from every image");
+        stripBox.setWrapText(true);
+
+        TextField confirmField = new TextField();
+        confirmField.setPromptText("Type RESET to confirm");
+
+        Label info = new Label(
+                "This permanently deletes this project's celltune/ folder:\n"
+                        + "  • all labels and per-image label files\n"
+                        + "  • trained classifiers (multi-class + binary) and predictions\n"
+                        + "  • feature selection, normalisation, marker table, composite rules\n"
+                        + "  • sampling/review state\n\n"
+                        + "A timestamped backup (celltune_backup_*.zip) is written to the "
+                        + "project folder first, so this can be undone by unzipping it.\n\n"
+                        + "Images and detections are kept. Tick the box below to also strip "
+                        + "CellTune label points and cell classifications from every image.");
+        info.setWrapText(true);
+
+        VBox content = new VBox(10, info, stripBox, new Label("Confirm:"), confirmField);
+        content.setPadding(new Insets(10));
+        content.setPrefWidth(480);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.initOwner(qupath.getStage());
+        dialog.setTitle(EXTENSION_NAME);
+        dialog.setHeaderText("Reset CellTune state for this project");
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        javafx.scene.Node okBtn = dialog.getDialogPane().lookupButton(ButtonType.OK);
+        okBtn.setDisable(true);
+        confirmField.textProperty().addListener((o, a, b) ->
+                okBtn.setDisable(!"RESET".equals(b == null ? "" : b.strip())));
+
+        var choice = dialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != ButtonType.OK) {
+            return;
+        }
+        final boolean strip = stripBox.isSelected();
+
+        // ── Back up then delete the celltune/ state directory (usually small). ──
+        Path backup;
+        try {
+            backup = ProjectStateManager.backupProjectState(project);
+        } catch (IOException ex) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "Backup failed; nothing was deleted.\n" + ex.getMessage());
+            return;
+        }
+        try {
+            ProjectStateManager.deleteProjectState(project);
+        } catch (IOException ex) {
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "Failed to delete CellTune state: " + ex.getMessage()
+                            + (backup != null ? "\nBackup is at: " + backup : ""));
+            return;
+        }
+
+        // ── Reset the running session so nothing re-saves the old state. ──
+        resetInMemoryState(qupath);
+
+        final String backupMsg = backup != null
+                ? "Backup: " + backup.getFileName()
+                : "(no previous state on disk)";
+
+        if (!strip) {
+            Dialogs.showInfoNotification(EXTENSION_NAME,
+                    "CellTune project state reset. " + backupMsg);
+            return;
+        }
+
+        // ── Optional: strip CellTune artifacts from every image's data. ──
+        @SuppressWarnings("unchecked")
+        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        var currentImageData = qupath.getImageData();
+        var currentEntry = currentImageData != null ? project.getEntry(currentImageData) : null;
+
+        // Handle the open image inline so the viewer refreshes immediately.
+        if (currentImageData != null && currentEntry != null) {
+            try {
+                stripCellTuneArtifactsFromHierarchy(currentImageData.getHierarchy());
+                currentImageData.getHierarchy().fireHierarchyChangedEvent(this);
+                currentEntry.saveImageData(currentImageData);
+            } catch (Exception ex) {
+                logger.warn("[CellTune] Failed to strip artifacts from current image: {}", ex.getMessage());
+            }
+        }
+
+        var stage = new javafx.stage.Stage();
+        stage.setTitle(EXTENSION_NAME + " — Clearing image artifacts");
+        stage.initOwner(qupath.getStage());
+        stage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        stage.setResizable(false);
+        var bar = new javafx.scene.control.ProgressBar(0);
+        bar.setPrefWidth(360);
+        var status = new javafx.scene.control.Label("Clearing image artifacts…");
+        var box = new javafx.scene.layout.VBox(8, status, bar);
+        box.setPadding(new javafx.geometry.Insets(15));
+        stage.setScene(new javafx.scene.Scene(box));
+        stage.setOnCloseRequest(e -> e.consume());
+        stage.show();
+
+        final var currentEntryF = currentEntry;
+        Thread worker = new Thread(() -> {
+            int total = entries.size();
+            int done = 0;
+            int failed = 0;
+            for (var entry : entries) {
+                if (entry != null && (currentEntryF == null || !entry.equals(currentEntryF))) {
+                    try {
+                        var data = entry.readImageData();
+                        stripCellTuneArtifactsFromHierarchy(data.getHierarchy());
+                        entry.saveImageData(data);
+                    } catch (Exception ex) {
+                        failed++;
+                        logger.warn("[CellTune] Failed to strip artifacts from '{}': {}",
+                                entry.getImageName(), ex.getMessage());
+                    }
+                }
+                final int c = ++done;
+                Platform.runLater(() -> {
+                    bar.setProgress((double) c / total);
+                    status.setText(String.format("Clearing image artifacts: %d / %d…", c, total));
+                });
+            }
+            final int failedF = failed;
+            Platform.runLater(() -> {
+                stage.close();
+                Dialogs.showInfoNotification(EXTENSION_NAME,
+                        "CellTune project state reset and image artifacts cleared. " + backupMsg
+                                + (failedF > 0 ? " (" + failedF + " image(s) failed — see log.)" : ""));
+            });
+        }, "celltune-reset-strip");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Remove CellTune ground-truth label points (classified point annotations)
+     * and clear all cell classifications (predictions) from a hierarchy.
+     *
+     * @return {@code [annotationsRemoved, cellsCleared]}
+     */
+    private static int[] stripCellTuneArtifactsFromHierarchy(
+            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy) {
+        if (hierarchy == null) {
+            return new int[]{0, 0};
+        }
+        List<PathObject> labelPoints = new ArrayList<>();
+        for (PathObject anno : hierarchy.getAnnotationObjects()) {
+            if (anno.getROI() != null && anno.getROI().isPoint() && anno.getPathClass() != null) {
+                labelPoints.add(anno);
+            }
+        }
+        if (!labelPoints.isEmpty()) {
+            hierarchy.removeObjects(labelPoints, false);
+        }
+        int cellsCleared = 0;
+        for (PathObject det : hierarchy.getDetectionObjects()) {
+            if (det.getPathClass() != null) {
+                det.setPathClass(null);
+                cellsCleared++;
+            }
+        }
+        return new int[]{labelPoints.size(), cellsCleared};
+    }
+
+    /** Reset all in-memory CellTune session state to defaults and refresh the panel. */
+    private void resetInMemoryState(QuPathGUI qupath) {
+        this.labelStore = new LabelStore("CellTune");
+        this.classifier = null;
+        this.predAll = null;
+        this.selectedFeatures = null;
+        this.featureNormalizer = null;
+        this.lastAgreementRates = null;
+        this.lastSampledCellIds = null;
+        this.lastSampledCellImageMap = Map.of();
+        this.lastSampledPredictions = null;
+        this.importedTrainingRows = null;
+        this.importedTrainingFeatureNames = null;
+        this.cellTypeTable = null;
+
+        // Binary-classifier session state.
+        this.binaryRegistry = new LinkedHashMap<>();
+        this.activeBinaryMarker = null;
+        this.activeBinaryClassNames = null;
+        this.preBinaryLabelStore = null;
+        this.preBinaryClassifier = null;
+        this.preBinaryImportedTrainingRows = null;
+        this.preBinaryImportedTrainingFeatureNames = null;
+        this.binaryTargetImages = new ArrayList<>();
+
+        syncPanelState();
+        logger.info("[CellTune] In-memory session state reset.");
+    }
+
+    /**
+     * Whole-image pixel prescreen: read a low-resolution version of every project
+     * image straight off the pyramid, compute per-channel pixel statistics, and
+     * rank/flag images against the cohort (background-heavy, saturated, weak
+     * signal, intensity outlier). Needs no cells — intended as a first-pass QC
+     * step at the start of a project. Reads run sequentially on a background
+     * thread to keep memory bounded and the UI responsive.
+     */
+    private void showImagePixelPrescreen(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
+            return;
+        }
+
+        @SuppressWarnings("unchecked")
+        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
+        if (entries.isEmpty()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
+            return;
+        }
+
+        var stage = new javafx.stage.Stage();
+        stage.setTitle(EXTENSION_NAME + " — Computing pixel prescreen");
+        stage.initOwner(qupath.getStage());
+        stage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        stage.setResizable(false);
+        var bar = new javafx.scene.control.ProgressBar(0);
+        bar.setPrefWidth(360);
+        var status = new javafx.scene.control.Label("Scanning project images…");
+        status.setMaxWidth(360);
+        status.setWrapText(true);
+        var box = new javafx.scene.layout.VBox(8, status, bar);
+        box.setPadding(new javafx.geometry.Insets(15));
+        stage.setScene(new javafx.scene.Scene(box));
+        stage.setOnCloseRequest(e -> e.consume());
+        stage.show();
+
+        Thread worker = new Thread(() -> {
+            int total = entries.size();
+            int done = 0;
+            int failed = 0;
+            var stats = new ArrayList<ImagePixelStats.ImageStats>(total);
+            for (var entry : entries) {
+                if (entry != null) {
+                    String imageName = entry.getImageName();
+                    try {
+                        var data = entry.readImageData();
+                        try (var server = data.getServer()) {
+                            stats.add(ImagePixelStatsReader.read(imageName, server));
+                        }
+                    } catch (Exception ex) {
+                        failed++;
+                        logger.warn("[CellTune] Pixel prescreen failed to read '{}': {}",
+                                imageName, ex.getMessage());
+                    }
+                }
+                final int c = ++done;
+                Platform.runLater(() -> {
+                    bar.setProgress((double) c / total);
+                    status.setText(String.format("Reading images: %d / %d…", c, total));
+                });
+            }
+
+            var report = PixelCohortAnalyzer.analyze(stats);
+            final int failedF = failed;
+            Platform.runLater(() -> {
+                stage.close();
+                if (report.images().isEmpty()) {
+                    Dialogs.showErrorMessage(EXTENSION_NAME,
+                            "Could not read pixels from any project image (see log).");
+                    return;
+                }
+                if (failedF > 0) {
+                    Dialogs.showWarningNotification(EXTENSION_NAME,
+                            failedF + " image(s) could not be read (see log).");
+                }
+                new PixelPrescreenView(qupath, qupath.getStage(), report).show();
+            });
+        }, "celltune-pixel-prescreen");
+        worker.setDaemon(true);
+        worker.start();
+    }
 
     private void showProjectPredictionSummary(QuPathGUI qupath) {
         var project = qupath.getProject();

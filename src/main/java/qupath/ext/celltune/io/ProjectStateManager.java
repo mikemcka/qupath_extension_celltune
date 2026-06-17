@@ -27,10 +27,13 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * Saves and loads the full classifier state to/from a JSON file in the QuPath project folder.
@@ -104,6 +107,114 @@ public class ProjectStateManager {
         Path ctDir = projectDir.resolve(CELLTUNE_DIR);
         Files.createDirectories(ctDir);
         return ctDir;
+    }
+
+    /**
+     * Resolve the celltune directory <em>without</em> creating it.
+     *
+     * @param project the QuPath project
+     * @return the path to {@code <project>/celltune}, or {@code null} if the
+     *         project has no path on disk
+     */
+    public static Path cellTuneDirPath(Project<?> project) {
+        if (project == null || project.getPath() == null) {
+            return null;
+        }
+        return project.getPath().getParent().resolve(CELLTUNE_DIR);
+    }
+
+    /** @return true if the project has a {@code celltune/} state directory on disk. */
+    public static boolean hasProjectState(Project<?> project) {
+        Path dir = cellTuneDirPath(project);
+        return dir != null && Files.isDirectory(dir);
+    }
+
+    /**
+     * Zip the entire {@code celltune/} state directory to a timestamped archive
+     * ({@code celltune_backup_<timestamp>.zip}) beside it in the project folder,
+     * as a safety net before a destructive reset.
+     *
+     * @param project the QuPath project
+     * @return the path to the written archive, or {@code null} if there was no
+     *         state directory (or it was empty)
+     * @throws IOException if writing the archive fails
+     */
+    public static Path backupProjectState(Project<?> project) throws IOException {
+        Path ctDir = cellTuneDirPath(project);
+        if (ctDir == null || !Files.isDirectory(ctDir)) {
+            return null;
+        }
+        Path zipTarget = ctDir.getParent().resolve(
+                "celltune_backup_" + LocalDateTime.now().format(TIMESTAMP_FMT) + ".zip");
+        Path written = zipDirectory(ctDir, zipTarget);
+        if (written != null) {
+            logger.info("Backed up CellTune state to {}", written);
+        }
+        return written;
+    }
+
+    /**
+     * Delete the entire {@code celltune/} state directory. A no-op if it does not
+     * exist. Callers should normally {@link #backupProjectState(Project) back up}
+     * first.
+     *
+     * @param project the QuPath project
+     * @throws IOException if deletion fails
+     */
+    public static void deleteProjectState(Project<?> project) throws IOException {
+        Path ctDir = cellTuneDirPath(project);
+        if (ctDir == null) {
+            return;
+        }
+        deleteDirectoryRecursively(ctDir);
+        logger.info("Deleted CellTune state directory {}", ctDir);
+    }
+
+    /**
+     * Zip every file under {@code dir} into {@code zipTarget}, using paths
+     * relative to {@code dir} as entry names.
+     *
+     * @return {@code zipTarget} if at least one file was written, or {@code null}
+     *         if {@code dir} is not a directory or is empty (no archive is left
+     *         behind in the empty case)
+     */
+    static Path zipDirectory(Path dir, Path zipTarget) throws IOException {
+        if (dir == null || !Files.isDirectory(dir)) {
+            return null;
+        }
+        boolean wroteEntry = false;
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipTarget))) {
+            try (var stream = Files.walk(dir)) {
+                for (Path p : (Iterable<Path>) stream::iterator) {
+                    if (Files.isDirectory(p)) {
+                        continue;
+                    }
+                    String rel = dir.relativize(p).toString().replace('\\', '/');
+                    zos.putNextEntry(new ZipEntry(rel));
+                    Files.copy(p, zos);
+                    zos.closeEntry();
+                    wroteEntry = true;
+                }
+            }
+        }
+        if (!wroteEntry) {
+            Files.deleteIfExists(zipTarget);
+            return null;
+        }
+        return zipTarget;
+    }
+
+    /** Recursively delete a directory tree. A no-op if {@code dir} does not exist. */
+    static void deleteDirectoryRecursively(Path dir) throws IOException {
+        if (dir == null || !Files.exists(dir)) {
+            return;
+        }
+        try (var stream = Files.walk(dir)) {
+            // Deepest paths first so directories are emptied before removal.
+            for (Path p : stream.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(p);
+            }
+        }
     }
 
     /**
