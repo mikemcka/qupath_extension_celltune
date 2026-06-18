@@ -42,10 +42,12 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
     - [13.3 Delete Measurements by Keyword](#133-delete-measurements-by-keyword)
     - [13.4 Import GeoJSON Objects](#134-import-geojson-objects)
     - [13.5 Export Annotation Regions](#135-export-annotation-regions)
+    - [13.6 Reset CellTune Project State](#136-reset-celltune-project-state)
 14. [Reference: every setting in the sidebar](#14-reference-every-setting-in-the-sidebar)
 15. [Reference: every CellTune menu item](#15-reference-every-celltune-menu-item)
 16. [Project directory layout](#16-project-directory-layout)
-17. [Tips, gotchas, and known limitations](#17-tips-gotchas-and-known-limitations)
+17. [Image pixel prescreen (whole-image QC)](#17-image-pixel-prescreen-whole-image-qc-no-cells-needed)
+18. [Tips, gotchas, and known limitations](#18-tips-gotchas-and-known-limitations)
 
 ---
 
@@ -131,11 +133,19 @@ Detail per step is in §[6](#6-binary--composite-workflow-in-detail).
 
 QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000 measurement columns per cell. CellTune lets you pick a subset for training; the rest are ignored.
 
-- **Search** box — case-insensitive substring filter.
-- **Prefix** dropdown — auto-populated with prefixes it finds in your feature names (`Cell:`, `Nucleus:`, `Membrane:`). Pick one, then **Select Prefix** / **Clear Prefix** to bulk-toggle just that group.
-- **Select All** / **Clear All** — operate on whatever's currently visible after filtering. Great for removing large groups of features
+- **Search** box — case-insensitive substring filter (matching groups auto-expand).
+- **Grouped checkbox tree** — features are bucketed into collapsible groups (below); tick a group's parent box to select/clear every feature in it at once.
+- **Select All** / **Clear All** — operate on whatever's currently visible after filtering. Great for removing large groups of features.
+- **Expand All** / **Collapse All** — open or close every group.
 - Checkbox per row to toggle individual features.
 - Counter at the bottom: `X / Y selected`.
+
+Features are grouped so large panels stay navigable — one group per **marker** (the text before the first `: `, e.g. `DAPI_AF`), then catch-all groups in this order:
+
+- **Morphology / Shape** — compartment-only measurements (`Cell: Area µm^2`, `Nucleus: Circularity`, …).
+- **Neighbors** — neighbour-aggregate features (`Neighbors: Mean: …`); labels keep the `Neighbors:` prefix so the context isn't lost.
+- **Embeddings** — dimensionality-reduction / embedding columns: UMAP, PCA, t-SNE, and `*_emb_*`-style names (e.g. `kronos_emb_0`).
+- **Other / Uncategorized** — anything matching none of the above, so nothing is silently misfiled into Morphology.
 
 ![Feature selection](doc_images/feature_selection.png)
 
@@ -432,6 +442,8 @@ After review, click **Train** again — the new labels feed into the next cycle.
 **Menu:** *Extensions → CellTune Classifier → Project Prediction Summary...*
 
 Cohort-level QC across every image in your project. Loads the saved `Pred_ALL` results from `<project>/celltune/image-predictions/` and runs an anomaly analysis. See [HOW_IT_WORKS_PREDICTION_SUMMARY](#anatomy-of-the-anomaly-score) below for the maths.
+
+> For a **cells-free** prescreen that works straight off the pixels — before any segmentation exists — see §[17 Image pixel prescreen](#17-image-pixel-prescreen-whole-image-qc-no-cells-needed).
 
 **Table columns:** Image, Predicted, Agreements, Disagreements, Agreement %, Anomaly, Flagged.
 
@@ -774,6 +786,16 @@ Imports annotations and detections from a `.geojson` (or gzipped `.geojson.gz`) 
 
 Exports one or more annotation ROIs from the **current image** as polygon-**masked** OME-TIFFs — pixels outside the annotation shape are zeroed, so you get the annotation region rather than its rectangular bounding box. Enter a comma-separated list of annotation names (leave blank to export **all** annotations), set the **downsample**, **tile size**, **writer threads**, **compression** (LZW by default), and whether to write **BigTIFF** and a **pyramid**, then choose an output directory. Each region is written to `<image>__<annotation>.ome.tif` on a background thread, and a notification reports how many succeeded. Requires QuPath's built-in Bio-Formats extension (loaded by default).
 
+### 13.6 Reset CellTune Project State
+
+> ⚠️ **Destructive.** Permanently deletes everything CellTune has saved for this project. Intended for starting over — e.g. when you've **copied a project** to trial different ML options and want a clean slate, since the `celltune/` state travels with the copy.
+
+Deletes the project's entire `celltune/` folder: all labels and per-image label files, trained classifiers (multi-class **and** binary) and predictions, feature selection, normalisation, marker table, composite rules, and sampling/review state. It also resets the running session so nothing re-saves the old state.
+
+**Safety net:** before deleting anything, a timestamped **`celltune_backup_<timestamp>.zip`** is written to the project folder. To undo a reset, unzip it back into the project folder (recreating `celltune/`). The action is guarded by a typed **`RESET`** confirmation.
+
+**Images and detections are kept.** CellTune's ground-truth **label points** and the **cell classifications** (predictions) it paints onto cells live in each image's `.qpdata`, *not* in `celltune/`. They are left in place unless you tick **"Also clear CellTune label points and all cell classifications from every image"**, which strips classified point annotations and clears every cell's classification across **all** project images (this rewrites each image's data and runs on a background thread). Tissue/region annotations and unclassified points are never touched.
+
 ---
 
 ## 14. Reference: every setting in the sidebar
@@ -817,6 +839,7 @@ All under *Extensions → CellTune Classifier*.
 | Select Features... | Project | Pick which measurement columns are used for training. |
 | Normalise Features | Project | Per-feature arcsinh/sqrt with shared cofactor. |
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
+| Image Pixel Prescreen... | Project | Cells-free whole-image QC: per-channel pixel statistics on a low-res pyramid level, cohort z-scores, verdicts/flags (background-heavy, saturated, weak signal, intensity outlier), CSV export. See §[17](#17-image-pixel-prescreen-whole-image-qc-no-cells-needed). |
 | Intensity Heatmaps... | Open image with detections | Phenotype × marker mean-intensity heatmap (z-score coloured), per-image / project-combined, PNG/CSV export. See §[9](#9-intensity-heatmaps). |
 | Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[10](#10-distance-measurements-spatial-analysis). |
 | Scatter Plots and Clustering... | Open image with detections | Interactive PCA/UMAP embedding + k-means clustering, annotation/class gating, cluster→class assignment, and a **Project Clustering…** button for cohort-wide clustering across images. See §[11](#11-cell-scatter-plot--clustering--gating). |
@@ -831,6 +854,7 @@ All under *Extensions → CellTune Classifier*.
 | Utility Scripts ▸ Import GeoJSON Objects... | Open image | Import objects from a (gzipped) GeoJSON into the current image — **small-to-medium files only**. See §[13.4](#134-import-geojson-objects). |
 | Utility Scripts ▸ Export Annotation Regions... | Open image | Export annotation ROIs from the current image as polygon-masked OME-TIFF(s) — **single-image, small-to-medium**. See §[13.5](#135-export-annotation-regions). |
 | Utility Scripts ▸ Delete Measurements by Keyword... | Open image or project | **Destructive:** delete detection measurements matching a keyword, with preview/confirm. See §[13.3](#133-delete-measurements-by-keyword). |
+| Utility Scripts ▸ Reset CellTune Project State... | Project | **Destructive:** wipe the project's `celltune/` state (labels, models, predictions, settings) for a clean slate; writes a backup zip first, typed-`RESET` confirm, optional per-image artifact stripping. See §[13.6](#136-reset-celltune-project-state). |
 
 ---
 
@@ -867,7 +891,123 @@ JSON throughout. Model bytes are Base64-encoded inside the state files. Safe to 
 
 ---
 
-## 17. Tips, gotchas, and known limitations
+## 17. Image pixel prescreen (whole-image QC, no cells needed)
+
+**Menu:** *Extensions → CellTune Classifier → Image Pixel Prescreen...*
+
+A **prescreen you run at the very start of a project** — before any segmentation or
+classification exists. It reads a low-resolution version of every image straight
+off the pyramid and summarises each one by its raw pixel intensities, then ranks
+and flags images against the cohort. Use it to spot slides that are mostly
+background, over-exposed, weakly stained, or otherwise unusual, so you can fix or
+exclude them before investing in analysis. It is the pixel-level twin of the
+[Project Prediction Summary](#8-project-prediction-summary) (which needs cells);
+this one needs none.
+
+### How it works
+
+1. For each project image, CellTune reads the **nearest pyramid level whose long
+   edge is ≈ 2048 px** (requested downsample = `longEdge / 2048`). Reading every
+   image to the same pixel footprint keeps the cohort statistics comparable
+   like-for-like, regardless of each slide's native size or pyramid structure.
+   Images are **read in parallel** (a small fixed thread pool) so large projects
+   scan several-fold faster.
+2. Channels are **aligned across images by name**.
+3. Per-channel statistics are computed (below), including a per-channel **focus**
+   (Laplacian variance) sharpness proxy.
+4. The image-level summaries and each **signal-bearing** channel's brightness
+   (`p99`) are converted to **robust z-scores** (`0.6745 × (value − median) / MAD`)
+   **across the cohort** — the same robust machinery as §8.
+5. Deterministic threshold rules assign each image a **verdict**, a set of
+   **flags**, and a plain-English **review**.
+
+### What each statistic means
+
+Per channel, over all pixels of the low-resolution image (values sorted ascending
+where percentiles are involved):
+
+| Statistic | Definition | What it tells you |
+|---|---|---|
+| **median** | 50th percentile | Robust brightness; the main sort/comparison value (mean's outlier-resistant cousin). |
+| **mean** | `Σx / N` | Brightness including the tails; sensitive to hot pixels by design. |
+| **std** | population standard deviation | Spread of intensities. |
+| **min / max** | extrema | `max` is shown but **not** used for flagging — one hot pixel moves it. |
+| **p1 / p99** | 1st / 99th percentiles | `p1` = noise floor, `p99` = true signal ceiling; both ignore single extreme pixels. |
+| **saturation fraction** | fraction of pixels ≥ `0.999 × dtypeMax` | Clipping / over-exposure. `n/a` for floating-point images (no fixed max). Uses the **storage bit depth** (e.g. 255 for 8-bit, 65535 for 16-bit). |
+| **Otsu threshold** | foreground/background split from the channel histogram | The cutoff used for the next two rows. |
+| **background fraction** | fraction below the Otsu threshold | How much of the channel is background. |
+| **foreground coverage** | `1 − background fraction` | How much real signal — the direct **"lots of background"** measure. |
+| **dynamic range** | `p99 − p1` | Flat / weak / empty channels score near zero. |
+| **Laplacian variance (focus)** | variance of the discrete Laplacian over the image | No-reference sharpness proxy (higher = sharper). Intensity-scale dependent, so best read within a cohort. |
+
+Image-level (derived across channels):
+
+| Statistic | Definition | What it tells you |
+|---|---|---|
+| **empty fraction** | fraction of pixels below the Otsu threshold in **every** channel | The single best "this slide is mostly glass/background" indicator. |
+| **focus** | **max** per-channel Laplacian variance (the sharpest channel) | Sharpness proxy. **Surfaced for inspection only — never flagged**, because it tracks overall brightness as much as true focus (a dim-but-fine slide reads as low focus). The max ignores near-dead channels, which sit near zero. |
+| **intensity z** | largest **signal-bearing** channel `p99` (brightness) robust-z vs the cohort | Drives the **intensity-outlier** flag — surfaces slides whose brightness profile diverges from the cohort (a likely ML challenge). Only channels with real signal contribute, so near-empty markers can't trigger it. |
+
+### Verdicts, flags, and the score
+
+Each image gets one **verdict** and zero or more **flags** (default thresholds, all
+z-scores robust/MAD-scaled):
+
+| Verdict / flag | Fires when |
+|---|---|
+| `BACKGROUND_HEAVY` | mean foreground-coverage z ≤ −2.5, **or** empty-fraction z ≥ 2.5 |
+| `SATURATED` | max saturation fraction ≥ 1% **and** its z ≥ 3.0 (cohort-relative), **or** ≥ 5% in absolute terms (clipping that severe is a defect on its own) |
+| `WEAK_SIGNAL` | median dynamic-range z ≤ −2.5 |
+| `INTENSITY_OUTLIER` | a **signal-bearing** channel's `p99` (brightness) z magnitude ≥ 2.5 (bright **or** dim) |
+| `OK` | none of the above |
+
+> **Why signal-gated?** Intensity-outlier detection runs only on channels whose
+> cohort-median foreground coverage clears a small floor (~5%). Near-dead markers
+> (whose `p99` hovers at the noise floor) are excluded, so their meaningless
+> relative jitter can't manufacture false "outlier" flags. **Focus is computed and
+> shown but never flags** — see the image-level table above.
+
+The **Score** is the sum of the positive deviations that drive those flags — higher
+means more unusual versus the project baseline. The table is sorted by Score by
+default.
+
+**Table columns:** Image, Verdict, Score, Foreground %, Empty %, Max sat %,
+Dyn. range, Focus, Intensity z, Flagged. **Filter:** *Flagged only*.
+
+**Review pane** (below the table) for the selected image gives the plain-English
+context, e.g.:
+
+> TRMhi_284_4 — Intensity outlier
+> • Ly6G_S8 - Cy5_AF brightness (p99) 1246.00 is brighter than the cohort (median 220.00, +11.2 MAD).
+> Suggested action: review / normalize — intensity differs from the cohort (may challenge ML).
+
+…followed by a per-channel breakdown (median | p99 | foreground% | dyn.range | sat% | focus).
+
+**Buttons:** *Open Selected Image* (jumps QuPath there without saving the current
+one), *Export CSV* (wide layout — image-level columns including `MaxFocus`,
+`MaxFocusZ`, `MaxIntensityZ`, `MaxIntensityChannel`, plus a block of per-channel
+columns — including `LaplacianVariance` — for every channel in the cohort), *Close*.
+
+### How to read it
+
+- **Sort by Score** (default). Look at the top rows first.
+- **Background-heavy** → mostly glass/empty. Exclude, re-acquire, or crop to the tissue.
+- **Saturated** → a channel is clipped. Fix exposure or drop it from intensity-based analyses.
+- **Weak signal** → flat, low-contrast image. Staining or exposure problem.
+- **Intensity outlier** → a signal-bearing channel is far brighter/dimmer than its peers. The review pane names the channel. These slides diverge from the cohort and may **challenge ML** (consider per-slide normalisation, or extra review). Check the staining batch or acquisition settings.
+- **Focus** (column / per-channel) → a sharpness proxy you can **sort on** to spot blur, but it is not a verdict — low focus often just means a dim slide.
+- **OK** → pixel statistics are within the normal range for the project.
+
+> **Caveats.** Robust z is noisy on tiny projects (< ~5 images) — don't
+> overinterpret. Saturation uses the storage bit depth, so a 12-bit image stored
+> as 16-bit reports against 65535. Floating-point images report saturation as
+> `n/a`. One downsampled image (all channels) is held in memory at a time; for
+> very highly multiplexed panels this can be large — the 2048 px target is the
+> place to dial it down if needed.
+
+---
+
+## 18. Tips, gotchas, and known limitations
 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.
