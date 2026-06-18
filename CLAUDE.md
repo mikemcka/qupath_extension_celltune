@@ -114,3 +114,6 @@ Commit messages in this repo are freeform — no Conventional Commits enforcemen
 ## Clarifying questions
 
 Always ask any questions required.
+
+## Subagents
+Spin up sonnet/haiku subagents for simple tasks

@@ -4,6 +4,8 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 
 Please note that function speed is dependant on hardware and size of project during analysis. Windows and tasks may take a moment to appear or start running especially with larger projects and images, **please be patient**.
 
+Windows and boxes can be expanded or contracted by clicking and dragging corners which will display buttons correctly. You will see an arrow appear if you are mousing over the correct spot on the window.
+
 > **Conventions in this guide**
 > - **Bold** = exact UI label.
 > - `Monospace` = file path or code.
@@ -574,6 +576,11 @@ When you open it you first pick which measurements to embed (a *Select
 Measurements for Scatter Plot* dialog). The window then computes an initial
 embedding on a background thread.
 
+> Clustering applies any **feature normalisation** you've configured
+> (§[4.2](#42-normalise-features)) — the same transforms the classifier uses —
+> then z-scores each marker over the active cells. The normalizer is captured when
+> the window opens; reopen the plot after changing it.
+
 ### 11.1 Controls
 
 **Top row**
@@ -587,17 +594,27 @@ embedding on a background thread.
   nothing is left out of the plot. PCA always plots all cells.
 - **Clusters (k)** — number of k-means clusters (2–50). The legend shrinks to
   keep all clusters visible and clickable.
-- **Recompute** — re-run clustering + embedding with the current settings.
-- **Project Clustering…** — cluster the whole cohort consistently across images;
-  see §[11.5](#115-project-wide-clustering-across-images).
+- **Recompute** — re-fit k-means + the embedding on the current rows (the open
+  image, or the project sample). It does **not** re-sample — use **Images…** in
+  project scope for that.
+- **Scope: Current image / Project** — a toggle. *Current image* (default)
+  clusters every cell of the open image with full viewer interaction. *Project*
+  fits **one** k-means on a sample pooled across images you choose and drives the
+  same interactive plot, so you can name and assign clusters across the whole
+  cohort — see §[11.5](#115-project-wide-clustering-across-images). Switching to
+  *Project* reveals an **Images…** button and a **Sample:** spinner.
 
 **Filter row (this is the gating row)**
 - **Annotation** — type a keyword to cluster only cells whose centroid falls
   inside an annotation whose name (or classification) contains that text. Blank =
-  all cells. Same membership test as Review mode.
+  all cells. Same membership test as Review mode. *Current-image scope only* — it
+  is disabled in project scope, since annotations belong to one image's hierarchy.
 - **Within class** — restrict clustering to cells whose current QuPath
-  classification contains this text (pick from the dropdown or type). Combines
-  with the annotation filter (both must match).
+  classification contains this text (pick from the dropdown or type). Works in
+  **both** scopes: in current-image scope it combines with the annotation filter;
+  in project scope it filters the pooled sample by each cell's carried class, and
+  the cohort **Assign** is then restricted to that class too (so a sub-clustering
+  only rewrites cells of that class).
 - **Cluster markers** — a checklist of the embedded markers, all ticked by
   default. Untick markers to cluster on a focused panel (e.g. immune markers
   only). Values are **re-standardised over the active subset** each run, so
@@ -607,29 +624,47 @@ embedding on a background thread.
 **Bottom row**
 - **Colour by** — `CLUSTER` (k-means id), `CLASS` (current/predicted class), or
   `MARKER` (single-marker intensity gradient; pick the marker alongside).
-- **Select: Box / Lasso** — drag on the plot to select those cells in the QuPath
-  viewer.
-- **Apply Clusters…** — see §11.3.
+- **Select: Box / Lasso** — drag on the plot to select those cells (in the viewer
+  in current-image scope; a plot-only highlight in project scope — see §11.2).
+- **Apply Clusters… / Assign Clusters…** — see §11.3. The button's label follows
+  the scope.
 - **Export PNG…** — save the current plot.
 
 ### 11.2 Selecting cells
 
-- **Box / Lasso** drag selects the enclosed points in the viewer.
-- **Click a cluster in the legend** (CLUSTER colour mode) to select **all** that
-  cluster's cells in the viewer — the cursor turns to a hand over clickable
-  legend rows.
+- **Box / Lasso** drag selects the enclosed points.
+- **Click a cluster in the legend** (CLUSTER colour mode) selects **all** that
+  cluster's cells — the cursor turns to a hand over clickable legend rows.
 
-Selection is two-way: selecting cells in the viewer outlines them on the plot.
+In **current-image scope** selection is two-way: drag/click selects the cells in
+the QuPath viewer, and selecting cells in the viewer outlines them on the plot.
 
-### 11.3 Apply Clusters — assign classes to clusters
+In **project scope** the rows are pooled from images that aren't all open, so
+there is no live cell to select — drag/click instead **highlights** the points on
+the plot (handy to read a region's class or marker intensity). It does not change
+the viewer selection.
 
-**Apply Clusters…** opens a dialog with one row per non-empty cluster (colour
-swatch + cell count) and a dropdown to map each cluster to an existing class, a
-newly typed class, or **— skip —**. After you confirm (a second dialog shows the
-exact cell count), the chosen classes are written to those cells'
-**classification** on a background thread with a progress bar. Skipped clusters
-and unmapped cells are left untouched. This replaces any existing class on the
-mapped cells; it does **not** touch CellTune ground-truth training labels.
+### 11.3 Apply Clusters / Assign Clusters — assign classes to clusters
+
+The same dialog serves both scopes. It shows one row per non-empty cluster —
+colour swatch, cell count, a **per-cluster marker heatmap** (mean z-scored
+intensity: **red = high, blue = low** — the cluster's phenotype fingerprint, so
+you can name it from its high markers), and a dropdown to map the cluster to an
+existing class, a newly typed class, or **— skip —**.
+
+You can manage classes without leaving the dialog: **Manage Classes…** opens
+[Class Control](#43-create-classes--class-control) (add / delete / merge) and **Refresh classes**
+re-reads the updated class list into every dropdown. (The dropdowns are also
+editable — typing a new name creates that class on assign.)
+
+- **Current-image scope (Apply Clusters…)** — after you confirm (a second dialog
+  shows the exact cell count), the chosen classes are written to those cells'
+  **classification** on a background thread. Skipped/unmapped cells are untouched.
+- **Project scope (Assign Clusters…)** — see §[11.5](#115-project-wide-clustering-across-images);
+  the mapping is streamed and saved across every selected image.
+
+Either way this replaces any existing class on the mapped cells; it does **not**
+touch CellTune ground-truth training labels.
 
 ### 11.4 Cluster-within-clusters (hierarchical gating)
 
@@ -657,39 +692,58 @@ e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
 
 ### 11.5 Project-wide clustering across images
 
-The scatter plot above is interactive but single-image. To cluster a **whole
-cohort consistently**, click the **Project Clustering…** button inside the
-scatter plot window (it seeds the dialog with your currently-checked cluster
-markers). It fits **one** k-means model on a sample pooled across the images you
-choose, then assigns *every* cell in *every* selected image to its nearest cohort
-centroid — so cluster 3 means the same phenotype in every image (unlike
-clustering each image separately, which gives non-comparable cluster ids).
+To cluster a **whole cohort consistently**, flip the **Scope** toggle to
+**Project**. CellTune fits **one** k-means model on a sample pooled across the
+images you choose, then (when you assign) maps *every* cell in *every* selected
+image to its nearest cohort centroid — so cluster 3 means the same phenotype in
+every image (unlike clustering each image separately, which gives non-comparable
+cluster ids). It all happens in the same window, so every tool — colour-by-marker,
+within-class gating, the cluster-marker subset, the centroid heatmap — is
+available for naming the cohort's clusters.
 
-In the dialog:
+**Entering project scope**
 
-1. **Select Images…** — choose which project images to include (defaults to all).
-2. **Clusters (k)** and **Sample size** — the sample is the number of cells
-   pooled to *fit* the model (default 50,000, drawn evenly per image). **Every
-   cell is still classified** in the assignment pass — the sample only bounds the
-   *fit*, keeping memory flat regardless of project size. 50,000 is statistically
-   ample to place stable centroids (more cells barely move them but cost time);
-   raise it if you want the fit to see more cells.
-3. **Run Clustering** — streams each image, samples cells, fits k-means once, and
-   logs per-cluster sizes.
-   - **Show Plot…** (enabled after clustering) opens a **PCA/UMAP scatter** of the
-     pooled sample, coloured by cluster — visualisation only (clustering still
-     uses all markers in full space, not the 2D embedding). Toggle PCA/UMAP and
-     **Recompute** in that window.
-4. **Assign Classes…** — shows a **cluster × marker heatmap** (per-cluster mean
-   z-scored intensity: red = high, blue = low) so you can name each cluster from
-   its high markers, with a class dropdown per cluster (or skip). On confirm,
-   CellTune opens each image, assigns all cells to their nearest centroid, writes
-   the mapped classes, and **saves each image**, with a progress bar.
+1. Click **Project**. An image picker opens — choose which project images to
+   sample (defaults to all). Cancel to stay on the current image.
+2. CellTune streams each image and pools a bounded random sample (the **Sample:**
+   spinner, default 50,000, drawn evenly per image), then fits k-means and draws
+   the plot. The status bar reads e.g. *"Project sample (8 images)"*.
 
-> **Batch effects.** Because cells are pooled across images, comparable staining
-> across the cohort matters — normalise features (§[4.2](#42-normalise-features))
-> first if your images differ in intensity scale, or the pooled clusters will
-> partly reflect staining differences rather than biology.
+The sample only bounds the **fit** — 50,000 cells is statistically ample to place
+stable centroids (more barely move them but cost time). **Every** cell is still
+classified later in the assignment pass, so memory stays flat regardless of
+project size.
+
+**Working with the cohort sample**
+
+The plot behaves like the single-image one, with the project caveats already
+noted: the Annotation filter is disabled (§11.1), and box/lasso/legend selection
+highlights on the plot only (§11.2). Everything else applies:
+
+- **Colour by → MARKER** to read which clusters are high in which marker.
+- **Within class** to sub-cluster one population across the cohort (the assign is
+  then restricted to that class — §11.1).
+- **Cluster markers** to fit on a focused panel.
+- **Recompute** re-fits on the existing sample (fast). To draw a fresh sample —
+  different images, or a new **Sample:** size — click **Images…**.
+
+**Assigning across the cohort**
+
+Click **Assign Clusters…**. The shared assignment dialog (§11.3) shows the
+centroid heatmap and a class dropdown per cluster. On confirm, CellTune streams
+each selected image, assigns all matching cells to their nearest centroid, writes
+the mapped classes, and **saves each image**, with progress in the status bar.
+
+> **Measurement scaling & batch effects.** Clustering applies CellTune's feature
+> normalisation (§[4.2](#42-normalise-features)) — the **same** arcsinh / sqrt
+> transforms the classifier uses — then z-scores each marker over the active cells
+> at fit time. So if you've configured normalisation, it shapes the clusters and
+> the colour-by-marker view too. (The normalizer is captured when the window
+> opens; change it via *Normalise Features* and reopen the plot to pick it up.)
+> Even so, per-marker normalisation does not fully correct **per-image** staining
+> differences, so when cells are pooled across a cohort, comparable staining still
+> matters: globally brighter slides can shift the pooled clusters. Normalise
+> upstream if intensity scales differ a lot, or interpret with that in mind.
 
 > **This writes classifications and saves every selected image.** It replaces the
 > existing class on assigned cells (CellTune training labels are untouched). The
@@ -842,7 +896,7 @@ All under *Extensions → CellTune Classifier*.
 | Image Pixel Prescreen... | Project | Cells-free whole-image QC: per-channel pixel statistics on a low-res pyramid level, cohort z-scores, verdicts/flags (background-heavy, saturated, weak signal, intensity outlier), CSV export. See §[17](#17-image-pixel-prescreen-whole-image-qc-no-cells-needed). |
 | Intensity Heatmaps... | Open image with detections | Phenotype × marker mean-intensity heatmap (z-score coloured), per-image / project-combined, PNG/CSV export. See §[9](#9-intensity-heatmaps). |
 | Generate Distance Measurements... | Project | Batch spatial distances (annotation-signed, cross-class, same-class NN) across selected images. See §[10](#10-distance-measurements-spatial-analysis). |
-| Scatter Plots and Clustering... | Open image with detections | Interactive PCA/UMAP embedding + k-means clustering, annotation/class gating, cluster→class assignment, and a **Project Clustering…** button for cohort-wide clustering across images. See §[11](#11-cell-scatter-plot--clustering--gating). |
+| Scatter Plots and Clustering... | Open image with detections | Interactive PCA/UMAP embedding + k-means clustering, annotation/class gating, cluster→class assignment, and a **Scope** toggle for cohort-wide clustering across images in the same window. See §[11](#11-cell-scatter-plot--clustering--gating). |
 | Export ▸ Cell Table... | Open image with detections | One CSV per selected image. |
 | Export ▸ Ground Truth... | Open image with labels (multi-class) | Portable labels + feature vectors CSV. |
 | Export ▸ Active Binary Ground Truth... | Binary mode active + open image with labels | Same as above, scoped to active marker. |
