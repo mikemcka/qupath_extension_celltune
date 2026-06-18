@@ -16,9 +16,9 @@ class PixelStatsCsvExporterTest {
     private static ImagePixelStats.ImageStats image(String name, double median, double fg) {
         var channels = List.of(
                 new ImagePixelStats.ChannelStats("DAPI", 100L, median, 5.0, 0.0, median,
-                        median + 50, median - 5, median + 40, 0.0, 20.0, 1.0 - fg, fg, 45.0),
+                        median + 50, median - 5, median + 40, 0.0, 20.0, 1.0 - fg, fg, 45.0, 100.0),
                 new ImagePixelStats.ChannelStats("CD8", 100L, median, 5.0, 0.0, median,
-                        median + 50, median - 5, median + 40, 0.0, 20.0, 1.0 - fg, fg, 45.0));
+                        median + 50, median - 5, median + 40, 0.0, 20.0, 1.0 - fg, fg, 45.0, 100.0));
         return new ImagePixelStats.ImageStats(name, 4.0, 64, 64, channels, 1.0 - fg);
     }
 

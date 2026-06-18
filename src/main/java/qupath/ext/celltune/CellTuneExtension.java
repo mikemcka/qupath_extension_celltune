@@ -2346,32 +2346,59 @@ public class CellTuneExtension implements QuPathExtension {
 
         Thread worker = new Thread(() -> {
             int total = entries.size();
-            int done = 0;
-            int failed = 0;
-            var stats = new ArrayList<ImagePixelStats.ImageStats>(total);
+            AtomicInteger done = new AtomicInteger();
+            AtomicInteger failed = new AtomicInteger();
+
+            // One task per image; reads are independent and I/O+decode bound,
+            // so a small fixed pool gives a near-linear speedup. Capped at 4 to
+            // bound peak memory — each task holds one decoded downsampled region.
+            int nThreads = Math.min(Math.max(total, 1), 4);
+            ExecutorService pool = Executors.newFixedThreadPool(nThreads);
+            List<Callable<ImagePixelStats.ImageStats>> tasks = new ArrayList<>(total);
             for (var entry : entries) {
-                if (entry != null) {
-                    String imageName = entry.getImageName();
-                    try {
-                        var data = entry.readImageData();
-                        try (var server = data.getServer()) {
-                            stats.add(ImagePixelStatsReader.read(imageName, server));
+                tasks.add(() -> {
+                    ImagePixelStats.ImageStats result = null;
+                    if (entry != null) {
+                        String imageName = entry.getImageName();
+                        try {
+                            var data = entry.readImageData();
+                            try (var server = data.getServer()) {
+                                result = ImagePixelStatsReader.read(imageName, server);
+                            }
+                        } catch (Exception ex) {
+                            failed.incrementAndGet();
+                            logger.warn("[CellTune] Pixel prescreen failed to read '{}': {}",
+                                    imageName, ex.getMessage());
                         }
-                    } catch (Exception ex) {
-                        failed++;
-                        logger.warn("[CellTune] Pixel prescreen failed to read '{}': {}",
-                                imageName, ex.getMessage());
                     }
-                }
-                final int c = ++done;
-                Platform.runLater(() -> {
-                    bar.setProgress((double) c / total);
-                    status.setText(String.format("Reading images: %d / %d…", c, total));
+                    final int c = done.incrementAndGet();
+                    Platform.runLater(() -> {
+                        bar.setProgress((double) c / total);
+                        status.setText(String.format("Reading images: %d / %d…", c, total));
+                    });
+                    return result;
                 });
             }
 
+            // Collect in submission order (deterministic cohort input).
+            var stats = new ArrayList<ImagePixelStats.ImageStats>(total);
+            try {
+                for (var future : pool.invokeAll(tasks)) {
+                    var s = future.get();
+                    if (s != null) {
+                        stats.add(s);
+                    }
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (java.util.concurrent.ExecutionException ee) {
+                logger.warn("[CellTune] Pixel prescreen task failed: {}", ee.getMessage());
+            } finally {
+                pool.shutdown();
+            }
+
             var report = PixelCohortAnalyzer.analyze(stats);
-            final int failedF = failed;
+            final int failedF = failed.get();
             Platform.runLater(() -> {
                 stage.close();
                 if (report.images().isEmpty()) {

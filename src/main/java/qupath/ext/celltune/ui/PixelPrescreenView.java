@@ -96,6 +96,16 @@ public class PixelPrescreenView {
                 new SimpleStringProperty(num(cd.getValue().medianDynamicRange())));
         dynCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
+        TableColumn<PixelCohortReport.ImageReport, String> focusCol = new TableColumn<>("Focus");
+        focusCol.setCellValueFactory(cd ->
+                new SimpleStringProperty(num(cd.getValue().maxFocus())));
+        focusCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+
+        TableColumn<PixelCohortReport.ImageReport, String> intensityCol = new TableColumn<>("Intensity z");
+        intensityCol.setCellValueFactory(cd ->
+                new SimpleStringProperty(num(cd.getValue().maxIntensityZ())));
+        intensityCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+
         TableColumn<PixelCohortReport.ImageReport, String> flaggedCol = new TableColumn<>("Flagged");
         flaggedCol.setCellValueFactory(cd ->
                 new SimpleStringProperty(cd.getValue().flagged() ? "Yes" : "No"));
@@ -108,6 +118,8 @@ public class PixelPrescreenView {
         table.getColumns().add(emptyCol);
         table.getColumns().add(satCol);
         table.getColumns().add(dynCol);
+        table.getColumns().add(focusCol);
+        table.getColumns().add(intensityCol);
         table.getColumns().add(flaggedCol);
 
         scoreCol.setSortType(TableColumn.SortType.DESCENDING);
@@ -189,14 +201,14 @@ public class PixelPrescreenView {
         }
         StringBuilder sb = new StringBuilder();
         sb.append(row.narrative()).append("\n\n");
-        sb.append("Per-channel (median | p99 | foreground% | dyn.range | sat% | median z):\n");
+        sb.append("Per-channel (median | p99 | foreground% | dyn.range | sat% | focus):\n");
         for (var cc : row.channels()) {
             var s = cc.stats();
             sb.append(String.format(Locale.ROOT,
-                    "  %-16s %8s | %8s | %7s | %8s | %6s | %s%n",
+                    "  %-16s %8s | %8s | %7s | %8s | %6s | %8s%n",
                     truncate(cc.channel(), 16),
                     num(s.median()), num(s.p99()), pct(s.foregroundCoverage()),
-                    num(s.dynamicRange()), pct(s.saturationFraction()), zed(cc.medianZ())));
+                    num(s.dynamicRange()), pct(s.saturationFraction()), num(s.laplacianVariance())));
         }
         detailsArea.setText(sb.toString());
     }
@@ -270,10 +282,6 @@ public class PixelPrescreenView {
         return Math.abs(v) >= 1000.0
                 ? String.format(Locale.ROOT, "%.0f", v)
                 : String.format(Locale.ROOT, "%.2f", v);
-    }
-
-    private static String zed(double z) {
-        return Double.isNaN(z) ? "-" : String.format(Locale.ROOT, "%+.1f", z);
     }
 
     private static String truncate(String s, int max) {

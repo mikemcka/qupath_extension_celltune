@@ -25,7 +25,7 @@ public final class PixelStatsCsvExporter {
     private static final List<String> CHANNEL_METRICS = List.of(
             "Median", "Mean", "Std", "P1", "P99", "Max",
             "ForegroundCoverage", "BackgroundFraction", "DynamicRange",
-            "SaturationFraction", "MedianZ");
+            "SaturationFraction", "LaplacianVariance");
 
     private PixelStatsCsvExporter() {
     }
@@ -49,7 +49,9 @@ public final class PixelStatsCsvExporter {
         sb.append("Image,Verdict,Flags,Score,EmptyFraction,EmptyFractionZ,")
                 .append("MeanForegroundCoverage,MeanForegroundCoverageZ,")
                 .append("MaxSaturationFraction,MaxSaturationChannel,MaxSaturationZ,")
-                .append("MedianDynamicRange,MedianDynamicRangeZ");
+                .append("MedianDynamicRange,MedianDynamicRangeZ,")
+                .append("MaxFocus,MaxFocusZ,")
+                .append("MaxIntensityZ,MaxIntensityChannel");
         for (String ch : orderedChannels) {
             for (String metric : CHANNEL_METRICS) {
                 sb.append(',').append(csvEscape(ch + ": " + metric));
@@ -71,7 +73,11 @@ public final class PixelStatsCsvExporter {
                     .append(csvEscape(img.maxSaturationChannel())).append(',')
                     .append(num(img.maxSaturationFractionZ())).append(',')
                     .append(num(img.medianDynamicRange())).append(',')
-                    .append(num(img.medianDynamicRangeZ()));
+                    .append(num(img.medianDynamicRangeZ())).append(',')
+                    .append(num(img.maxFocus())).append(',')
+                    .append(num(img.maxFocusZ())).append(',')
+                    .append(num(img.maxIntensityZ())).append(',')
+                    .append(csvEscape(img.maxIntensityChannel()));
 
             for (String ch : orderedChannels) {
                 PixelCohortReport.ChannelContext cc = findChannel(img, ch);
@@ -92,7 +98,7 @@ public final class PixelStatsCsvExporter {
                         .append(',').append(num(s.backgroundFraction()))
                         .append(',').append(num(s.dynamicRange()))
                         .append(',').append(num(s.saturationFraction()))
-                        .append(',').append(num(cc.medianZ()));
+                        .append(',').append(num(s.laplacianVariance()));
             }
             sb.append('\n');
         }

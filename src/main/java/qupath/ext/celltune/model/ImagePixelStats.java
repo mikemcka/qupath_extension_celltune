@@ -48,6 +48,11 @@ import java.util.List;
  *       "how much real signal" measure.</li>
  *   <li><b>dynamicRange</b> — {@code p99 − p1}; flat / weak / empty channels
  *       score near zero.</li>
+ *   <li><b>laplacianVariance</b> — variance of the discrete Laplacian (a focus /
+ *       sharpness proxy): high for crisp, in-focus structure and low for blurred
+ *       or out-of-focus images. It is intensity-scale dependent, so it is best
+ *       compared within a cohort acquired the same way. {@code NaN} when the
+ *       spatial shape is unknown or the image is smaller than 3×3.</li>
  * </ul>
  * The image-level <b>emptyFraction</b> is the fraction of pixels that are below
  * their channel's Otsu threshold in <em>every</em> channel — the single best
@@ -82,6 +87,8 @@ public final class ImagePixelStats {
      * @param backgroundFraction fraction below {@code otsuThreshold}
      * @param foregroundCoverage {@code 1 − backgroundFraction}
      * @param dynamicRange       {@code p99 − p1}
+     * @param laplacianVariance  variance of the discrete Laplacian (focus proxy);
+     *                           {@code NaN} when the spatial shape is unknown
      */
     public record ChannelStats(
             String channel,
@@ -97,7 +104,8 @@ public final class ImagePixelStats {
             double otsuThreshold,
             double backgroundFraction,
             double foregroundCoverage,
-            double dynamicRange) {
+            double dynamicRange,
+            double laplacianVariance) {
     }
 
     /**
@@ -137,11 +145,31 @@ public final class ImagePixelStats {
      * @return the channel statistics; a zeroed record if {@code values} is empty
      */
     public static ChannelStats computeChannel(String name, float[] values, double dtypeMax) {
+        return computeChannel(name, values, dtypeMax, 0, 0);
+    }
+
+    /**
+     * Compute statistics for a single channel, additionally computing the
+     * focus / sharpness proxy ({@link ChannelStats#laplacianVariance()}) from the
+     * 2D pixel layout.
+     *
+     * @param name     channel display name
+     * @param values   row-major pixel values for this channel ({@code NaN}
+     *                  ignored); not modified
+     * @param dtypeMax maximum representable value for the pixel type, or
+     *                  {@code NaN} / non-positive for floating-point images
+     * @param width    image width in pixels; pass {@code 0} (with {@code height}
+     *                  0) to skip the focus metric, leaving it {@code NaN}
+     * @param height   image height in pixels
+     * @return the channel statistics; a zeroed record if {@code values} is empty
+     */
+    public static ChannelStats computeChannel(
+            String name, float[] values, double dtypeMax, int width, int height) {
         String channel = name == null ? "" : name;
         if (values == null || values.length == 0) {
             return new ChannelStats(channel, 0L, Double.NaN, Double.NaN, Double.NaN,
                     Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-                    Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+                    Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
         }
 
         // Copy finite values into a double[] we can sort for percentiles.
@@ -159,7 +187,7 @@ public final class ImagePixelStats {
         if (n == 0) {
             return new ChannelStats(channel, 0L, Double.NaN, Double.NaN, Double.NaN,
                     Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-                    Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+                    Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
         }
         if (n < sorted.length) {
             sorted = Arrays.copyOf(sorted, n);
@@ -200,10 +228,58 @@ public final class ImagePixelStats {
         double backgroundFraction = (double) below / n;
         double foregroundCoverage = 1.0 - backgroundFraction;
         double dynamicRange = p99 - p1;
+        double laplacianVariance = laplacianVariance(values, width, height);
 
         return new ChannelStats(channel, n, mean, std, min, median, max, p1, p99,
                 saturationFraction, otsu, backgroundFraction, foregroundCoverage,
-                dynamicRange);
+                dynamicRange, laplacianVariance);
+    }
+
+    /**
+     * Variance of the discrete 4-neighbour Laplacian over the interior pixels of
+     * a row-major image — a standard no-reference focus / sharpness measure
+     * (higher = sharper). Pixels whose 3×3 cross neighbourhood contains a
+     * non-finite value are skipped.
+     *
+     * @param values row-major pixel values, length ≥ {@code width × height}
+     * @param width  image width in pixels
+     * @param height image height in pixels
+     * @return the Laplacian variance, or {@code NaN} when the shape is unknown,
+     *         smaller than 3×3, or no interior pixel has a finite neighbourhood
+     */
+    public static double laplacianVariance(float[] values, int width, int height) {
+        if (values == null || width < 3 || height < 3
+                || (long) width * height > values.length) {
+            return Double.NaN;
+        }
+        double sum = 0.0;
+        double sumSq = 0.0;
+        long count = 0;
+        for (int y = 1; y < height - 1; y++) {
+            int row = y * width;
+            for (int x = 1; x < width - 1; x++) {
+                int i = row + x;
+                float c = values[i];
+                float up = values[i - width];
+                float down = values[i + width];
+                float left = values[i - 1];
+                float right = values[i + 1];
+                if (!Float.isFinite(c) || !Float.isFinite(up) || !Float.isFinite(down)
+                        || !Float.isFinite(left) || !Float.isFinite(right)) {
+                    continue;
+                }
+                double lap = (double) up + down + left + right - 4.0 * c;
+                sum += lap;
+                sumSq += lap * lap;
+                count++;
+            }
+        }
+        if (count == 0) {
+            return Double.NaN;
+        }
+        double mean = sum / count;
+        double var = sumSq / count - mean * mean;
+        return Math.max(0.0, var);
     }
 
     /**
@@ -240,7 +316,7 @@ public final class ImagePixelStats {
         for (int c = 0; c < nChannels; c++) {
             String name = (channelNames != null && c < channelNames.size())
                     ? channelNames.get(c) : ("Channel " + (c + 1));
-            ChannelStats cs = computeChannel(name, channelValues[c], dtypeMax);
+            ChannelStats cs = computeChannel(name, channelValues[c], dtypeMax, width, height);
             channelStats.add(cs);
             otsuThresholds[c] = cs.otsuThreshold();
         }

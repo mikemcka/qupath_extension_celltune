@@ -25,8 +25,13 @@ import java.util.stream.Collectors;
  *       parent checkbox selects/clears every feature for that marker at once.</li>
  *   <li>A <b>Morphology / Shape</b> group for compartment-only measurements
  *       ({@code "Cell: Area µm^2"}, {@code "Cell: ErosionBin_1: …"}, etc.).</li>
+ *   <li>A <b>Neighbors</b> group for neighbor-aggregate measurements
+ *       ({@code "Neighbors: Mean: Cell: Area µm^2"}, etc.), when present. Leaf
+ *       labels keep the full name so the {@code Neighbors:} context is not lost.</li>
  *   <li>An <b>Embeddings</b> group for dimensionality-reduction features
  *       (UMAP / PCA / t-SNE / embedding columns), when present.</li>
+ *   <li>An <b>Other / Uncategorized</b> catch-all for feature names that match
+ *       none of the above patterns, so nothing is silently misfiled.</li>
  * </ul>
  * Plus an instant search box, expand/collapse and select-all/clear-all helpers,
  * and a selected/total counter. Pre-selects all features by default; the caller
@@ -38,6 +43,10 @@ public class FeatureSelectionPane {
     static final String GROUP_MORPHOLOGY = "Morphology / Shape";
     /** Group label for dimensionality-reduction / embedding features. */
     static final String GROUP_EMBEDDINGS = "Embeddings";
+    /** Group label for neighbor-aggregate features ({@code "Neighbors: …"}). */
+    static final String GROUP_NEIGHBORS = "Neighbors";
+    /** Catch-all group for features whose name matches no known pattern. */
+    static final String GROUP_OTHER = "Other / Uncategorized";
 
     /** Compartment tokens that mark a measurement as morphology rather than a marker. */
     private static final Set<String> COMPARTMENTS =
@@ -45,7 +54,7 @@ public class FeatureSelectionPane {
 
     /** Tokens (case-insensitive, whole-token match) that mark an embedding feature. */
     private static final Set<String> EMBEDDING_TOKENS =
-            Set.of("umap", "tsne", "pca", "phenograph", "leiden", "latent");
+            Set.of("umap", "tsne", "pca", "phenograph", "leiden", "latent", "emb", "embed");
 
     private final Stage stage;
     private final List<FeatureItem> allFeatures = new ArrayList<>();
@@ -174,38 +183,50 @@ public class FeatureSelectionPane {
             itemsByGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(item);
         }
 
-        // Markers first (alphabetical), then Morphology, then Embeddings.
+        // Markers first (alphabetical), then Morphology, Neighbors, Embeddings, Other.
+        Set<String> special =
+                Set.of(GROUP_MORPHOLOGY, GROUP_NEIGHBORS, GROUP_EMBEDDINGS, GROUP_OTHER);
         List<String> markers = itemsByGroup.keySet().stream()
-                .filter(g -> !g.equals(GROUP_MORPHOLOGY) && !g.equals(GROUP_EMBEDDINGS))
+                .filter(g -> !special.contains(g))
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .collect(Collectors.toList());
         groupOrder.addAll(markers);
         if (itemsByGroup.containsKey(GROUP_MORPHOLOGY)) {
             groupOrder.add(GROUP_MORPHOLOGY);
         }
+        if (itemsByGroup.containsKey(GROUP_NEIGHBORS)) {
+            groupOrder.add(GROUP_NEIGHBORS);
+        }
         if (itemsByGroup.containsKey(GROUP_EMBEDDINGS)) {
             groupOrder.add(GROUP_EMBEDDINGS);
+        }
+        if (itemsByGroup.containsKey(GROUP_OTHER)) {
+            groupOrder.add(GROUP_OTHER);
         }
     }
 
     /**
      * Classify a feature name into a group: the marker name, {@link #GROUP_MORPHOLOGY},
-     * or {@link #GROUP_EMBEDDINGS}.
+     * {@link #GROUP_NEIGHBORS}, {@link #GROUP_EMBEDDINGS}, or {@link #GROUP_OTHER}
+     * for names matching no known pattern.
      */
     static String groupOf(String name) {
         if (name == null) {
-            return GROUP_MORPHOLOGY;
+            return GROUP_OTHER;
         }
         if (isEmbedding(name)) {
             return GROUP_EMBEDDINGS;
         }
         int idx = name.indexOf(": ");
         if (idx <= 0) {
-            return GROUP_MORPHOLOGY;
+            return GROUP_OTHER;
         }
         String prefix = name.substring(0, idx);
         if (COMPARTMENTS.contains(prefix)) {
             return GROUP_MORPHOLOGY;
+        }
+        if (prefix.equals(GROUP_NEIGHBORS)) {
+            return GROUP_NEIGHBORS;
         }
         return prefix;
     }
@@ -213,9 +234,9 @@ public class FeatureSelectionPane {
     /**
      * Detect dimensionality-reduction / embedding feature names by splitting on
      * non-alphanumeric separators and matching whole tokens. This recognises
-     * forms like {@code "UMAP 1"}, {@code "Embedding_0"}, and {@code "PCA_2"}
-     * without misfiring on markers that merely contain the letters (e.g.
-     * {@code "PECAM"}).
+     * forms like {@code "UMAP 1"}, {@code "Embedding_0"}, {@code "PCA_2"}, and
+     * {@code "kronos_emb_0"} without misfiring on markers that merely contain
+     * the letters (e.g. {@code "PECAM"}).
      */
     static boolean isEmbedding(String name) {
         if (name == null) {
@@ -257,7 +278,10 @@ public class FeatureSelectionPane {
         if (name == null) {
             return "";
         }
-        if (!group.equals(GROUP_MORPHOLOGY) && !group.equals(GROUP_EMBEDDINGS)) {
+        if (!group.equals(GROUP_MORPHOLOGY)
+                && !group.equals(GROUP_EMBEDDINGS)
+                && !group.equals(GROUP_NEIGHBORS)
+                && !group.equals(GROUP_OTHER)) {
             String prefix = group + ": ";
             if (name.startsWith(prefix)) {
                 return name.substring(prefix.length());

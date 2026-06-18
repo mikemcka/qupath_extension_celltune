@@ -53,7 +53,8 @@ public record PixelCohortReport(List<ImageReport> images) {
      *                                fraction is ≥ this, regardless of the cohort
      *                                (clipping this severe is a defect on its own)
      * @param weakSignalZ             flag WEAK_SIGNAL when median dynamic-range z ≤ −this
-     * @param intensityOutlierZ       flag INTENSITY_OUTLIER when any channel's median z magnitude ≥ this
+     * @param intensityOutlierZ       flag INTENSITY_OUTLIER when a signal-bearing
+     *                                channel's p99 (brightness) z magnitude ≥ this
      */
     public record Thresholds(
             double backgroundForegroundZ,
@@ -73,34 +74,19 @@ public record PixelCohortReport(List<ImageReport> images) {
             0.01,  // saturationMinFraction (1% of pixels clipped)
             0.05,  // saturationHardFraction (5% clipped → always flag)
             2.5,   // weakSignalZ
-            3.5    // intensityOutlierZ
+            2.5    // intensityOutlierZ
     );
 
     /**
-     * Per-channel cohort context for one image.
+     * Per-channel context for one image: the raw per-channel statistics, carried
+     * through for display and CSV export.
      *
-     * @param channel                   channel name
-     * @param stats                     the raw per-channel statistics
-     * @param medianZ                   robust z of this channel's median vs cohort
-     * @param medianRankPercent         percentile rank (0–100) of the median in the cohort
-     * @param p99Z                      robust z of p99 vs cohort
-     * @param backgroundFractionZ       robust z of background fraction vs cohort
-     * @param foregroundCoverageZ       robust z of foreground coverage vs cohort
-     * @param foregroundCoverageRankPercent percentile rank (0–100) of foreground coverage
-     * @param dynamicRangeZ             robust z of dynamic range vs cohort
-     * @param saturationFractionZ       robust z of saturation fraction vs cohort
+     * @param channel channel name
+     * @param stats   the raw per-channel statistics
      */
     public record ChannelContext(
             String channel,
-            ImagePixelStats.ChannelStats stats,
-            double medianZ,
-            double medianRankPercent,
-            double p99Z,
-            double backgroundFractionZ,
-            double foregroundCoverageZ,
-            double foregroundCoverageRankPercent,
-            double dynamicRangeZ,
-            double saturationFractionZ) {
+            ImagePixelStats.ChannelStats stats) {
     }
 
     /**
@@ -121,6 +107,13 @@ public record PixelCohortReport(List<ImageReport> images) {
      * @param maxSaturationFractionZ    robust z vs cohort
      * @param medianDynamicRange        median dynamic range across channels
      * @param medianDynamicRangeZ       robust z vs cohort
+     * @param maxFocus                  image focus: max per-channel Laplacian variance
+     *                                  (informational sharpness proxy; not flagged —
+     *                                  it tracks brightness as much as focus)
+     * @param maxFocusZ                 robust z of {@link #maxFocus} vs cohort
+     * @param maxIntensityZ             largest signal-bearing channel p99 z magnitude
+     *                                  vs cohort (drives the intensity-outlier flag)
+     * @param maxIntensityChannel       channel carrying that largest p99 z (may be null)
      * @param channels                  per-channel context, channel order
      */
     public record ImageReport(
@@ -138,6 +131,10 @@ public record PixelCohortReport(List<ImageReport> images) {
             double maxSaturationFractionZ,
             double medianDynamicRange,
             double medianDynamicRangeZ,
+            double maxFocus,
+            double maxFocusZ,
+            double maxIntensityZ,
+            String maxIntensityChannel,
             List<ChannelContext> channels) {
 
         public ImageReport {

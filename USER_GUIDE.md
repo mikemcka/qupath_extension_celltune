@@ -133,11 +133,19 @@ Detail per step is in §[6](#6-binary--composite-workflow-in-detail).
 
 QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000 measurement columns per cell. CellTune lets you pick a subset for training; the rest are ignored.
 
-- **Search** box — case-insensitive substring filter.
-- **Prefix** dropdown — auto-populated with prefixes it finds in your feature names (`Cell:`, `Nucleus:`, `Membrane:`). Pick one, then **Select Prefix** / **Clear Prefix** to bulk-toggle just that group.
-- **Select All** / **Clear All** — operate on whatever's currently visible after filtering. Great for removing large groups of features
+- **Search** box — case-insensitive substring filter (matching groups auto-expand).
+- **Grouped checkbox tree** — features are bucketed into collapsible groups (below); tick a group's parent box to select/clear every feature in it at once.
+- **Select All** / **Clear All** — operate on whatever's currently visible after filtering. Great for removing large groups of features.
+- **Expand All** / **Collapse All** — open or close every group.
 - Checkbox per row to toggle individual features.
 - Counter at the bottom: `X / Y selected`.
+
+Features are grouped so large panels stay navigable — one group per **marker** (the text before the first `: `, e.g. `DAPI_AF`), then catch-all groups in this order:
+
+- **Morphology / Shape** — compartment-only measurements (`Cell: Area µm^2`, `Nucleus: Circularity`, …).
+- **Neighbors** — neighbour-aggregate features (`Neighbors: Mean: …`); labels keep the `Neighbors:` prefix so the context isn't lost.
+- **Embeddings** — dimensionality-reduction / embedding columns: UMAP, PCA, t-SNE, and `*_emb_*`-style names (e.g. `kronos_emb_0`).
+- **Other / Uncategorized** — anything matching none of the above, so nothing is silently misfiled into Morphology.
 
 ![Feature selection](doc_images/feature_selection.png)
 
@@ -902,10 +910,14 @@ this one needs none.
    edge is ≈ 2048 px** (requested downsample = `longEdge / 2048`). Reading every
    image to the same pixel footprint keeps the cohort statistics comparable
    like-for-like, regardless of each slide's native size or pyramid structure.
+   Images are **read in parallel** (a small fixed thread pool) so large projects
+   scan several-fold faster.
 2. Channels are **aligned across images by name**.
-3. Per-channel statistics are computed (below).
-4. Each statistic is converted to a **robust z-score** (`0.6745 × (value − median) / MAD`)
-   and a percentile rank **across the cohort** — the same robust machinery as §8.
+3. Per-channel statistics are computed (below), including a per-channel **focus**
+   (Laplacian variance) sharpness proxy.
+4. The image-level summaries and each **signal-bearing** channel's brightness
+   (`p99`) are converted to **robust z-scores** (`0.6745 × (value − median) / MAD`)
+   **across the cohort** — the same robust machinery as §8.
 5. Deterministic threshold rules assign each image a **verdict**, a set of
    **flags**, and a plain-English **review**.
 
@@ -926,12 +938,15 @@ where percentiles are involved):
 | **background fraction** | fraction below the Otsu threshold | How much of the channel is background. |
 | **foreground coverage** | `1 − background fraction` | How much real signal — the direct **"lots of background"** measure. |
 | **dynamic range** | `p99 − p1` | Flat / weak / empty channels score near zero. |
+| **Laplacian variance (focus)** | variance of the discrete Laplacian over the image | No-reference sharpness proxy (higher = sharper). Intensity-scale dependent, so best read within a cohort. |
 
-Image-level:
+Image-level (derived across channels):
 
 | Statistic | Definition | What it tells you |
 |---|---|---|
 | **empty fraction** | fraction of pixels below the Otsu threshold in **every** channel | The single best "this slide is mostly glass/background" indicator. |
+| **focus** | **max** per-channel Laplacian variance (the sharpest channel) | Sharpness proxy. **Surfaced for inspection only — never flagged**, because it tracks overall brightness as much as true focus (a dim-but-fine slide reads as low focus). The max ignores near-dead channels, which sit near zero. |
+| **intensity z** | largest **signal-bearing** channel `p99` (brightness) robust-z vs the cohort | Drives the **intensity-outlier** flag — surfaces slides whose brightness profile diverges from the cohort (a likely ML challenge). Only channels with real signal contribute, so near-empty markers can't trigger it. |
 
 ### Verdicts, flags, and the score
 
@@ -943,28 +958,35 @@ z-scores robust/MAD-scaled):
 | `BACKGROUND_HEAVY` | mean foreground-coverage z ≤ −2.5, **or** empty-fraction z ≥ 2.5 |
 | `SATURATED` | max saturation fraction ≥ 1% **and** its z ≥ 3.0 (cohort-relative), **or** ≥ 5% in absolute terms (clipping that severe is a defect on its own) |
 | `WEAK_SIGNAL` | median dynamic-range z ≤ −2.5 |
-| `INTENSITY_OUTLIER` | any channel's median z magnitude ≥ 3.5 |
+| `INTENSITY_OUTLIER` | a **signal-bearing** channel's `p99` (brightness) z magnitude ≥ 2.5 (bright **or** dim) |
 | `OK` | none of the above |
+
+> **Why signal-gated?** Intensity-outlier detection runs only on channels whose
+> cohort-median foreground coverage clears a small floor (~5%). Near-dead markers
+> (whose `p99` hovers at the noise floor) are excluded, so their meaningless
+> relative jitter can't manufacture false "outlier" flags. **Focus is computed and
+> shown but never flags** — see the image-level table above.
 
 The **Score** is the sum of the positive deviations that drive those flags — higher
 means more unusual versus the project baseline. The table is sorted by Score by
 default.
 
 **Table columns:** Image, Verdict, Score, Foreground %, Empty %, Max sat %,
-Dyn. range, Flagged. **Filter:** *Flagged only*.
+Dyn. range, Focus, Intensity z, Flagged. **Filter:** *Flagged only*.
 
 **Review pane** (below the table) for the selected image gives the plain-English
 context, e.g.:
 
-> SOL2_0079 — Background-heavy
-> • Foreground coverage 22.0% (cohort median 61.0%, −3.4 MAD). Empty/glass 78.0% (median 30.0%, +3.1 MAD).
-> Suggested action: review / consider removing — mostly background.
+> TRMhi_284_4 — Intensity outlier
+> • Ly6G_S8 - Cy5_AF brightness (p99) 1246.00 is brighter than the cohort (median 220.00, +11.2 MAD).
+> Suggested action: review / normalize — intensity differs from the cohort (may challenge ML).
 
-…followed by a per-channel breakdown (median | p99 | foreground% | dyn.range | sat% | median z).
+…followed by a per-channel breakdown (median | p99 | foreground% | dyn.range | sat% | focus).
 
 **Buttons:** *Open Selected Image* (jumps QuPath there without saving the current
-one), *Export CSV* (wide layout — image-level columns plus a block of per-channel
-columns for every channel in the cohort), *Close*.
+one), *Export CSV* (wide layout — image-level columns including `MaxFocus`,
+`MaxFocusZ`, `MaxIntensityZ`, `MaxIntensityChannel`, plus a block of per-channel
+columns — including `LaplacianVariance` — for every channel in the cohort), *Close*.
 
 ### How to read it
 
@@ -972,7 +994,8 @@ columns for every channel in the cohort), *Close*.
 - **Background-heavy** → mostly glass/empty. Exclude, re-acquire, or crop to the tissue.
 - **Saturated** → a channel is clipped. Fix exposure or drop it from intensity-based analyses.
 - **Weak signal** → flat, low-contrast image. Staining or exposure problem.
-- **Intensity outlier** → a channel far brighter/dimmer than its peers. Check the staining batch or acquisition settings.
+- **Intensity outlier** → a signal-bearing channel is far brighter/dimmer than its peers. The review pane names the channel. These slides diverge from the cohort and may **challenge ML** (consider per-slide normalisation, or extra review). Check the staining batch or acquisition settings.
+- **Focus** (column / per-channel) → a sharpness proxy you can **sort on** to spot blur, but it is not a verdict — low focus often just means a dim slide.
 - **OK** → pixel statistics are within the normal range for the project.
 
 > **Caveats.** Robust z is noisy on tiny projects (< ~5 images) — don't

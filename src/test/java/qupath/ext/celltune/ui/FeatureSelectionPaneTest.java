@@ -40,11 +40,41 @@ class FeatureSelectionPaneTest {
         assertTrue(FeatureSelectionPane.isEmbedding("Embedding_0"));
         assertTrue(FeatureSelectionPane.isEmbedding("PCA_2"));
         assertTrue(FeatureSelectionPane.isEmbedding("tSNE 3"));
+        assertTrue(FeatureSelectionPane.isEmbedding("kronos_emb_0"));
+        assertTrue(FeatureSelectionPane.isEmbedding("kronos_emb_10"));
         assertEquals(FeatureSelectionPane.GROUP_EMBEDDINGS,
                 FeatureSelectionPane.groupOf("UMAP 1"));
+        assertEquals(FeatureSelectionPane.GROUP_EMBEDDINGS,
+                FeatureSelectionPane.groupOf("kronos_emb_5"));
         // Markers that merely contain the letters must not be misclassified.
         assertFalse(FeatureSelectionPane.isEmbedding("PECAM_S1 - Cy5_AF: Cell: Mean"));
         assertFalse(FeatureSelectionPane.isEmbedding("DAPI_AF: Cell: Mean"));
+    }
+
+    @Test
+    void neighborFeaturesGroupUnderNeighborsAndKeepFullLabel() {
+        assertEquals(FeatureSelectionPane.GROUP_NEIGHBORS,
+                FeatureSelectionPane.groupOf("Neighbors: Mean: Cell: Area µm^2"));
+        assertEquals(FeatureSelectionPane.GROUP_NEIGHBORS,
+                FeatureSelectionPane.groupOf("Neighbors: Mean: DAPI: Cell: Mean"));
+        // The "Neighbors:" prefix must be retained in the displayed label.
+        assertEquals("Neighbors: Mean: Cell: Area µm^2",
+                FeatureSelectionPane.leafLabel(
+                        "Neighbors: Mean: Cell: Area µm^2", FeatureSelectionPane.GROUP_NEIGHBORS));
+    }
+
+    @Test
+    void unrecognizedNamesFallIntoOtherNotMorphology() {
+        // Names with no ": " separator and no embedding token are uncategorized.
+        assertEquals(FeatureSelectionPane.GROUP_OTHER,
+                FeatureSelectionPane.groupOf("my_custom_score"));
+        assertEquals(FeatureSelectionPane.GROUP_OTHER,
+                FeatureSelectionPane.groupOf("SomeRandomFeature"));
+        assertEquals(FeatureSelectionPane.GROUP_OTHER,
+                FeatureSelectionPane.groupOf(null));
+        // The full name is kept as the label for the Other group.
+        assertEquals("my_custom_score",
+                FeatureSelectionPane.leafLabel("my_custom_score", FeatureSelectionPane.GROUP_OTHER));
     }
 
     @Test

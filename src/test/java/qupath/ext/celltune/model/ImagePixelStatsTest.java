@@ -98,6 +98,40 @@ class ImagePixelStatsTest {
     }
 
     @Test
+    void laplacianVarianceIsHigherForSharpThanBlurredImage() {
+        // 8×8 high-contrast checkerboard (sharp) vs a smooth gradient (blurred).
+        int w = 8;
+        int h = 8;
+        float[] checker = new float[w * h];
+        float[] gradient = new float[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                checker[y * w + x] = ((x + y) % 2 == 0) ? 0f : 255f;
+                gradient[y * w + x] = (x + y) * 4f; // slowly varying
+            }
+        }
+
+        double sharp = ImagePixelStats.laplacianVariance(checker, w, h);
+        double blurred = ImagePixelStats.laplacianVariance(gradient, w, h);
+
+        assertTrue(sharp > blurred, "sharp=" + sharp + " blurred=" + blurred);
+        // Unknown shape (0×0) leaves the focus metric undefined.
+        assertTrue(Double.isNaN(ImagePixelStats.laplacianVariance(checker, 0, 0)));
+    }
+
+    @Test
+    void computeChannelFillsFocusWhenShapeKnown() {
+        float[] values = new float[16];
+        for (int i = 0; i < 16; i++) {
+            values[i] = (i % 2 == 0) ? 0f : 100f;
+        }
+        // Without a shape, focus is NaN; with a 4×4 shape it is finite.
+        assertTrue(Double.isNaN(ImagePixelStats.computeChannel("x", values, 255.0).laplacianVariance()));
+        var cs = ImagePixelStats.computeChannel("x", values, 255.0, 4, 4);
+        assertTrue(cs.laplacianVariance() > 0.0, "focus=" + cs.laplacianVariance());
+    }
+
+    @Test
     void emptyFractionCountsPixelsBackgroundInAllChannels() {
         // 4 pixels, 2 channels. Otsu thresholds will sit between low/high clusters.
         // Build channels so pixel 0 is background in both → empty.
