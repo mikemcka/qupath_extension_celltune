@@ -1,6 +1,8 @@
 # CellTune User Guide
 
-A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML models in parallel (XGBoost + LightGBM by default) and uses their **disagreement** to surface the cells that need your attention. Everything runs in-process — no Python.
+A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML models in parallel (XGBoost + LightGBM by default) and uses their **disagreement** to surface the cells that need your attention. Everything runs in-process.
+
+Please note that function speed is dependant on hardware and size of project during analysis. Windows and tasks may take a moment to appear or start running especially with larger projects and images, **please be patient**.
 
 > **Conventions in this guide**
 > - **Bold** = exact UI label.
@@ -55,8 +57,8 @@ A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML model
 
 1. Build (or download) `qupath-extension-celltune-0.1.0-SNAPSHOT-all.jar`. See [CLAUDE.md](CLAUDE.md#build--test) for build instructions.
 2. Drop the JAR into QuPath's `extensions/` folder, or drag-and-drop it onto the running QuPath window.
-3. Restart QuPath. The **CellTune Classifier** panel docks into the analysis tab pane on the right.
-4. All commands also live under the **Extensions → CellTune Classifier** menu.
+3. Restart QuPath. The **CellTune Classifier** panel docks into the analysis tab pane on the right, you can mouse over the area and scroll the mouse wheel to ouncover it.
+4. Some commands also live under the **Extensions → CellTune Classifier** menu.
 
 Disable the extension at any time from **Edit → Preferences → CellTune Classifier → Enable**.
 
@@ -437,7 +439,7 @@ After review, click **Train** again — the new labels feed into the next cycle.
 
 ---
 
-## 8. Project Prediction Summary
+## 8. Project Prediction Summary - Experimental
 
 **Menu:** *Extensions → CellTune Classifier → Project Prediction Summary...*
 
@@ -717,8 +719,6 @@ For each selected image, writes `<ImageName>.csv` to your chosen folder with one
 
 Before exporting, a **Select Columns for Cell Table Export** dialog opens. It mirrors the *Select Features* dialog — search box, prefix dropdown, **Select Prefix** / **Clear Prefix**, **Select All** / **Clear All**, and a per-row checkbox — so you can pick exactly which measurement columns land in the CSV. It pre-selects the curated subset (whole-cell means + any distance measurements). Below the list, tick **Export cell polygons (geometry)** to include the ROI outline, and use the **Units** dropdown to choose **Microns (µm)** (`Geometry_um`) or **Pixels** (`Geometry_px`). Missing measurements are written as `NA`.
 
-RFC-4180 compliant (quotes escaped). The dialog asks which images to include if the project has more than one.
-
 ### 12.2 Ground truth export & import
 
 CellTune ground-truth files are a portable representation of your labelled cells **and** their feature vectors — they let you reuse labels across projects/workstations.
@@ -730,7 +730,7 @@ CellTune ground-truth files are a portable representation of your labelled cells
 Header (commented):
 ```
 # CellTune Ground Truth Export
-# Image: my_image.lif
+# Image: my_image.ome.tiff
 # Exported: 2026-06-02T14:30:45
 Image,Label,CentroidX,CentroidY,Feature1,Feature2,...[,Feature1__norm,...]
 ```
@@ -891,7 +891,7 @@ JSON throughout. Model bytes are Base64-encoded inside the state files. Safe to 
 
 ---
 
-## 17. Image pixel prescreen (whole-image QC, no cells needed)
+## 17. Image pixel prescreen (whole-image QC, no cells needed) - Experimental
 
 **Menu:** *Extensions → CellTune Classifier → Image Pixel Prescreen...*
 
@@ -900,7 +900,8 @@ classification exists. It reads a low-resolution version of every image straight
 off the pyramid and summarises each one by its raw pixel intensities, then ranks
 and flags images against the cohort. Use it to spot slides that are mostly
 background, over-exposed, weakly stained, or otherwise unusual, so you can fix or
-exclude them before investing in analysis. It is the pixel-level twin of the
+exclude them before investing in analysis. It is useful to identify images which will 
+need additonal attenmtion and labelling during cell classification. It is the pixel-level twin of the
 [Project Prediction Summary](#8-project-prediction-summary) (which needs cells);
 this one needs none.
 
@@ -1007,16 +1008,17 @@ columns — including `LaplacianVariance` — for every channel in the cohort), 
 
 ---
 
-## 18. Tips, gotchas, and known limitations
+## 18. Tips, tricks and known limitations
 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
+- **Selecting cells** Hold Ctrl key on windows/linux or Command on Mac to select multiple cells at the same time to label.
+- **Channel Viewer** View > Channel viewer is very useful, it will display a view of the target area which all channels selected in channel select displayed.
+- **Resolve heirarchy before exporting** We also have noticed a bug where parent annotations are missing for exported cells, ContainingAnnotations will display them correctly.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.
 - **Pick different model types for Model 1 and Model 2.** Two XGBoosts won't disagree much, which kills the whole point.
-- **LightGBM SHAP is disabled** (the native call crashes the JVM — see [RISKS.md](RISKS.md)). Feature importance for LightGBM uses XGBoost's TreeSHAP as the comparison baseline when both are active. Pure-LightGBM SHAP plots are not available.
-- **Binary classification SHAP** shows identical bars for both classes (positive/negative). This is mathematically correct, not a bug — see [RISKS.md §2.4](RISKS.md#24-binary-classification-shap-display).
 - **Workers spinner caps at 8.** Each worker loads a full slide; expect ~2–4 GB RAM per worker on COMET data.
-- **The marker table is in-memory only.** Re-import after a QuPath restart if you want auto-channel-switching during review.
-- **Project Prediction Summary needs ≥5 images** to give meaningful robust z-scores. On 2–3 image projects, treat the Anomaly column as decorative.
+- **The marker table persists per project.** On import it's saved to `<project>/celltune/marker-table.json` and reloaded automatically when you reopen the project, so auto-channel-switching during review survives QuPath restarts — no re-import needed. (*Reset CellTune project state* clears it along with the rest of the `celltune/` folder.)
+- **Project Prediction Summary needs ≥5 images** to give meaningful robust z-scores. On 2–3 image projects, treat the Anomaly column as overview or guide.
 - **Composite class colours.** Without "Prepend primary", QuPath generates a colour per unique composite name — you can end up with hundreds. Tick "Prepend primary" and your existing multi-class palette is preserved.
 - **No `.qpdata` save** when navigating from Project Prediction Summary — this is deliberate (saving large slides is slow and pointless for navigation). Manually save the image after editing it.
 
