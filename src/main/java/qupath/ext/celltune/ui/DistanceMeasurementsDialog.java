@@ -27,7 +27,7 @@ import qupath.lib.projects.ProjectImageEntry;
 import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import qupath.ext.celltune.util.BackgroundExecutors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -333,11 +333,7 @@ public class DistanceMeasurementsDialog {
             int cores = Runtime.getRuntime().availableProcessors();
             int nThreads = Math.min(selectedImages.size(), workers);
             log("Using " + nThreads + " parallel image worker(s) (cores=" + cores + ").");
-            ExecutorService pool = Executors.newFixedThreadPool(nThreads, r -> {
-                Thread t = new Thread(r, "CellTune-Distances");
-                t.setDaemon(true);
-                return t;
-            });
+            ExecutorService pool = BackgroundExecutors.newFixedPool(nThreads, "CellTune-Distances");
             AtomicInteger done = new AtomicInteger();
             int total = selectedImages.size();
 

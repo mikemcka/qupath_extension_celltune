@@ -1,5 +1,7 @@
 package qupath.ext.celltune.model;
 
+import qupath.ext.celltune.util.RobustStats;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -253,39 +255,9 @@ public final class CohortAnomalyAnalyzer {
     }
 
     private static double[] robustZScores(double[] values) {
-        if (values.length == 0) {
-            return new double[0];
-        }
-
-        double median = median(values);
-        double[] absDeviations = new double[values.length];
-        for (int i = 0; i < values.length; i++) {
-            absDeviations[i] = Math.abs(values[i] - median);
-        }
-        double mad = median(absDeviations);
-
-        var out = new double[values.length];
-        if (mad < 1e-12) {
-            return out;
-        }
-
-        for (int i = 0; i < values.length; i++) {
-            out[i] = 0.6745 * (values[i] - median) / mad;
-        }
-        return out;
-    }
-
-    private static double median(double[] values) {
-        if (values.length == 0) {
-            return 0.0;
-        }
-        double[] sorted = Arrays.copyOf(values, values.length);
-        Arrays.sort(sorted);
-        int mid = sorted.length / 2;
-        if ((sorted.length & 1) == 1) {
-            return sorted[mid];
-        }
-        return 0.5 * (sorted[mid - 1] + sorted[mid]);
+        // Strict variant: cell-level prediction stats are finite, and a flat
+        // distribution (degenerate MAD) legitimately means "no outliers" → zeros.
+        return RobustStats.robustZStrict(values);
     }
 
     private static final class Intermediate {

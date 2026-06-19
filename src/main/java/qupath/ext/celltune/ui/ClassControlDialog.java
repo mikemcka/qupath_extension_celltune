@@ -20,7 +20,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import qupath.ext.celltune.util.BackgroundExecutors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -57,11 +57,7 @@ public class ClassControlDialog {
     private ExecutorService bgExecutor = newBgExecutor();
 
     private static ExecutorService newBgExecutor() {
-        return Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "ClassControl-BG");
-            t.setDaemon(true);
-            return t;
-        });
+        return BackgroundExecutors.newSingleThread("ClassControl-BG");
     }
 
     /** Returns a live executor, recreating it if a previous close shut it down. */

@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import qupath.ext.celltune.util.BackgroundExecutors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -78,11 +78,8 @@ public class ReviewController {
      * its tile cache is warm before the user switches to it. Daemon thread so it never
      * blocks JVM shutdown.
      */
-    private final ExecutorService prefetchExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "CellTune-ReviewPrefetch");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ExecutorService prefetchExecutor =
+            BackgroundExecutors.newSingleThread("CellTune-ReviewPrefetch");
     /** Image name most recently submitted for prefetch, to avoid duplicate work. */
     private volatile String lastPrefetchedImageName;
     /**

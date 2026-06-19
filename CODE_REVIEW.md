@@ -25,7 +25,8 @@ Legend: **[FIX]** addressed in this pass · **[DEFER]** documented, left for a f
 | 5 | Low | Robust-z math duplicated with **divergent** behaviour across two analyzers | **[FIX]** Phase C (preserve both behaviours) |
 | 6 | Low | CSV escaping reimplemented three times with inconsistent quoting | **[FIX]** Phase C |
 | 7 | Low | Background executors created ad hoc in 4+ classes; no shared factory | **[FIX]** Phase C |
-| 8 | Low | Label-persistence helpers triplicated across two large files | **[FIX]** Phase C |
+| 8 | Low | Label-persistence helpers duplicated across two large files | **[DEFER]** — not a clean dedup (see #13); entangled with per-class state |
+| 13 | Medium | `collectLabelsFromHierarchy` differs between the two copies — panel version lacks the merge-history-preservation guard | **[DEFER]** — potential latent data-loss; document, fix with QA |
 | 9 | Medium | Six files exceed 1000 lines; god-object orchestration methods | **[FIX]** Phase D (safe extractions only) / **[DEFER]** (large splits) |
 | 10 | Medium | Core IO/model logic largely untested; near-zero UI coverage | **[FIX]** Phase E (logic tests) / **[DEFER]** (UI) |
 | 11 | Low | No static analysis configured | **[FIX]** Phase E (SpotBugs, non-failing) |
@@ -113,13 +114,35 @@ Daemon single-thread / bounded pools are re-created by hand in `ClassControlDial
 **Fix (Phase C):** a `util/BackgroundExecutors` factory for naming + daemon setup; call sites
 keep their own lifecycle.
 
-### 8. Triplicated label persistence — **Low** — [FIX]
+### 8. Duplicated label persistence — **Low** — [DEFER]
 `collectLabelsFromAnnotations`, `persistCurrentImageSampledIds`, and
 `persistReviewedLabelsByImage` exist in **both**
 [CellTuneExtension.java](src/main/java/qupath/ext/celltune/CellTuneExtension.java) and
 [ClassificationPanel.java](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java).
-**Fix (Phase C):** extract to one `io/LabelPersistence` helper; both delegate. Highest-value,
-cleanly testable dedup.
+On inspection this is **not** a clean mechanical dedup: the `persist*` methods are entangled
+with per-class instance state (`lastSampledCellImageMap`, `activeBinaryClassFilter()`,
+`activeBinaryMarker`) and would need 4–5 context parameters threaded through, and the
+`collectLabelsFromHierarchy` pair is genuinely divergent (see #13). Extracting an
+`io/LabelPersistence` helper is still worthwhile but must be done with manual QuPath QA, so it
+is **deferred** to keep this pass behavior-preserving.
+
+### 13. `collectLabelsFromHierarchy` divergence — **Medium** — [DEFER]
+The shared-looking static `collectLabelsFromHierarchy(hierarchy, store, allowedClasses)` has
+**two non-identical copies**:
+- [CellTuneExtension.java:3079](src/main/java/qupath/ext/celltune/CellTuneExtension.java#L3079)
+  preserves merge history: before overwriting a detection's label it checks
+  `cls.equals(LabelStore.innermostOriginal(existing))` and skips, so a previously merged label
+  is not clobbered by the bare annotation class.
+- [ClassificationPanel.java:1446](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java#L1446)
+  has **no such guard** — it calls `store.setLabel(id, cls)` unconditionally.
+
+The panel copy runs inside `doTrain()` (label collection before training). If a user merges
+classes and then retrains while leftover point annotations exist, the panel path could
+silently overwrite merged labels with their pre-merge class — a potential data-loss bug.
+**Recommended follow-up:** unify both onto the CellTuneExtension (merge-preserving) behavior
+behind one helper, with a regression test for the merge-history case, then validate the
+training path manually in QuPath. Not done in this pass because it changes behavior in a hot
+path with no automated UI coverage.
 
 ---
 

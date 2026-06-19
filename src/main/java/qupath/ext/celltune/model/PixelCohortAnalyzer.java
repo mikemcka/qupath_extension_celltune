@@ -1,7 +1,8 @@
 package qupath.ext.celltune.model;
 
+import qupath.ext.celltune.util.RobustStats;
+
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -384,86 +385,17 @@ public final class PixelCohortAnalyzer {
     }
 
     /**
-     * Robust z-scores, NaN-preserving, MAD-scaled (0.6745 normaliser).
-     * <p>
-     * When the MAD is zero — common for metrics whose cohort baseline is a hard
-     * floor, e.g. saturation fraction where most images are 0% — the score falls
-     * back to a classic mean/std z so a genuine outlier above a flat baseline is
-     * still detected rather than collapsing to zero.
+     * Robust z-scores, NaN-preserving, MAD-scaled, with a mean/std fallback for a
+     * degenerate MAD. Delegates to {@link RobustStats#robustZWithFallback(double[])};
+     * kept here as a package-private seam so existing call sites and tests are
+     * unaffected. See that method for the full rationale.
      */
     static double[] robustZ(double[] values) {
-        double[] out = new double[values.length];
-        double median = medianIgnoreNaN(values);
-        if (Double.isNaN(median)) {
-            Arrays.fill(out, Double.NaN);
-            return out;
-        }
-        double[] absDev = new double[values.length];
-        for (int i = 0; i < values.length; i++) {
-            absDev[i] = Double.isNaN(values[i]) ? Double.NaN : Math.abs(values[i] - median);
-        }
-        double mad = medianIgnoreNaN(absDev);
-
-        if (!Double.isNaN(mad) && mad >= 1e-12) {
-            for (int i = 0; i < values.length; i++) {
-                out[i] = Double.isNaN(values[i])
-                        ? Double.NaN
-                        : 0.6745 * (values[i] - median) / mad;
-            }
-            return out;
-        }
-
-        // Degenerate MAD — fall back to mean/std so outliers above a flat
-        // baseline are still surfaced.
-        double sum = 0.0;
-        int n = 0;
-        for (double v : values) {
-            if (!Double.isNaN(v)) {
-                sum += v;
-                n++;
-            }
-        }
-        double mean = n > 0 ? sum / n : Double.NaN;
-        double sq = 0.0;
-        for (double v : values) {
-            if (!Double.isNaN(v)) {
-                double d = v - mean;
-                sq += d * d;
-            }
-        }
-        double std = n > 0 ? Math.sqrt(sq / n) : Double.NaN;
-        for (int i = 0; i < values.length; i++) {
-            if (Double.isNaN(values[i])) {
-                out[i] = Double.NaN;
-            } else if (Double.isNaN(std) || std < 1e-12) {
-                out[i] = 0.0;
-            } else {
-                out[i] = (values[i] - mean) / std;
-            }
-        }
-        return out;
+        return RobustStats.robustZWithFallback(values);
     }
 
     private static double medianIgnoreNaN(double[] values) {
-        int n = 0;
-        for (double v : values) {
-            if (!Double.isNaN(v)) {
-                n++;
-            }
-        }
-        if (n == 0) {
-            return Double.NaN;
-        }
-        double[] finite = new double[n];
-        int k = 0;
-        for (double v : values) {
-            if (!Double.isNaN(v)) {
-                finite[k++] = v;
-            }
-        }
-        Arrays.sort(finite);
-        int mid = n / 2;
-        return (n & 1) == 1 ? finite[mid] : 0.5 * (finite[mid - 1] + finite[mid]);
+        return RobustStats.medianIgnoreNaN(values);
     }
 
     private static double medianOf(List<Double> values) {
