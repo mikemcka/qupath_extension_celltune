@@ -324,6 +324,8 @@ The **inter-model agreement** matrix — rows = XGBoost prediction, columns = Li
 
 A diagonal-dominant matrix means the two models broadly agree; large off-diagonal hotspots show systematic confusion pairs (e.g. CD4/CD8 cross-talk) — those are your priority for the next labelling round.
 
+![Inter-model agreement confusion matrix](doc_images/agreement_confusion_matrix.png)
+
 #### Training Metrics (button)
 
 Per-class **precision / recall / F1 / support** for each model, computed on a held-out **20% stratified validation split**:
@@ -340,7 +342,11 @@ macro F1                              0.894       500
 weighted F1                           0.903       500
 ```
 
+![Training metrics](doc_images/training_metrics.png)
+
 There's also a **Validation Confusion Matrix** view (true class × predicted class on the same 20% fold), with both absolute counts and row-normalised recall heatmaps, plus a per-row diagonal = recall.
+
+![Validation confusion matrix](doc_images/validation_confusion_matrix.png)
 
 **Exports:**
 - **CSV** — long format `split,model,class,precision,recall,f1,support`, with summary rows tagged `__accuracy__`, `__macro_f1__`, `__weighted_f1__` so they're easy to filter in pandas/R.
@@ -354,12 +360,18 @@ Top-N (up to 10) features by **mean |SHAP|** per class. Horizontal bars, one col
 
 Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, your normalisation cofactor is probably wrong). It's also where a stray feature you forgot to de-select in Select Features (§4.1) tends to show up — a non-biological column like a cell index or centroid coordinate ranking near the top is a red flag that it leaked into training.
 
+![Feature importance showing a leaked cell-index feature](doc_images/index_feature_leakage.png)
+
+Here `kronos_cell_id` (a cell index) dominates the SHAP ranking — a clear sign it leaked into training and should be de-selected in Select Features.
+
 ### 5.7 Optional — restrict sampling to specific annotations
 
 Two controls above the buttons:
 
 - **Sample current image only** — limits review/sampling to the open image.
 - **Filter by annotation keywords** — comma-separated, case-insensitive substring match against annotation names. Example: `Tumour, Margin` → only cells whose centroid falls inside an annotation whose name contains "Tumour" or "Margin" are eligible.
+
+![Specify annotations before entering review mode](doc_images/review_mode_specifiy_annotations.png)
 
 Leave both blank to sample across every cell in every project image (recommended default).
 
@@ -427,6 +439,14 @@ Review mode samples the **disagreement** cells (where Model 1 ≠ Model 2) using
 
 > The budgets above are calibrated for the default 256-cell batch. If you request a different sample size, every tier budget scales linearly (`× sampleSize / 256`, floored at 1 per tier), so the tier mix stays proportional — a smaller batch isn't just the first tier truncated.
 
+The cell currently under review is ringed in magenta in the viewer, with the toolbar showing each model's top prediction:
+
+![Review mode — highlighted cell](doc_images/review_mode_highlighted_cell.png)
+
+You can Ctrl/Cmd-click several cells at once to label a group together; the toolbar header shows `→ clicked cell` for the active selection:
+
+![Review mode — multiple clicked cells](doc_images/review_mode_clicked_multiple_cells.png)
+
 **Toolbar buttons during review:**
 - **Previous / Next / Skip** — navigate the queue.
 - **XGB: ClassName (89%)** — accept Model 1's top prediction; blue background.
@@ -461,6 +481,8 @@ Cohort-level QC across every image in your project. Loads the saved `Pred_ALL` r
 - **Export CSV** — flattened table of currently-visible rows.
 
 **Details pane** (below the table) for the selected row: anomaly score, flag reasons, rare-enrichment summary, per-class counts.
+
+![Project Prediction Summary](doc_images/prediction_summary.png)
 
 ### Anatomy of the anomaly score
 
@@ -500,7 +522,13 @@ A phenotype × marker heatmap of **mean whole-cell intensity per predicted cell 
 
 Rows are cell classes (the `PathClass` assigned to each detection), columns are markers (every `"<marker>: Cell: Mean"` whole-cell measurement), and each cell is the mean intensity of that marker across all cells of that class.
 
+When you open the heatmap you first pick which whole-cell mean measurements to include:
+
+![Select measurements for intensity heatmap](doc_images/select_measurements_for_intensity_heatmap.png)
+
 **Colour = z-score across phenotypes.** Each marker column is standardised across the class rows, so the colour highlights *which phenotype is relatively high (red) or low (blue)* for that marker, independent of the marker's absolute brightness. A diverging blue↔white↔red scale is used with a colorbar legend; grey means "no cells of that class had a valid value for that marker". The numeric mean can be overlaid in each cell via **Show mean values**.
+
+![Mean marker expression per phenotype heatmap](doc_images/marker_intensity_heatmap.png)
 
 **Image selector** (top of the window):
 - **The current image** (selected by default).
@@ -657,6 +685,8 @@ You can manage classes without leaving the dialog: **Manage Classes…** opens
 re-reads the updated class list into every dropdown. (The dropdowns are also
 editable — typing a new name creates that class on assign.)
 
+![Assigning classes to clusters](doc_images/assign_parent_clusters.png)
+
 - **Current-image scope (Apply Clusters…)** — after you confirm (a second dialog
   shows the exact cell count), the chosen classes are written to those cells'
   **classification** on a background thread. Skipped/unmapped cells are untouched.
@@ -679,6 +709,8 @@ two-level phenotyping workflow:
    immune subset.
 3. **Apply Clusters** again to name the sub-populations — type derived names like
    `Immune: CD8 T` (QuPath treats `Parent: Child` as a derived class).
+
+![Sub-clustering within the Immune class](doc_images/immune_sub_cluster.png)
 
 Repeat to go deeper. The status bar reports the active scope and marker count,
 e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
@@ -958,6 +990,8 @@ exclude them before investing in analysis. It is useful to identify images which
 need additonal attenmtion and labelling during cell classification. It is the pixel-level twin of the
 [Project Prediction Summary](#8-project-prediction-summary) (which needs cells);
 this one needs none.
+
+![Image pixel prescreen](doc_images/pixel_prescreen.png)
 
 ### How it works
 
