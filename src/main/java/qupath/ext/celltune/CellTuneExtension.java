@@ -39,6 +39,7 @@ import qupath.ext.celltune.io.CellTableExporter;
 import qupath.ext.celltune.io.GroundTruthIO;
 import qupath.ext.celltune.io.MarkerTableImporter;
 import qupath.ext.celltune.io.ProjectStateManager;
+import qupath.ext.celltune.model.AnnotationLabelCollector;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellTypeTable;
 import qupath.ext.celltune.model.CohortAnomalyAnalyzer;
@@ -83,7 +84,6 @@ import qupath.lib.objects.PathAnnotationObject;
 import qupath.lib.objects.PathDetectionObject;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
-import qupath.lib.objects.PathObjectTools;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
@@ -3067,50 +3067,17 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     /**
-     * Collect ground-truth labels from classified annotations in a hierarchy.
-     * Works with any image's hierarchy — used for both the current image and
-     * other project images when pooling training data.
+     * Collect ground-truth labels from classified point annotations in a hierarchy.
+     * Works with any image's hierarchy — used for both the current image and other
+     * project images when pooling training data. Delegates to the shared
+     * {@link AnnotationLabelCollector} so the merge-history-preservation behaviour
+     * is identical here and in {@code ClassificationPanel}.
      */
-    private static void collectLabelsFromHierarchy(
-            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
-        collectLabelsFromHierarchy(hierarchy, store, null);
-    }
-
     private static void collectLabelsFromHierarchy(
             qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
             LabelStore store,
             java.util.Set<String> allowedClasses) {
-        for (PathObject anno : hierarchy.getAnnotationObjects()) {
-            if (anno.getPathClass() == null || anno.getROI() == null) continue;
-            // Only point annotations count as ground truth — area/region annotations
-            // describe tissue regions, not individual cell labels.
-            if (!anno.getROI().isPoint()) continue;
-            String cls = anno.getPathClass().toString();
-            if (allowedClasses != null && !allowedClasses.contains(cls)) continue;
-
-            List<PathObject> hits = new java.util.ArrayList<>();
-            for (var pt : anno.getROI().getAllPoints()) {
-                hits.addAll(PathObjectTools.getObjectsForLocation(
-                        hierarchy, pt.getX(), pt.getY(),
-                        anno.getROI().getZ(), anno.getROI().getT(), -1));
-            }
-
-            for (PathObject det : hits) {
-                if (det.isDetection()) {
-                    String id = det.getID().toString();
-                    String existing = store.getLabel(id);
-                    // Preserve merge-history encoding: if the existing stored value is
-                    // "<cls>-mergedInto(target)" (or a chained merge whose innermost
-                    // original equals cls), don't overwrite it with the bare PathClass
-                    // — the annotation has no knowledge of the merge so doing so would
-                    // silently destroy the merge result.
-                    if (existing != null && cls.equals(LabelStore.innermostOriginal(existing))) {
-                        continue;
-                    }
-                    store.setLabel(id, cls);
-                }
-            }
-        }
+        AnnotationLabelCollector.collect(hierarchy, store, allowedClasses);
     }
 
     private void showManualLabelMode(QuPathGUI qupath) {

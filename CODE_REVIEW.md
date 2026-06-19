@@ -26,7 +26,7 @@ Legend: **[FIX]** addressed in this pass · **[DEFER]** documented, left for a f
 | 6 | Low | CSV escaping reimplemented three times with inconsistent quoting | **[FIX]** Phase C |
 | 7 | Low | Background executors created ad hoc in 4+ classes; no shared factory | **[FIX]** Phase C |
 | 8 | Low | Label-persistence helpers duplicated across two large files | **[DEFER]** — not a clean dedup (see #13); entangled with per-class state |
-| 13 | Medium | `collectLabelsFromHierarchy` differs between the two copies — panel version lacks the merge-history-preservation guard | **[DEFER]** — potential latent data-loss; document, fix with QA |
+| 13 | Medium | `collectLabelsFromHierarchy` differed between the two copies — panel version lacked the merge-history-preservation guard (potential label data-loss) | **[FIX]** — unified into `AnnotationLabelCollector` (merge-preserving), with regression tests |
 | 9 | Medium | Six files exceed 1000 lines; god-object orchestration methods | **[FIX]** Phase D (safe extractions only) / **[DEFER]** (large splits) |
 | 10 | Medium | Core IO/model logic largely untested; near-zero UI coverage | **[FIX]** Phase E added BinaryClassifierRegistry/GroundTruthIO/RobustStats/CsvUtils/FileSystemUtilities tests + LabelStore/Resampler regressions / **[DEFER]** (UI) |
 | 11 | Low | No static analysis configured | **[FIX]** Phase E — SpotBugs wired, non-failing |
@@ -126,23 +126,25 @@ with per-class instance state (`lastSampledCellImageMap`, `activeBinaryClassFilt
 `io/LabelPersistence` helper is still worthwhile but must be done with manual QuPath QA, so it
 is **deferred** to keep this pass behavior-preserving.
 
-### 13. `collectLabelsFromHierarchy` divergence — **Medium** — [DEFER]
-The shared-looking static `collectLabelsFromHierarchy(hierarchy, store, allowedClasses)` has
+### 13. `collectLabelsFromHierarchy` divergence — **Medium** — [FIX]
+The shared-looking static `collectLabelsFromHierarchy(hierarchy, store, allowedClasses)` had
 **two non-identical copies**:
-- [CellTuneExtension.java:3079](src/main/java/qupath/ext/celltune/CellTuneExtension.java#L3079)
-  preserves merge history: before overwriting a detection's label it checks
-  `cls.equals(LabelStore.innermostOriginal(existing))` and skips, so a previously merged label
-  is not clobbered by the bare annotation class.
-- [ClassificationPanel.java:1446](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java#L1446)
-  has **no such guard** — it calls `store.setLabel(id, cls)` unconditionally.
+- `CellTuneExtension` preserved merge history: before overwriting a detection's label it
+  checked `cls.equals(LabelStore.innermostOriginal(existing))` and skipped, so a previously
+  merged label was not clobbered by the bare annotation class.
+- `ClassificationPanel` had **no such guard** — it called `store.setLabel(id, cls)`
+  unconditionally. This copy runs inside `doTrain()` (label collection before training), so a
+  user who merged classes and then retrained while leftover point annotations existed could
+  silently overwrite merged labels with their pre-merge class — a label data-loss bug.
 
-The panel copy runs inside `doTrain()` (label collection before training). If a user merges
-classes and then retrains while leftover point annotations exist, the panel path could
-silently overwrite merged labels with their pre-merge class — a potential data-loss bug.
-**Recommended follow-up:** unify both onto the CellTuneExtension (merge-preserving) behavior
-behind one helper, with a regression test for the merge-history case, then validate the
-training path manually in QuPath. Not done in this pass because it changes behavior in a hot
-path with no automated UI coverage.
+**Fixed:** both now delegate to one shared, merge-preserving collector,
+[model/AnnotationLabelCollector.java](src/main/java/qupath/ext/celltune/model/AnnotationLabelCollector.java);
+the two dead 2-arg overloads were removed and the now-unused `PathObjectTools` imports dropped.
+Behaviour is covered by
+[AnnotationLabelCollectorTest](src/test/java/qupath/ext/celltune/model/AnnotationLabelCollectorTest.java)
+(merge-preservation, chained merge, overwrite-on-different-class, allowed-class filter,
+area-annotations-ignored). This is the one DEFER that was promoted to FIX because it is a
+correctness bug, and the unified logic is directly unit-testable without the UI.
 
 ---
 
