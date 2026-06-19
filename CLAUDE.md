@@ -44,6 +44,17 @@ Copy the fat JAR into the QuPath extensions folder and restart QuPath fully:
 
 Troubleshooting: build fails with toolchain errors → confirm `JAVA_HOME` points to JDK 25. No menu entries → confirm the new JAR is in the correct folder and QuPath was restarted fully. Native model issues → use the shadow JAR only, never partial classpath JARs.
 
+### Static analysis (SpotBugs)
+
+SpotBugs is wired as a **reporting-only** task (`ignoreFailures = true`) — it never breaks the build and is intentionally not part of `check` until the baseline is triaged.
+
+```bash
+./gradlew spotbugsMain        # analyses main sources only (test sources are skipped)
+# → open build/reports/spotbugs/main.html
+```
+
+Treat findings as a backlog to work down, not a gate. Don't add it as a failing `check` dependency without first triaging the existing baseline.
+
 ## Architecture
 
 Entry point: `src/main/java/qupath/ext/celltune/CellTuneExtension.java` — registers menus, docks the sidebar panel, and manages project-level state. Data flows as the active-learning loop: seed labels → train dual classifiers → inspect inter-model confusion → review disagreement cells → merge labels → retrain.

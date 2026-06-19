@@ -28,8 +28,8 @@ Legend: **[FIX]** addressed in this pass · **[DEFER]** documented, left for a f
 | 8 | Low | Label-persistence helpers duplicated across two large files | **[DEFER]** — not a clean dedup (see #13); entangled with per-class state |
 | 13 | Medium | `collectLabelsFromHierarchy` differs between the two copies — panel version lacks the merge-history-preservation guard | **[DEFER]** — potential latent data-loss; document, fix with QA |
 | 9 | Medium | Six files exceed 1000 lines; god-object orchestration methods | **[FIX]** Phase D (safe extractions only) / **[DEFER]** (large splits) |
-| 10 | Medium | Core IO/model logic largely untested; near-zero UI coverage | **[FIX]** Phase E (logic tests) / **[DEFER]** (UI) |
-| 11 | Low | No static analysis configured | **[FIX]** Phase E (SpotBugs, non-failing) |
+| 10 | Medium | Core IO/model logic largely untested; near-zero UI coverage | **[FIX]** Phase E added BinaryClassifierRegistry/GroundTruthIO/RobustStats/CsvUtils/FileSystemUtilities tests + LabelStore/Resampler regressions / **[DEFER]** (UI) |
+| 11 | Low | No static analysis configured | **[FIX]** Phase E — SpotBugs wired, non-failing |
 | 12 | — | arcsinh "NaN on negative input" | **[WONTFIX]** — not a bug (see below) |
 
 ---
@@ -186,16 +186,22 @@ extractions on inspection, so they are left for a follow-up with manual QuPath Q
 ## Tests & tooling
 
 ### 10. Test coverage gaps — **Medium**
-Untested core logic with clear seams: `ClassManager` (merge/undo), `BinaryClassifierRegistry.sanitizeMarkerName`
-(path-traversal), `GroundTruthIO` round-trip, `CohortClusterModel`. 21 of 23 UI classes have
-no tests.
-**Fix (Phase E):** add logic tests for the above plus the new utilities. **[DEFER]** UI-render
-tests (require a JavaFX harness / TestFX — out of scope for this pass).
+Untested core logic with clear seams. **Fixed (Phase E):** added
+`BinaryClassifierRegistryTest` (sanitizeMarkerName / path-traversal),
+`GroundTruthIOTest` (CSV import parsing, non-numeric→0, skip rules),
+`RobustStatsTest`, `CsvUtilsTest`, `FileSystemUtilitiesTest`, plus regression tests on the
+Phase-B fixes (`LabelStore` concurrency, `Resampler` validation).
+**[DEFER]:** `ClassManager` (merge/undo) and `CohortClusterModel` need Project/PathObject
+scaffolding; UI-render tests require a JavaFX harness / TestFX — both out of scope for this
+pass. 21 of 23 UI classes remain untested.
 
 ### 11. No static analysis — **Low** — [FIX]
-[build.gradle.kts](build.gradle.kts) has no SpotBugs/Checkstyle/ErrorProne.
-**Fix (Phase E):** wire SpotBugs as a **non-failing** reporting task to establish a baseline;
-document how to run it in CLAUDE.md.
+[build.gradle.kts](build.gradle.kts) had no SpotBugs/Checkstyle/ErrorProne.
+**Fixed (Phase E):** SpotBugs (`com.github.spotbugs` plugin) is wired as a **non-failing**
+reporting task (`ignoreFailures = true`, MEDIUM confidence, main sources only). Run
+`./gradlew spotbugsMain` → `build/reports/spotbugs/main.html`. It is deliberately **not** part
+of `check` until the baseline is triaged. Documented in CLAUDE.md. The first run produces a
+baseline to work down over time — treat as a backlog, not a gate.
 
 ---
 
