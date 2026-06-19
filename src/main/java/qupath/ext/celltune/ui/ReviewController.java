@@ -63,13 +63,11 @@ public class ReviewController {
     /** Project entry that was open when the review session started; restored on close in tile mode. */
     private final ProjectImageEntry<BufferedImage> initialEntry;
     /**
-     * Snapshot of project entry references taken when the review session started.
-     * Used to detect and remove any entries that QuPath's ProjectBrowser may have
-     * auto-added in response to {@code viewer.setImageData(...)} being called with
-     * a CroppedImageServer-backed ImageData (entries shaped like
-     * "crop_1.ome.tiff (x, y, w, h)"). Identity-based to avoid relying on names.
+     * Removes the temporary project entries QuPath's ProjectBrowser auto-adds when
+     * tile-mode review swaps a CroppedImageServer-backed ImageData into the viewer.
+     * Snapshots the project's entries at construction (session start).
      */
-    private final java.util.Set<ProjectImageEntry<BufferedImage>> initialEntrySnapshot = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final TileEntryCleaner tileEntryCleaner;
 
     /**
      * Warms QuPath's caches for the next review image on a background thread so the
@@ -178,13 +176,9 @@ public class ReviewController {
         }
         this.initialEntry = initial;
 
-        // Snapshot project entries BEFORE we touch the viewer, so we can later
-        // identify any tile-derived entries QuPath's ProjectBrowser auto-added.
-        if (qupath.getProject() != null) {
-            @SuppressWarnings("unchecked")
-            var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
-            initialEntrySnapshot.addAll(allEntries);
-        }
+        // Snapshot project entries BEFORE we touch the viewer, so the cleaner can
+        // later identify any tile-derived entries QuPath's ProjectBrowser auto-added.
+        this.tileEntryCleaner = new TileEntryCleaner(qupath);
 
         String defaultImageName = currentImageName();
 
@@ -692,7 +686,7 @@ public class ReviewController {
             // auto-added while we were swapping CroppedImageServer ImageData into the
             // viewer. They are temporary review artifacts the user does not want
             // persisted.
-            removeAutoAddedTileEntries();
+            tileEntryCleaner.removeAutoAddedEntries();
         }
     }
 
@@ -879,90 +873,8 @@ public class ReviewController {
         // auto-added on prior swaps. Without this, every reviewed tile leaves
         // a stale entry (and on-disk data folder) behind for the duration of
         // the session — which can easily reach hundreds of folders.
-        removeAutoAddedTileEntries();
+        tileEntryCleaner.removeAutoAddedEntries();
         return true;
-    }
-
-    /**
-     * Remove any project entries that QuPath added while the review session was
-     * active. Compares against {@link #initialEntrySnapshot} taken before the
-     * first {@code viewer.setImageData(tile)} call; anything new must be a
-     * tile-derived auto-added entry (named like {@code crop_1.ome.tiff (x, y, w, h)}).
-     */
-    private void removeAutoAddedTileEntries() {
-        var project = qupath.getProject();
-        if (project == null) return;
-        try {
-            // Don't try to remove the entry that backs the currently-displayed
-            // ImageData — QuPath will recreate it (or worse, throw) if we yank
-            // it out from under the viewer.
-            ProjectImageEntry<BufferedImage> activeEntry = null;
-            try {
-                var activeData = qupath.getImageData();
-                if (activeData != null) activeEntry = project.getEntry(activeData);
-            } catch (Exception ignored) { }
-
-            @SuppressWarnings("unchecked")
-            var current = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-            List<ProjectImageEntry<BufferedImage>> toRemove = new ArrayList<>();
-            for (var entry : current) {
-                if (entry == null) continue;
-                if (entry == activeEntry) continue;
-                if (!initialEntrySnapshot.contains(entry)) {
-                    toRemove.add(entry);
-                }
-            }
-            if (toRemove.isEmpty()) return;
-            for (var entry : toRemove) {
-                // Capture the on-disk path before removal so we can force-delete
-                // it if QuPath's move-to-trash fallback fails (common on network
-                // mounts where no system trash is available).
-                java.nio.file.Path entryPath = null;
-                try { entryPath = entry.getEntryPath(); } catch (Exception ignored) { }
-
-                try {
-                    project.removeImage(entry, true);
-                    logger.info("Removed auto-added tile project entry: {}", entry.getImageName());
-                } catch (Exception ex) {
-                    logger.warn("Failed to remove auto-added tile entry '{}': {}",
-                            entry.getImageName(), ex.getMessage());
-                }
-
-                // Force-delete the data folder if QuPath left it behind.
-                if (entryPath != null && java.nio.file.Files.exists(entryPath)) {
-                    try {
-                        deleteRecursively(entryPath);
-                    } catch (Exception ex) {
-                        logger.warn("Failed to force-delete tile entry path '{}': {}",
-                                entryPath, ex.getMessage());
-                    }
-                }
-            }
-            try {
-                project.syncChanges();
-            } catch (Exception ex) {
-                logger.warn("Failed to sync project after removing tile entries: {}", ex.getMessage());
-            }
-            // Refresh the project browser so removed entries disappear from the UI.
-            javafx.application.Platform.runLater(() -> {
-                try { qupath.refreshProject(); } catch (Exception ignored) { }
-            });
-        } catch (Exception ex) {
-            logger.warn("Failed to scan project for auto-added tile entries: {}", ex.getMessage());
-        }
-    }
-
-    private static void deleteRecursively(java.nio.file.Path path) throws java.io.IOException {
-        if (!java.nio.file.Files.exists(path)) return;
-        try (var stream = java.nio.file.Files.walk(path)) {
-            stream.sorted(java.util.Comparator.reverseOrder())
-                    .forEach(p -> {
-                        try { java.nio.file.Files.deleteIfExists(p); }
-                        catch (java.io.IOException ex) {
-                            logger.debug("Could not delete {}: {}", p, ex.getMessage());
-                        }
-                    });
-        }
     }
 
     private void rebuildCurrentImageCellCache() {
