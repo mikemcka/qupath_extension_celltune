@@ -8,7 +8,6 @@ import javafx.beans.property.StringProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellFeatureExtractor;
-import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.objects.PathObject;
@@ -424,54 +423,29 @@ public class DualModelClassifier {
         predAVG  = new PopulationSet("Pred_AVG");
         predALL  = new PopulationSet("Pred_ALL");
 
-        // Collect PathClass assignments for batch application on the FX thread.
-        // PathObject.setPathClass() may use a JavaFX property in future QuPath
-        // versions; always apply on the FX thread to be forward-compatible.
-        List<PathObject> classifyObjects = new ArrayList<>(totalCells);
-        List<PathClass>  classifyClasses = new ArrayList<>(totalCells);
-
-        int disagreements = 0;
         List<PathObject> cellList = (allCells instanceof List)
                 ? (List<PathObject>) allCells
                 : new ArrayList<>(allCells);
 
-        for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
-            int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
-            int chunkSize = chunkEnd - chunkStart;
-            List<PathObject> chunk = cellList.subList(chunkStart, chunkEnd);
+        PredictionBatcher.Batch batch = PredictionBatcher.predict(
+                cellList, extractor, PREDICT_CHUNK_SIZE,
+                (data, size) -> predictModel(model1Type, true, data, size, nFeatures),
+                (data, size) -> predictModel(model2Type, false, data, size, nFeatures),
+                classNames,
+                (cellId, pred) -> {
+                    predMDL1.put(cellId, pred);
+                    predMDL2.put(cellId, pred);
+                    predAVG.put(cellId, pred);
+                    predALL.put(cellId, pred);
+                },
+                chunkEnd -> updateStatus("Predicting… " + chunkEnd + "/" + totalCells,
+                        0.65 + 0.20 * ((double) chunkEnd / totalCells)));
 
-            float[] chunkData = extractor.extractMatrix(chunk);
-            float[][] mdl1Probs = predictModel(model1Type, true, chunkData, chunkSize, nFeatures);
-            float[][] mdl2Probs = predictModel(model2Type, false, chunkData, chunkSize, nFeatures);
-
-            for (int i = 0; i < chunkSize; i++) {
-                PathObject cell = chunk.get(i);
-                String cellId = cell.getID().toString();
-
-                int mdl1Best = argmax(mdl1Probs[i]);
-                int mdl2Best = argmax(mdl2Probs[i]);
-
-                String mdl1Label = classNames.get(mdl1Best);
-                String mdl2Label = classNames.get(mdl2Best);
-
-                CellPrediction pred = new CellPrediction(
-                        cellId, mdl1Label, mdl2Label,
-                        mdl1Probs[i], mdl2Probs[i], classNames);
-
-                predMDL1.put(cellId, pred);
-                predMDL2.put(cellId, pred);
-                predAVG.put(cellId, pred);
-                predALL.put(cellId, pred);
-
-                classifyObjects.add(cell);
-                classifyClasses.add(PathClass.fromString(pred.avgLabel()));
-
-                if (pred.isDisagreement()) disagreements++;
-            }
-
-            double progress = 0.65 + 0.20 * ((double) chunkEnd / totalCells);
-            updateStatus("Predicting… " + chunkEnd + "/" + totalCells, progress);
-        }
+        // Keep the original variable names so the summary and FX-thread apply
+        // below are unchanged; the batcher now owns the chunked loop.
+        List<PathObject> classifyObjects = batch.objects();
+        List<PathClass>  classifyClasses = batch.classes();
+        int disagreements = batch.disagreements();
 
         // ── 5. Summary ─────────────────────────────────────────────────────
 
@@ -543,80 +517,25 @@ public class DualModelClassifier {
         PopulationSet localAVG  = populateSets ? new PopulationSet("Pred_AVG")  : null;
         PopulationSet localALL  = populateSets ? new PopulationSet("Pred_ALL")  : null;
 
-        List<PathObject> classifyObjects = new ArrayList<>(totalCells);
-        List<PathClass>  classifyClasses = new ArrayList<>(totalCells);
-
-        int disagreements = 0;
-        for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
-            int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
-            int chunkSize = chunkEnd - chunkStart;
-            List<PathObject> chunk = cellList.subList(chunkStart, chunkEnd);
-
-            float[] chunkData = extractor.extractMatrix(chunk);
-            float[][] mdl1Probs = predictModel(model1Type, true, chunkData, chunkSize, nFeatures);
-            float[][] mdl2Probs = predictModel(model2Type, false, chunkData, chunkSize, nFeatures);
-
-            for (int i = 0; i < chunkSize; i++) {
-                PathObject cell = chunk.get(i);
-                String cellId = cell.getID().toString();
-                int mdl1Best = argmax(mdl1Probs[i]);
-                int mdl2Best = argmax(mdl2Probs[i]);
-
-                String mdl1Label = classNames.get(mdl1Best);
-                String mdl2Label = classNames.get(mdl2Best);
-
-                CellPrediction pred = new CellPrediction(
-                        cellId, mdl1Label, mdl2Label,
-                        mdl1Probs[i], mdl2Probs[i], classNames);
-
-                classifyObjects.add(cell);
-                classifyClasses.add(PathClass.fromString(pred.avgLabel()));
-
-                if (populateSets) {
-                    localMDL1.put(cellId, pred);
-                    localMDL2.put(cellId, pred);
-                    localAVG.put(cellId, pred);
-                    localALL.put(cellId, pred);
-                }
-
-                if (pred.isDisagreement()) disagreements++;
-            }
-
-            out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
-        }
+        PredictionBatcher.Batch batch = PredictionBatcher.predict(
+                cellList, extractor, PREDICT_CHUNK_SIZE,
+                (data, size) -> predictModel(model1Type, true, data, size, nFeatures),
+                (data, size) -> predictModel(model2Type, false, data, size, nFeatures),
+                classNames,
+                (cellId, pred) -> {
+                    if (populateSets) {
+                        localMDL1.put(cellId, pred);
+                        localMDL2.put(cellId, pred);
+                        localAVG.put(cellId, pred);
+                        localALL.put(cellId, pred);
+                    }
+                },
+                chunkEnd -> out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…"));
+        int disagreements = batch.disagreements();
 
         // Apply PathClass assignments on the FX thread and wait for completion
         // so callers can safely persist immediately after predictOnly returns.
-        if (Platform.isFxApplicationThread()) {
-            for (int i = 0; i < classifyObjects.size(); i++) {
-                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-            }
-        } else {
-            var done = new java.util.concurrent.CountDownLatch(1);
-            final RuntimeException[] fxError = new RuntimeException[1];
-            Platform.runLater(() -> {
-                try {
-                    for (int i = 0; i < classifyObjects.size(); i++) {
-                        classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-                    }
-                } catch (RuntimeException ex) {
-                    fxError[0] = ex;
-                } finally {
-                    done.countDown();
-                }
-            });
-
-            try {
-                done.await();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("Interrupted while applying predictions.", ie);
-            }
-
-            if (fxError[0] != null) {
-                throw fxError[0];
-            }
-        }
+        PredictionBatcher.applyOnFxThreadBlocking(batch.objects(), batch.classes());
 
         if (populateSets) {
             this.predMDL1 = localMDL1;
@@ -677,72 +596,19 @@ public class DualModelClassifier {
                 : new ArrayList<>(cells);
 
         PopulationSet localALL = new PopulationSet("Pred_ALL");
-        List<PathObject> classifyObjects = new ArrayList<>(totalCells);
-        List<PathClass>  classifyClasses = new ArrayList<>(totalCells);
 
-        int disagreements = 0;
-        for (int chunkStart = 0; chunkStart < totalCells; chunkStart += PREDICT_CHUNK_SIZE) {
-            int chunkEnd = Math.min(chunkStart + PREDICT_CHUNK_SIZE, totalCells);
-            int chunkSize = chunkEnd - chunkStart;
-            List<PathObject> chunk = cellList.subList(chunkStart, chunkEnd);
-
-            float[] chunkData = extractor.extractMatrix(chunk);
-            float[][] mdl1Probs = predictModel(model1Type, true, chunkData, chunkSize, nFeatures);
-            float[][] mdl2Probs = predictModel(model2Type, false, chunkData, chunkSize, nFeatures);
-
-            for (int i = 0; i < chunkSize; i++) {
-                PathObject cell = chunk.get(i);
-                String cellId = cell.getID().toString();
-                int mdl1Best = argmax(mdl1Probs[i]);
-                int mdl2Best = argmax(mdl2Probs[i]);
-
-                String mdl1Label = classNames.get(mdl1Best);
-                String mdl2Label = classNames.get(mdl2Best);
-
-                CellPrediction pred = new CellPrediction(
-                        cellId, mdl1Label, mdl2Label,
-                        mdl1Probs[i], mdl2Probs[i], classNames);
-
-                classifyObjects.add(cell);
-                classifyClasses.add(PathClass.fromString(pred.avgLabel()));
-
-                localALL.put(cellId, pred);
-                if (pred.isDisagreement()) disagreements++;
-            }
-
-            out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…");
-        }
+        PredictionBatcher.Batch batch = PredictionBatcher.predict(
+                cellList, extractor, PREDICT_CHUNK_SIZE,
+                (data, size) -> predictModel(model1Type, true, data, size, nFeatures),
+                (data, size) -> predictModel(model2Type, false, data, size, nFeatures),
+                classNames,
+                (cellId, pred) -> localALL.put(cellId, pred),
+                chunkEnd -> out.accept("Predicted " + chunkEnd + "/" + totalCells + " cells…"));
+        int disagreements = batch.disagreements();
 
         // Apply PathClass assignments on the FX thread and wait for completion
         // so callers can safely persist immediately after this returns.
-        if (Platform.isFxApplicationThread()) {
-            for (int i = 0; i < classifyObjects.size(); i++) {
-                classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-            }
-        } else {
-            var done = new java.util.concurrent.CountDownLatch(1);
-            final RuntimeException[] fxError = new RuntimeException[1];
-            Platform.runLater(() -> {
-                try {
-                    for (int i = 0; i < classifyObjects.size(); i++) {
-                        classifyObjects.get(i).setPathClass(classifyClasses.get(i));
-                    }
-                } catch (RuntimeException ex) {
-                    fxError[0] = ex;
-                } finally {
-                    done.countDown();
-                }
-            });
-            try {
-                done.await();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("Interrupted while applying predictions.", ie);
-            }
-            if (fxError[0] != null) {
-                throw fxError[0];
-            }
-        }
+        PredictionBatcher.applyOnFxThreadBlocking(batch.objects(), batch.classes());
 
         out.accept("Predictions applied: " + totalCells + " cells, "
                 + disagreements + " disagreements ("

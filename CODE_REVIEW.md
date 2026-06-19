@@ -176,12 +176,21 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   from ~4.5k to ~3.7k lines. **Needs a manual QuPath smoke test** of the five menu items, since
   these interactive scripts have no automated coverage.
 
+**Done [FIX]:**
+- `DualModelClassifier` → `PredictionBatcher`: the **three** near-identical chunked-prediction
+  loops (in `trainAndPredict`, `predictOnly`, `predictAndCollect`) are unified into one
+  [PredictionBatcher.predict](src/main/java/qupath/ext/celltune/classifier/PredictionBatcher.java)
+  with the models supplied as injected `ChunkPredictor` callbacks and set-population via a
+  `PredictionSink`. The shared FX-thread apply moved to `applyOnFxThreadBlocking`. Because the
+  loop no longer holds classifier state, it is now **unit-tested with stub predictors**
+  ([PredictionBatcherTest](src/test/java/qupath/ext/celltune/classifier/PredictionBatcherTest.java)) —
+  closing the "no ML coverage" gap for the argmax→label, disagreement-count, chunking, and
+  sink-population logic. `DualModelClassifier` dropped ~134 lines.
+
 **[DEFER]** — left for a follow-up with manual QuPath QA:
-- `DualModelClassifier` → `PredictionBatcher` / `TrainValMetricsComputer`: the two near-identical
-  chunked-prediction loops ([DualModelClassifier.java:438](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L438),
-  [:550](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L550)) are
-  entangled with model state, the feature extractor, instance accumulators, and
-  `Platform.runLater`/`setPathClass` UI calls — and the ML path has no automated coverage.
+- `DualModelClassifier` → `TrainValMetricsComputer`: the single `computeTrainValMetrics` method
+  (80/20 split + evaluation-copy training) is a candidate to extract next; lower priority than
+  the prediction-loop dedup above.
 - `exportAnnotationRegions` (OME-TIFF export) left in `CellTuneExtension`: heaviest script,
   pulls in the native OME writer / `RoiMaskedServer` / pyramid machinery — deferred to keep the
   blind (no-QA) move low-risk.
