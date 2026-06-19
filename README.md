@@ -112,38 +112,6 @@ Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`
 | UI framework | JavaFX (bundled with QuPath) |
 | Serialisation | JSON (Gson, bundled with QuPath) |
 
-## Default Hyperparameters
-
-### XGBoost
-
-| Parameter | Default | Range |
-|-----------|---------|-------|
-| Boosting rounds | 1000 | 50–2000 |
-| Max tree depth | 6 | 2–15 |
-| Learning rate (eta) | 0.1 | — |
-| Subsample | 0.8 | — |
-
-### LightGBM
-
-| Parameter | Default | Range |
-|-----------|---------|-------|
-| Boosting rounds | 1000 | 50–2000 |
-| Max tree depth | 6 | 2–15 |
-| Learning rate (eta) | 0.05 | — |
-| Subsample | 0.8 | — |
-| min_split_gain | 10 | — |
-
-### Random Forest
-
-| Parameter | Default |
-|-----------|---------|
-| Number of trees | 100 |
-| Max tree depth | 100 |
-| Feature subset (mtry) | √(num_features) |
-| Split criterion | Cross-entropy (log loss) |
-| Bootstrap | Yes |
-
-These can be adjusted in the Classification Panel before training.
 
 ## Feature Normalization
 
@@ -155,9 +123,8 @@ Optional per-feature transforms can be applied before training and inference:
 | sqrt | `√max(0, x)` | Simple variance-stabilising transform |
 
 ## TODO / Future Exploration
-- look at bug with using mac screenshot freezing extension on mac
-- compile gpu librarys for xgboost, lightgbm ect 
-- tab pfn model 
+- tab pfn model wrapper
+- chatbot integration through mcp
 
 ## License
 

@@ -947,7 +947,8 @@ public class CellTuneExtension implements QuPathExtension {
         }
 
         new ScatterPlotView(qupath.getStage(), qupath, currentImageName,
-                markerFeatures, cells, predAll).show();
+                markerFeatures, cells, predAll,
+                () -> showClassControl(qupath), featureNormalizer).show();
     }
 
     // ── Utility scripts ────────────────────────────────────────────────────────
