@@ -19,8 +19,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import qupath.ext.celltune.util.BackgroundExecutors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -74,21 +72,11 @@ public class ReviewController {
     private final java.util.Set<ProjectImageEntry<BufferedImage>> initialEntrySnapshot = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     /**
-     * Background single-thread executor used to prefetch the next image's data so that
-     * its tile cache is warm before the user switches to it. Daemon thread so it never
-     * blocks JVM shutdown.
+     * Warms QuPath's caches for the next review image on a background thread so the
+     * user's switch to it is fast. Owns the prefetch executor, dedup, and the strong
+     * reference that pins the prefetched data until {@code ensureImageOpen} consumes it.
      */
-    private final ExecutorService prefetchExecutor =
-            BackgroundExecutors.newSingleThread("CellTune-ReviewPrefetch");
-    /** Image name most recently submitted for prefetch, to avoid duplicate work. */
-    private volatile String lastPrefetchedImageName;
-    /**
-     * Strong reference to the most recently prefetched ImageData. Holding it prevents
-     * the GC from reclaiming the warm tile cache, decoded TIFF headers, and parsed
-     * detection hierarchy before QuPath's {@code openImageEntry} actually consumes it.
-     * Cleared after the user switches to that image (or to another image).
-     */
-    private volatile qupath.lib.images.ImageData<BufferedImage> prefetchedImageData;
+    private final ImagePrefetcher prefetcher = new ImagePrefetcher();
 
     private int currentIndex = -1;
     // Lightweight viewer overlay used to draw a magenta selection ring around the
@@ -675,7 +663,7 @@ public class ReviewController {
         sessionClosed = true;
         uninstallTileSelectionListener();
         ACTIVE_REVIEW_SESSIONS.updateAndGet(value -> Math.max(0, value - 1));
-        prefetchExecutor.shutdownNow();
+        prefetcher.shutdown();
 
         if (tileMode) {
             // Drop the displayed tile and restore the original project image so the
@@ -753,7 +741,7 @@ public class ReviewController {
 
         // Drop the strong reference now that QuPath has loaded the image — we don't
         // want to pin two big ImageData instances in memory once the user has moved on.
-        prefetchedImageData = null;
+        prefetcher.release();
 
         currentImageCellCache.clear();
         cachedImageName = null;
@@ -794,7 +782,7 @@ public class ReviewController {
         if (tileMode) {
             return; // tiles are pre-extracted; nothing to do
         }
-        if (sessionClosed || prefetchExecutor.isShutdown()) {
+        if (sessionClosed || prefetcher.isShutdown()) {
             return;
         }
         String currentName = currentImageName();
@@ -811,29 +799,11 @@ public class ReviewController {
         if (nextName == null) {
             return;
         }
-        if (nextName.equals(lastPrefetchedImageName)) {
-            return;
-        }
         var entry = entryByImageName.get(nextName);
         if (entry == null) {
             return;
         }
-        lastPrefetchedImageName = nextName;
-        final String prefetchTarget = nextName;
-        prefetchExecutor.submit(() -> {
-            try {
-                // Reading the ImageData warms QuPath's caches (TIFF headers, detection
-                // hierarchy, tile cache). We hold a strong reference in
-                // prefetchedImageData so the GC doesn't reclaim those caches before
-                // openImageEntry actually consumes them.
-                var data = entry.readImageData();
-                prefetchedImageData = data;
-                logger.debug("Prefetched ImageData for next review image '{}'", prefetchTarget);
-            } catch (Throwable t) {
-                // Prefetch is purely an optimisation; failures are non-fatal.
-                logger.debug("Prefetch of '{}' failed: {}", prefetchTarget, t.getMessage());
-            }
-        });
+        prefetcher.prefetch(nextName, entry);
     }
 
     private PathObject resolveCellInCurrentImage(String cellId) {

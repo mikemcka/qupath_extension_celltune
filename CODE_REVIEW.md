@@ -201,7 +201,12 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 - `ScatterPlotView` → `ScatterPlotModel` + `EmbeddingEngine` + `ScopeManager` + `ClusterAssignmentEngine` + `DragSelectionHandler`
 - `ProjectStateManager` → `ClassifierStatePersistence` + `LabelPersistence` + `PredictionPersistence` + `BinaryClassifierPersistence`
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
-- `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager` + `ImagePrefetcher`
+- `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager` (the
+  prefetch concern is **done** — extracted to
+  [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), owning
+  the executor, dedup, and strong-reference lifecycle. The tile-mode/normal-mode strategy split
+  remains deferred: it's deeply intertwined with the navigation/selection/highlight state and
+  has no UI test coverage, so it needs manual QuPath QA.)
 
 ---
 
