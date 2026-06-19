@@ -17,7 +17,6 @@ import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjectTools;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.ProjectImageEntry;
 
@@ -1439,35 +1438,13 @@ public class ClassificationPanel extends VBox {
     }
 
     private static void collectLabelsFromHierarchy(
-            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy, LabelStore store) {
-        collectLabelsFromHierarchy(hierarchy, store, null);
-    }
-
-    private static void collectLabelsFromHierarchy(
             qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
             LabelStore store,
             java.util.Set<String> allowedClasses) {
-        for (PathObject anno : hierarchy.getAnnotationObjects()) {
-            if (anno.getPathClass() == null || anno.getROI() == null) continue;
-            // Only point annotations count as ground truth — area/region annotations
-            // describe tissue regions, not individual cell labels.
-            if (!anno.getROI().isPoint()) continue;
-            String cls = anno.getPathClass().toString();
-            if (allowedClasses != null && !allowedClasses.contains(cls)) continue;
-
-            List<PathObject> hits = new java.util.ArrayList<>();
-            for (var pt : anno.getROI().getAllPoints()) {
-                hits.addAll(PathObjectTools.getObjectsForLocation(
-                        hierarchy, pt.getX(), pt.getY(),
-                        anno.getROI().getZ(), anno.getROI().getT(), -1));
-            }
-
-            for (PathObject det : hits) {
-                if (det.isDetection()) {
-                    store.setLabel(det.getID().toString(), cls);
-                }
-            }
-        }
+        // Delegate to the shared collector so this training-time label collection
+        // preserves merge history (previously this copy overwrote merged labels
+        // with the bare PathClass — see AnnotationLabelCollector).
+        AnnotationLabelCollector.collect(hierarchy, store, allowedClasses);
     }
 
     /**

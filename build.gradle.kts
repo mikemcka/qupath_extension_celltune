@@ -3,6 +3,8 @@ plugins {
     id("com.gradleup.shadow") version "8.3.5"
     // QuPath Gradle extension convention plugin
     id("qupath-conventions")
+    // Static analysis — reporting only, never fails the build (see config below)
+    id("com.github.spotbugs") version "6.4.2"
 }
 
 qupathExtension {
@@ -47,4 +49,25 @@ tasks.jar {
             "Implementation-Version" to project.version
         )
     }
+}
+
+// ── Static analysis (SpotBugs) ──────────────────────────────────────────────
+// Reporting only: establishes a baseline of potential bugs without blocking the
+// build. Run `./gradlew spotbugsMain` and open the HTML report (path printed
+// below) under build/reports/spotbugs/. Tune over time; never wire into `check`
+// as a failing gate until the baseline is triaged.
+spotbugs {
+    ignoreFailures.set(true)        // never fail the build on findings
+    showStackTraces.set(false)
+    // MEDIUM+ confidence keeps the first baseline signal-to-noise reasonable.
+    effort.set(com.github.spotbugs.snom.Effort.DEFAULT)
+    reportLevel.set(com.github.spotbugs.snom.Confidence.MEDIUM)
+}
+
+// Analyse main sources only; test sources are not the audit target.
+tasks.spotbugsMain {
+    reports.create("html") { required.set(true) }
+}
+tasks.named("spotbugsTest") {
+    enabled = false
 }

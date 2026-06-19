@@ -47,6 +47,11 @@ public final class Resampler {
                                Consumer<String> log) {
         Consumer<String> out = log != null ? log : s -> {};
 
+        // Validate label indices up front so a corrupt label (e.g. a class index
+        // left over after an out-of-sync class edit) fails with a clear message
+        // rather than a bare ArrayIndexOutOfBoundsException deep in counting/kNN.
+        validateLabels(labels, nClasses);
+
         if (strategy == ResamplingStrategy.NONE) {
             return new Result(new ArrayList<>(rows), new ArrayList<>(labels));
         }
@@ -392,6 +397,25 @@ public final class Resampler {
             if (labels.get(i) == cls) indices.add(i);
         }
         return indices;
+    }
+
+    /**
+     * Ensure every label is a valid class index in {@code [0, nClasses)}.
+     *
+     * @throws IllegalArgumentException if {@code nClasses < 1} or any label is out of range
+     */
+    private static void validateLabels(List<Integer> labels, int nClasses) {
+        if (nClasses < 1) {
+            throw new IllegalArgumentException("nClasses must be >= 1, was " + nClasses);
+        }
+        for (int i = 0; i < labels.size(); i++) {
+            Integer lbl = labels.get(i);
+            if (lbl == null || lbl < 0 || lbl >= nClasses) {
+                throw new IllegalArgumentException(
+                        "Label at index " + i + " is " + lbl + ", outside valid range [0, "
+                                + nClasses + "). Training data is out of sync with the class list.");
+            }
+        }
     }
 
     private static int[] recount(List<Integer> labels, int nClasses) {

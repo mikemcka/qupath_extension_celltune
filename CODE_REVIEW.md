@@ -1,0 +1,227 @@
+# CellTune — Code Review
+
+_Review of the CellTune QuPath 0.7 extension, conducted on the `chore/code-review-cleanup`
+branch (rebased onto `main` @ `e3f0b4b`, which includes the merged image-pixel-prescreen work)._
+
+CellTune is a researcher-facing tool whose output feeds scientific decisions, so this review
+weights **correctness and numerical validity** above cosmetic concerns. Findings are
+severity-ranked; each cites `file:line`, states the impact, and points to the remediation
+phase. Items already tracked in [.planning/codebase/CONCERNS.md](.planning/codebase/CONCERNS.md)
+are referenced rather than duplicated.
+
+Legend: **[FIX]** addressed in this pass · **[DEFER]** documented, left for a follow-up ·
+**[WONTFIX]** investigated and intentionally not changed.
+
+---
+
+## Summary
+
+| # | Severity | Finding | Disposition |
+|---|----------|---------|-------------|
+| 1 | High | `LabelStore` shared `LinkedHashMap` is unsynchronised; mutated from UI, training, and image-switch threads | **[FIX]** Phase B |
+| 2 | — | Unguarded `project.getEntry()` dereferences | **[WONTFIX]** — false positive after audit (all sites already guarded) |
+| 3 | Medium | `Resampler` does not validate class indices → `ArrayIndexOutOfBoundsException` on corrupt labels | **[FIX]** Phase B |
+| 4 | Low | Two `hasImageLabels` IOException catches return `false` with no log | **[FIX]** Phase B (debug log; rest already logged) |
+| 5 | Low | Robust-z math duplicated with **divergent** behaviour across two analyzers | **[FIX]** Phase C (preserve both behaviours) |
+| 6 | Low | CSV escaping reimplemented three times with inconsistent quoting | **[FIX]** Phase C |
+| 7 | Low | Background executors created ad hoc in 4+ classes; no shared factory | **[FIX]** Phase C |
+| 8 | Low | Label-persistence helpers duplicated across two large files | **[DEFER]** — not a clean dedup (see #13); entangled with per-class state |
+| 13 | Medium | `collectLabelsFromHierarchy` differed between the two copies — panel version lacked the merge-history-preservation guard (potential label data-loss) | **[FIX]** — unified into `AnnotationLabelCollector` (merge-preserving), with regression tests |
+| 9 | Medium | Six files exceed 1000 lines; god-object orchestration methods | **[FIX]** Phase D (safe extractions only) / **[DEFER]** (large splits) |
+| 10 | Medium | Core IO/model logic largely untested; near-zero UI coverage | **[FIX]** Phase E added BinaryClassifierRegistry/GroundTruthIO/RobustStats/CsvUtils/FileSystemUtilities tests + LabelStore/Resampler regressions / **[DEFER]** (UI) |
+| 11 | Low | No static analysis configured | **[FIX]** Phase E — SpotBugs wired, non-failing |
+| 12 | — | arcsinh "NaN on negative input" | **[WONTFIX]** — not a bug (see below) |
+
+---
+
+## Correctness & numerics
+
+### 1. `LabelStore` is not thread-safe — **High** — [FIX]
+[model/LabelStore.java:27](src/main/java/qupath/ext/celltune/model/LabelStore.java#L27)
+backs labels with a bare `LinkedHashMap`. The same instance is mutated from the JavaFX
+thread (manual labelling), the training thread, and the image-switch listener. The
+iterate-and-modify methods (`retainClasses` L152-154, `renameClass` L168,
+`restoreMergedLabels` L188) and the streaming readers (`getClassNames` L108) can throw
+`ConcurrentModificationException` if labelling overlaps a training run. CLAUDE.md already
+documents the constraint ("LabelStore is not thread-safe"); this elevates it from a
+convention to an enforced invariant.
+**Fix (Phase B):** wrap in `Collections.synchronizedMap(new LinkedHashMap<>())` and guard
+the compound read-modify methods on the map monitor. Add a concurrent put/iterate test.
+
+### 2. Unguarded `project.getEntry()` dereferences — **investigated** — [WONTFIX]
+`project.getEntry(imageData)` returns `null` when an image is opened without a project, so an
+earlier pass flagged ~38 call sites as risky. **On audit, every site is already guarded** —
+either by a null-check on the result (`if (entry != null)` / ternary) or by an early
+`if (project == null) return;` upstream (e.g. [TrainingTileExtractor.java:151](src/main/java/qupath/ext/celltune/ui/TrainingTileExtractor.java#L151)
+guards :172). The four originally-cited "unguarded" sites
+([CompositeClassificationDialog.java:65](src/main/java/qupath/ext/celltune/ui/CompositeClassificationDialog.java#L65)/:225,
+[DistanceMeasurementsDialog.java:100](src/main/java/qupath/ext/celltune/ui/DistanceMeasurementsDialog.java#L100),
+[TrainingTileExtractor.java:172](src/main/java/qupath/ext/celltune/ui/TrainingTileExtractor.java#L172),
+[ClassificationPanel.java:485](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java#L485))
+are all correctly null-checked. No change; adding redundant guards would be noise. The
+codebase is disciplined here.
+
+### 3. `Resampler` does not validate label indices — **Medium** — [FIX]
+[classifier/Resampler.java](src/main/java/qupath/ext/celltune/classifier/Resampler.java)
+indexes per-class buckets by label value without bounds-checking. A corrupt label
+(e.g. class `99` when `nClasses == 5`, possible after an out-of-sync class edit) throws a
+bare `ArrayIndexOutOfBoundsException` deep in training rather than a diagnosable error.
+**Fix (Phase B):** validate indices ∈ `[0, nClasses)` up front and fail with a clear message.
+
+### 4. Silent catches — **Low** — [FIX, narrow]
+Mostly a false positive: [ScatterPlotView.java:816](src/main/java/qupath/ext/celltune/ui/ScatterPlotView.java#L816)
+already `logger.error(...)`s and shows the user an actionable message, and the
+[ProjectStateManager](src/main/java/qupath/ext/celltune/io/ProjectStateManager.java) load
+paths already `logger.warn(...)` on every exception. The only genuinely silent paths are the
+two `hasImageLabels(...)` cheap existence checks that `catch (IOException) { return false; }`.
+**Fix (Phase B):** added a `logger.debug(...)` to both so a path-resolution failure is
+diagnosable. Behaviour unchanged.
+
+### 12. arcsinh on negative input — **investigated** — [WONTFIX]
+An earlier pass flagged [FeatureNormalizer.java:124](src/main/java/qupath/ext/celltune/model/FeatureNormalizer.java#L124)
+as emitting `NaN` for negative values. **This is not a bug.** The transform is
+`log(x/c + sqrt(x²/c² + 1))`; the radicand `x²/c² + 1` is always ≥ 1, so `sqrt` never
+produces `NaN`, and `x + sqrt(x²+1)` is strictly positive even for negative `x`. arcsinh is
+*deliberately* defined for negatives — background-subtracted cytometry intensities are
+routinely negative — so clamping to 0 (as the original suggestion proposed) would be
+**scientifically incorrect**. No change. (Cofactor ≤ 0 is already validated, the only real
+NaN source.)
+
+---
+
+## Duplication / shared helpers
+
+### 5. Divergent robust-z implementations — **Low** — [FIX, carefully]
+[model/PixelCohortAnalyzer.java:394](src/main/java/qupath/ext/celltune/model/PixelCohortAnalyzer.java#L394)
+(`robustZ`) is NaN-aware and falls back to mean/std on a degenerate MAD, so an outlier above
+a flat baseline is still surfaced. [model/CohortAnomalyAnalyzer.java:255](src/main/java/qupath/ext/celltune/model/CohortAnomalyAnalyzer.java#L255)
+(`robustZScores`) is **not** NaN-aware and returns all-zeros when MAD < 1e-12. These are
+genuinely different statistics, not an accidental copy.
+**Fix (Phase C):** extract to `util/RobustStats` with **two named variants** so each call
+site keeps its current behaviour — do not silently unify (would change anomaly output).
+
+### 6. CSV escaping reimplemented three times — **Low** — [FIX]
+[CellTableExporter](src/main/java/qupath/ext/celltune/io/CellTableExporter.java) quotes only
+feature names; [ProjectSummaryCsvExporter](src/main/java/qupath/ext/celltune/io/ProjectSummaryCsvExporter.java)
+and [PixelStatsCsvExporter](src/main/java/qupath/ext/celltune/io/PixelStatsCsvExporter.java)
+quote all fields with `Locale.ROOT` numeric formatting. Inconsistent quoting risks malformed
+CSV when a class/marker name contains a comma or quote.
+**Fix (Phase C):** single `util/CsvUtils`; verify against existing `*CsvExporterTest`.
+
+### 7. Ad-hoc background executors — **Low** — [FIX]
+Daemon single-thread / bounded pools are re-created by hand in `ClassControlDialog`,
+`ReviewController`, `DistanceMeasurementsDialog`, `IntensityHeatmapView`.
+**Fix (Phase C):** a `util/BackgroundExecutors` factory for naming + daemon setup; call sites
+keep their own lifecycle.
+
+### 8. Duplicated label persistence — **Low** — [DEFER]
+`collectLabelsFromAnnotations`, `persistCurrentImageSampledIds`, and
+`persistReviewedLabelsByImage` exist in **both**
+[CellTuneExtension.java](src/main/java/qupath/ext/celltune/CellTuneExtension.java) and
+[ClassificationPanel.java](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java).
+On inspection this is **not** a clean mechanical dedup: the `persist*` methods are entangled
+with per-class instance state (`lastSampledCellImageMap`, `activeBinaryClassFilter()`,
+`activeBinaryMarker`) and would need 4–5 context parameters threaded through, and the
+`collectLabelsFromHierarchy` pair is genuinely divergent (see #13). Extracting an
+`io/LabelPersistence` helper is still worthwhile but must be done with manual QuPath QA, so it
+is **deferred** to keep this pass behavior-preserving.
+
+### 13. `collectLabelsFromHierarchy` divergence — **Medium** — [FIX]
+The shared-looking static `collectLabelsFromHierarchy(hierarchy, store, allowedClasses)` had
+**two non-identical copies**:
+- `CellTuneExtension` preserved merge history: before overwriting a detection's label it
+  checked `cls.equals(LabelStore.innermostOriginal(existing))` and skipped, so a previously
+  merged label was not clobbered by the bare annotation class.
+- `ClassificationPanel` had **no such guard** — it called `store.setLabel(id, cls)`
+  unconditionally. This copy runs inside `doTrain()` (label collection before training), so a
+  user who merged classes and then retrained while leftover point annotations existed could
+  silently overwrite merged labels with their pre-merge class — a label data-loss bug.
+
+**Fixed:** both now delegate to one shared, merge-preserving collector,
+[model/AnnotationLabelCollector.java](src/main/java/qupath/ext/celltune/model/AnnotationLabelCollector.java);
+the two dead 2-arg overloads were removed and the now-unused `PathObjectTools` imports dropped.
+Behaviour is covered by
+[AnnotationLabelCollectorTest](src/test/java/qupath/ext/celltune/model/AnnotationLabelCollectorTest.java)
+(merge-preservation, chained merge, overwrite-on-different-class, allowed-class filter,
+area-annotations-ignored). This is the one DEFER that was promoted to FIX because it is a
+correctness bug, and the unified logic is directly unit-testable without the UI.
+
+---
+
+## Structure (large files)
+
+### 9. Six files exceed 1000 lines — **Medium**
+| File | Lines | God-method |
+|------|-------|-----------|
+| `CellTuneExtension.java` | ~3.7k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts now extracted |
+| `ClassificationPanel.java` | ~1.8k | `doTrain()` ~600 lines |
+| `ScatterPlotView.java` | ~2.0k | `recompute()` ~200 lines, scope divergence |
+| `ProjectStateManager.java` | ~1.5k | 30+ load/save methods, mixed concerns |
+| `DualModelClassifier.java` | ~1.0k | `trainAndPredict()` ~380 lines |
+| `ReviewController.java` | ~0.9k | tile-mode vs normal-mode divergence |
+
+**Done [FIX]:**
+- `FileSystemUtilities` extracted from `ProjectStateManager`: the pure
+  `zipDirectory` / `deleteDirectoryRecursively` file operations now live in
+  [io/FileSystemUtilities.java](src/main/java/qupath/ext/celltune/io/FileSystemUtilities.java)
+  with direct unit tests; `ProjectStateManager` keeps thin delegating wrappers so internal
+  callers and the existing reset test are unaffected.
+- `UtilityScripts` extracted from `CellTuneExtension`: the five standalone Utility-Scripts-menu
+  helpers (cell filtering, hierarchy resolution, annotation locking, measurement deletion,
+  GeoJSON import) plus their private helpers moved verbatim to
+  [UtilityScripts.java](src/main/java/qupath/ext/celltune/UtilityScripts.java) as static methods.
+  The menu items now delegate. The only behavioural delta is the hierarchy-event **source**
+  (a private sentinel instead of the extension instance) — verified safe: no listener filters
+  by source, matching the existing `CohortClusterModel` pattern. `CellTuneExtension` shrank
+  from ~4.5k to ~3.7k lines. **Needs a manual QuPath smoke test** of the five menu items, since
+  these interactive scripts have no automated coverage.
+
+**[DEFER]** — left for a follow-up with manual QuPath QA:
+- `DualModelClassifier` → `PredictionBatcher` / `TrainValMetricsComputer`: the two near-identical
+  chunked-prediction loops ([DualModelClassifier.java:438](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L438),
+  [:550](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L550)) are
+  entangled with model state, the feature extractor, instance accumulators, and
+  `Platform.runLater`/`setPathClass` UI calls — and the ML path has no automated coverage.
+- `exportAnnotationRegions` (OME-TIFF export) left in `CellTuneExtension`: heaviest script,
+  pulls in the native OME writer / `RoiMaskedServer` / pyramid machinery — deferred to keep the
+  blind (no-QA) move low-risk.
+- `ProjectFileLayout` (path constants): low risk but low value; skipped to avoid churn.
+
+**[DEFER]** — larger decompositions, same rationale (near-zero UI coverage):
+- `ClassificationPanel.doTrain()` → `TrainingOrchestrator` + `DataPoolingService` + `FeatureMappingService`
+- `ScatterPlotView` → `ScatterPlotModel` + `EmbeddingEngine` + `ScopeManager` + `ClusterAssignmentEngine` + `DragSelectionHandler`
+- `ProjectStateManager` → `ClassifierStatePersistence` + `LabelPersistence` + `PredictionPersistence` + `BinaryClassifierPersistence`
+- `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
+- `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager` + `ImagePrefetcher`
+
+---
+
+## Tests & tooling
+
+### 10. Test coverage gaps — **Medium**
+Untested core logic with clear seams. **Fixed (Phase E):** added
+`BinaryClassifierRegistryTest` (sanitizeMarkerName / path-traversal),
+`GroundTruthIOTest` (CSV import parsing, non-numeric→0, skip rules),
+`RobustStatsTest`, `CsvUtilsTest`, `FileSystemUtilitiesTest`, plus regression tests on the
+Phase-B fixes (`LabelStore` concurrency, `Resampler` validation).
+**[DEFER]:** `ClassManager` (merge/undo) and `CohortClusterModel` need Project/PathObject
+scaffolding; UI-render tests require a JavaFX harness / TestFX — both out of scope for this
+pass. 21 of 23 UI classes remain untested.
+
+### 11. No static analysis — **Low** — [FIX]
+[build.gradle.kts](build.gradle.kts) had no SpotBugs/Checkstyle/ErrorProne.
+**Fixed (Phase E):** SpotBugs (`com.github.spotbugs` plugin) is wired as a **non-failing**
+reporting task (`ignoreFailures = true`, MEDIUM confidence, main sources only). Run
+`./gradlew spotbugsMain` → `build/reports/spotbugs/main.html`. It is deliberately **not** part
+of `check` until the baseline is triaged. Documented in CLAUDE.md. The first run produces a
+baseline to work down over time — treat as a backlog, not a gate.
+
+---
+
+## Notes confirmed correct (no action)
+
+- `CellFeatureExtractor` NaN→0 conversion and immutable feature-column ordering — intentional, tested.
+- `CellTableExporter` NaN→"NA" CSV handling — tested.
+- `DistanceMeasurementsDialog` STRtree self-exclusion — tested, matches the documented pitfall.
+- Early-stopping 80/20 stratified split before resampling — correct per RISKS.md.
+- `JvmModuleOpener` `java.base/java.lang` opening — required for Smile natives; correct.

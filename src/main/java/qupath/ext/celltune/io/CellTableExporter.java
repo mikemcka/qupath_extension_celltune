@@ -297,11 +297,7 @@ public class CellTableExporter {
 
     /** Quote a CSV field if it contains commas, quotes, or newlines. */
     private static String csvQuote(String value) {
-        if (value == null || value.isEmpty()) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
-            return "\"" + value.replace("\"", "\"\"") + "\"";
-        }
-        return value;
+        return CsvUtils.quoteIfNeeded(value);
     }
 
     private static String fmt(double v) {

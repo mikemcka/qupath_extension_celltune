@@ -130,9 +130,6 @@ public final class PixelStatsCsvExporter {
     }
 
     private static String csvEscape(String value) {
-        if (value == null) {
-            return "";
-        }
-        return '"' + value.replace("\"", "\"\"") + '"';
+        return CsvUtils.quoteAlways(value);
     }
 }
