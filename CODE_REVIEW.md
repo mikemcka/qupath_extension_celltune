@@ -201,12 +201,17 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 - `ScatterPlotView` → `ScatterPlotModel` + `EmbeddingEngine` + `ScopeManager` + `ClusterAssignmentEngine` + `DragSelectionHandler`
 - `ProjectStateManager` → `ClassifierStatePersistence` + `LabelPersistence` + `PredictionPersistence` + `BinaryClassifierPersistence`
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
-- `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager` (the
-  prefetch concern is **done** — extracted to
-  [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), owning
-  the executor, dedup, and strong-reference lifecycle. The tile-mode/normal-mode strategy split
-  remains deferred: it's deeply intertwined with the navigation/selection/highlight state and
-  has no UI test coverage, so it needs manual QuPath QA.)
+- `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
+  self-contained concerns are **done**: the prefetch lifecycle →
+  [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), and the
+  tile project-entry cleanup → [ui/TileEntryCleaner.java](src/main/java/qupath/ext/celltune/ui/TileEntryCleaner.java)
+  (verbatim behavior, preserved snapshot timing). The **full tile/normal strategy split stays
+  deferred** — investigation showed the manual-selection state (`selectedManualCellId`) is
+  irreducibly cross-cutting (set by the tile selection listener, read by `labelAndNext` to pick
+  which cell is labelled, cleared on navigation, and exposed to the UI toolbar), so a clean
+  strategy boundary isn't possible without first adding queue/labeling test coverage. The
+  failure modes (mislabeled cell, listener leak, orphaned entries) are data-affecting and not
+  reliably caught by manual QA.
 
 ---
 
