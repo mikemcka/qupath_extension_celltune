@@ -40,8 +40,16 @@ manual QuPath QA where it touched interactive paths):
 10. **`TrainValMetricsComputer`** (this branch) — `computeTrainValMetrics` + `stratifiedSplit`
     extracted from `DualModelClassifier`; unit-tested with stub trainers/predictors. Dead
     `extractRowSubset`/`extractLabelSubset` removed.
+11. **`ScatterMath` + `ScatterPlotCanvas`** (PR `refactor/scatterplot-view`) — the largest
+    deferred interactive split, now done. `ScatterMath` (the pure PCA/UMAP/standardise/
+    subsample/point-in-polygon core, unit-tested) and `ScatterPlotCanvas` (the Canvas +
+    all drawing + box/lasso/legend gestures, behind a read-only `PlotModel` + gesture
+    callbacks) were lifted out of `ScatterPlotView`, which drops from ~2.2k → ~1.6k lines
+    and keeps all QuPath hierarchy/viewer mutation. Also adds a status-bar progress bar for
+    the control-locking assign/apply runs. _QA'd: render modes, box/lasso/legend select,
+    viewer↔plot sync, project assign, UMAP, export._
 
-**Still open (deferred):** the large interactive/stateful decompositions — `ScatterPlotView`,
+**Still open (deferred):** the remaining large interactive/stateful decompositions —
 `ClassificationPanel.doTrain`, the `ProjectStateManager` persistence split, the `CellTuneExtension`
 manager split, the `ReviewController` tile/normal strategy split, and `exportAnnotationRegions`.
 See the per-item rationale in the **Structure** section below.
@@ -189,7 +197,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 |------|-------|-----------|
 | `CellTuneExtension.java` | ~3.7k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts now extracted |
 | `ClassificationPanel.java` | ~1.8k | `doTrain()` ~600 lines |
-| `ScatterPlotView.java` | ~2.0k | `recompute()` ~200 lines, scope divergence |
+| `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~1.5k | 30+ load/save methods, mixed concerns |
 | `DualModelClassifier.java` | ~1.0k | `trainAndPredict()` ~380 lines |
 | `ReviewController.java` | ~0.9k | tile-mode vs normal-mode divergence |
@@ -236,9 +244,25 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   blind (no-QA) move low-risk.
 - `ProjectFileLayout` (path constants): low risk but low value; skipped to avoid churn.
 
+**Also done [FIX]:**
+- `ScatterPlotView` → `ScatterMath` + `ScatterPlotCanvas` — the largest deferred interactive
+  split. The pure numerics (standardise / PCA / UMAP / subsample / point-in-polygon) moved to
+  [model/ScatterMath.java](src/main/java/qupath/ext/celltune/model/ScatterMath.java), **now
+  unit-tested** ([ScatterMathTest](src/test/java/qupath/ext/celltune/model/ScatterMathTest.java),
+  10 cases) — closing the no-coverage gap for the embedding core (PCA/UMAP themselves stay out,
+  they load native OpenBLAS/ARPACK, so they're QA-covered like `CohortClusterModel`). The whole
+  visual layer — the `Canvas`, all drawing (axis/dots/selection outlines/legend) and the
+  box/lasso/legend gestures — moved to
+  [ui/ScatterPlotCanvas.java](src/main/java/qupath/ext/celltune/ui/ScatterPlotCanvas.java),
+  behind a read-only `PlotModel` interface + gesture callbacks, so the drawing↔mouse geometry
+  coupling stays internal and `ScatterPlotView` keeps **all** QuPath hierarchy/viewer mutation
+  (behaviour preserved 1:1). The view drops ~2.2k → ~1.6k lines. This split was unblocked
+  (vs. the rationale below) because the heavy interactive paths were **manually QA'd** in QuPath
+  and the extracted math is directly unit-testable. A status-bar progress bar was also added so
+  the control-locking assign/apply runs show legible progress.
+
 **[DEFER]** — larger decompositions, same rationale (near-zero UI coverage):
 - `ClassificationPanel.doTrain()` → `TrainingOrchestrator` + `DataPoolingService` + `FeatureMappingService`
-- `ScatterPlotView` → `ScatterPlotModel` + `EmbeddingEngine` + `ScopeManager` + `ClusterAssignmentEngine` + `DragSelectionHandler`
 - `ProjectStateManager` → `ClassifierStatePersistence` + `LabelPersistence` + `PredictionPersistence` + `BinaryClassifierPersistence`
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
