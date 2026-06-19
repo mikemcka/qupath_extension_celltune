@@ -27,13 +27,10 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 /**
  * Saves and loads the full classifier state to/from a JSON file in the QuPath project folder.
@@ -179,42 +176,12 @@ public class ProjectStateManager {
      *         behind in the empty case)
      */
     static Path zipDirectory(Path dir, Path zipTarget) throws IOException {
-        if (dir == null || !Files.isDirectory(dir)) {
-            return null;
-        }
-        boolean wroteEntry = false;
-        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipTarget))) {
-            try (var stream = Files.walk(dir)) {
-                for (Path p : (Iterable<Path>) stream::iterator) {
-                    if (Files.isDirectory(p)) {
-                        continue;
-                    }
-                    String rel = dir.relativize(p).toString().replace('\\', '/');
-                    zos.putNextEntry(new ZipEntry(rel));
-                    Files.copy(p, zos);
-                    zos.closeEntry();
-                    wroteEntry = true;
-                }
-            }
-        }
-        if (!wroteEntry) {
-            Files.deleteIfExists(zipTarget);
-            return null;
-        }
-        return zipTarget;
+        return FileSystemUtilities.zipDirectory(dir, zipTarget);
     }
 
     /** Recursively delete a directory tree. A no-op if {@code dir} does not exist. */
     static void deleteDirectoryRecursively(Path dir) throws IOException {
-        if (dir == null || !Files.exists(dir)) {
-            return;
-        }
-        try (var stream = Files.walk(dir)) {
-            // Deepest paths first so directories are emptied before removal.
-            for (Path p : stream.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(p);
-            }
-        }
+        FileSystemUtilities.deleteDirectoryRecursively(dir);
     }
 
     /**

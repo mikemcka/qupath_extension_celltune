@@ -158,13 +158,23 @@ path with no automated UI coverage.
 | `DualModelClassifier.java` | ~1.0k | `trainAndPredict()` ~380 lines |
 | `ReviewController.java` | ~0.9k | tile-mode vs normal-mode divergence |
 
-**This pass [FIX]** — only safe, compile-checkable, UI-free extractions (Phase D):
-`PredictionBatcher` + `TrainValMetricsComputer` out of `DualModelClassifier`;
-`FileSystemUtilities` + `ProjectFileLayout` out of `ProjectStateManager`;
-`UtilityScripts` out of `CellTuneExtension`.
+**This pass [FIX]** — `FileSystemUtilities` extracted from `ProjectStateManager`: the pure
+`zipDirectory` / `deleteDirectoryRecursively` file operations now live in
+[io/FileSystemUtilities.java](src/main/java/qupath/ext/celltune/io/FileSystemUtilities.java)
+with direct unit tests; `ProjectStateManager` keeps thin delegating wrappers so internal
+callers and the existing reset test are unaffected.
 
-**[DEFER]** — larger decompositions left for a follow-up with manual QuPath QA, because there
-is near-zero UI test coverage to catch regressions:
+**[DEFER]** — the other Phase-D candidates turned out **not** to be safe, behavior-preserving
+extractions on inspection, so they are left for a follow-up with manual QuPath QA:
+- `DualModelClassifier` → `PredictionBatcher` / `TrainValMetricsComputer`: the two near-identical
+  chunked-prediction loops ([DualModelClassifier.java:438](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L438),
+  [:550](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L550)) are
+  entangled with model state, the feature extractor, instance accumulators, and
+  `Platform.runLater`/`setPathClass` UI calls — and the ML path has no automated coverage.
+- `ProjectFileLayout` (path constants): low risk but low value; skipped to avoid churn.
+- `CellTuneExtension` → `UtilityScripts`: large surface, heavy shared-state coupling.
+
+**[DEFER]** — larger decompositions, same rationale (near-zero UI coverage):
 - `ClassificationPanel.doTrain()` → `TrainingOrchestrator` + `DataPoolingService` + `FeatureMappingService`
 - `ScatterPlotView` → `ScatterPlotModel` + `EmbeddingEngine` + `ScopeManager` + `ClusterAssignmentEngine` + `DragSelectionHandler`
 - `ProjectStateManager` → `ClassifierStatePersistence` + `LabelPersistence` + `PredictionPersistence` + `BinaryClassifierPersistence`
