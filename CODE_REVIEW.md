@@ -14,6 +14,40 @@ Legend: **[FIX]** addressed in this pass · **[DEFER]** documented, left for a f
 
 ---
 
+## Completed stages (merged to `main`)
+
+Work has shipped in reviewed PRs, each verified with `clean compileJava test` on JDK 25 (and
+manual QuPath QA where it touched interactive paths):
+
+1. **Code review report** — this document (PR #5).
+2. **Correctness fixes** (PR #5) — `LabelStore` thread-safety (synchronised map + guarded
+   compound ops), `Resampler` label-index validation, diagnostic logging on the silent
+   `hasImageLabels` catches.
+3. **Shared helpers / dedup** (PR #5) — `util/RobustStats`, `io/CsvUtils`,
+   `util/BackgroundExecutors`.
+4. **`FileSystemUtilities`** (PR #5) — pure zip/recursive-delete extracted from `ProjectStateManager`.
+5. **Tests + tooling** (PR #5) — `BinaryClassifierRegistry`, `GroundTruthIO`, `ClassManager`,
+   `CohortClusterModel`, `RobustStats`, `CsvUtils`, `FileSystemUtilities`, `LabelStore`/`Resampler`
+   regressions; **SpotBugs** wired as a non-failing reporting task.
+6. **`AnnotationLabelCollector`** (PR #5) — unified the divergent `collectLabelsFromHierarchy`
+   copies onto the merge-history-preserving behavior (fixes a latent label-loss bug, #13).
+7. **`UtilityScripts`** (PR #5) — five Utility-Scripts-menu helpers lifted out of
+   `CellTuneExtension` (~4.5k → 3.7k lines). _QA'd._
+8. **`PredictionBatcher`** (PR #6) — unified the three chunked-prediction loops in
+   `DualModelClassifier`; now unit-tested via stub predictors. _QA'd: train → predict._
+9. **`ImagePrefetcher` + `TileEntryCleaner`** (PR #8) — prefetch lifecycle and tile project-entry
+   cleanup extracted from `ReviewController` (~88 lines lighter). _QA'd: tile + cross-image review._
+10. **`TrainValMetricsComputer`** (this branch) — `computeTrainValMetrics` + `stratifiedSplit`
+    extracted from `DualModelClassifier`; unit-tested with stub trainers/predictors. Dead
+    `extractRowSubset`/`extractLabelSubset` removed.
+
+**Still open (deferred):** the large interactive/stateful decompositions — `ScatterPlotView`,
+`ClassificationPanel.doTrain`, the `ProjectStateManager` persistence split, the `CellTuneExtension`
+manager split, the `ReviewController` tile/normal strategy split, and `exportAnnotationRegions`.
+See the per-item rationale in the **Structure** section below.
+
+---
+
 ## Summary
 
 | # | Severity | Finding | Disposition |
@@ -187,10 +221,16 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   closing the "no ML coverage" gap for the argmax→label, disagreement-count, chunking, and
   sink-population logic. `DualModelClassifier` dropped ~134 lines.
 
+**Also done [FIX]:**
+- `DualModelClassifier` → `TrainValMetricsComputer`: `computeTrainValMetrics` (80/20 stratified
+  split → resample train fold → train eval copies → score) extracted to
+  [TrainValMetricsComputer.java](src/main/java/qupath/ext/celltune/classifier/TrainValMetricsComputer.java)
+  behind injected trainer/predictor callbacks, so it's unit-tested with stubs + a perfect
+  predictor ([TrainValMetricsComputerTest](src/test/java/qupath/ext/celltune/classifier/TrainValMetricsComputerTest.java)).
+  The shared `stratifiedSplit` moved there too (early-stopping calls it). Removed two dead
+  helpers (`extractRowSubset`/`extractLabelSubset`). `DualModelClassifier` ~3.5k→ smaller again.
+
 **[DEFER]** — left for a follow-up with manual QuPath QA:
-- `DualModelClassifier` → `TrainValMetricsComputer`: the single `computeTrainValMetrics` method
-  (80/20 split + evaluation-copy training) is a candidate to extract next; lower priority than
-  the prediction-loop dedup above.
 - `exportAnnotationRegions` (OME-TIFF export) left in `CellTuneExtension`: heaviest script,
   pulls in the native OME writer / `RoiMaskedServer` / pyramid machinery — deferred to keep the
   blind (no-QA) move low-risk.

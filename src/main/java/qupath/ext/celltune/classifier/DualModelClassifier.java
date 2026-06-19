@@ -249,7 +249,7 @@ public class DualModelClassifier {
             for (int i = 0; i < nRealSamples; i++) realIntLabels[i] = trainLabels.get(i);
 
             // Split original (real) data 80/20
-            int[][] split = stratifiedSplit(realIntLabels, nClasses, 0.8, new Random(42));
+            int[][] split = TrainValMetricsComputer.stratifiedSplit(realIntLabels, nClasses, 0.8, new Random(42));
 
             // Extract the 80% training subset as lists for resampling
             List<float[]> esTrainRows = new ArrayList<>(split[0].length);
@@ -818,48 +818,6 @@ public class DualModelClassifier {
         return best;
     }
 
-    // ── Early stopping helpers ─────────────────────────────────────────────
-
-    private static int[][] stratifiedSplit(int[] labels, int nClasses,
-                                           double trainRatio, Random rng) {
-        List<List<Integer>> groups = new ArrayList<>();
-        for (int c = 0; c < nClasses; c++) groups.add(new ArrayList<>());
-        for (int i = 0; i < labels.length; i++) groups.get(labels[i]).add(i);
-
-        List<Integer> trainList = new ArrayList<>();
-        List<Integer> valList = new ArrayList<>();
-
-        for (var group : groups) {
-            if (group.isEmpty()) continue; // class has no samples in pooled data — skip
-            Collections.shuffle(group, rng);
-            int trainCount = Math.max(1, (int) (group.size() * trainRatio));
-            trainList.addAll(group.subList(0, trainCount));
-            if (trainCount < group.size()) {
-                valList.addAll(group.subList(trainCount, group.size()));
-            }
-        }
-
-        return new int[][] {
-                trainList.stream().mapToInt(Integer::intValue).toArray(),
-                valList.stream().mapToInt(Integer::intValue).toArray()
-        };
-    }
-
-    private static float[] extractRowSubset(float[] flatData, int[] indices, int nFeatures) {
-        float[] result = new float[indices.length * nFeatures];
-        for (int i = 0; i < indices.length; i++) {
-            System.arraycopy(flatData, indices[i] * nFeatures,
-                    result, i * nFeatures, nFeatures);
-        }
-        return result;
-    }
-
-    private static float[] extractLabelSubset(float[] labels, int[] indices) {
-        float[] result = new float[indices.length];
-        for (int i = 0; i < indices.length; i++) result[i] = labels[indices[i]];
-        return result;
-    }
-
     // ── Model dispatch helpers ──────────────────────────────────────────────────
 
     private void trainModel(ModelType type, boolean isModel1,
@@ -966,71 +924,20 @@ public class DualModelClassifier {
                                         int mdl1Rounds, int mdl1Depth, float mdl1Eta, float mdl1Sub,
                                         int mdl2Rounds, int mdl2Depth, float mdl2Eta, float mdl2Sub,
                                         Consumer<String> out) throws Exception {
-        int[] realIntLabels = new int[nRealSamples];
-        for (int i = 0; i < nRealSamples; i++) realIntLabels[i] = realLabels.get(i);
-
-        int[][] split = stratifiedSplit(realIntLabels, nClasses, 0.8, new Random(42));
-        int valSize = split[1].length;
-        if (valSize == 0 || split[0].length == 0) {
-            out.accept("Skipping metrics: stratified split produced empty fold.");
-            return;
-        }
-
-        // Build 80% train (eligible for resampling) and 20% val (real only).
-        List<float[]> evTrainRows = new ArrayList<>(split[0].length);
-        List<Integer> evTrainLabelsList = new ArrayList<>(split[0].length);
-        for (int idx : split[0]) {
-            evTrainRows.add(realRows.get(idx));
-            evTrainLabelsList.add(realLabels.get(idx));
-        }
-        if (strategy != ResamplingStrategy.NONE) {
-            Resampler.Result res = Resampler.apply(
-                    evTrainRows, evTrainLabelsList, nClasses, strategy, s -> {});
-            evTrainRows = res.rows();
-            evTrainLabelsList = res.labels();
-        }
-
-        int evTrainSize = evTrainRows.size();
-        float[] evTrainData = new float[evTrainSize * nFeatures];
-        float[] evTrainLabels = new float[evTrainSize];
-        for (int i = 0; i < evTrainSize; i++) {
-            System.arraycopy(evTrainRows.get(i), 0, evTrainData, i * nFeatures, nFeatures);
-            evTrainLabels[i] = evTrainLabelsList.get(i);
-        }
-        float[] evValData = new float[valSize * nFeatures];
-        float[] evValLabels = new float[valSize];
-        for (int i = 0; i < valSize; i++) {
-            System.arraycopy(realRows.get(split[1][i]), 0, evValData, i * nFeatures, nFeatures);
-            evValLabels[i] = realLabels.get(split[1][i]);
-        }
-
-        // ── Eval Model 1 ────────────────────────────────────────────────────
-        trainModel(model1Type, true, evTrainData, evTrainLabels, evTrainSize, nFeatures,
-                mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub);
-        float[][] m1TrainProba = predictModel(model1Type, true, evTrainData, evTrainSize, nFeatures);
-        float[][] m1ValProba   = predictModel(model1Type, true, evValData, valSize, nFeatures);
-        this.model1TrainMetrics = TrainingMetrics.compute(
-                "Model 1 (" + model1Type + ") \u2014 Train (80%)",
-                classNames, evTrainLabels, m1TrainProba);
-        this.model1ValMetrics = TrainingMetrics.compute(
-                "Model 1 (" + model1Type + ") \u2014 Validation (20%)",
-                classNames, evValLabels, m1ValProba);
-
-        // ── Eval Model 2 ────────────────────────────────────────────────────
-        trainModel(model2Type, false, evTrainData, evTrainLabels, evTrainSize, nFeatures,
-                mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub);
-        float[][] m2TrainProba = predictModel(model2Type, false, evTrainData, evTrainSize, nFeatures);
-        float[][] m2ValProba   = predictModel(model2Type, false, evValData, valSize, nFeatures);
-        this.model2TrainMetrics = TrainingMetrics.compute(
-                "Model 2 (" + model2Type + ") \u2014 Train (80%)",
-                classNames, evTrainLabels, m2TrainProba);
-        this.model2ValMetrics = TrainingMetrics.compute(
-                "Model 2 (" + model2Type + ") \u2014 Validation (20%)",
-                classNames, evValLabels, m2ValProba);
-
-        out.accept(String.format(
-                "Macro F1: M1 train=%.3f val=%.3f | M2 train=%.3f val=%.3f",
-                model1TrainMetrics.macroF1(), model1ValMetrics.macroF1(),
-                model2TrainMetrics.macroF1(), model2ValMetrics.macroF1()));
+        TrainValMetricsComputer.Result result = TrainValMetricsComputer.compute(
+                realRows, realLabels, nRealSamples, nClasses, nFeatures, strategy,
+                (data, labels, n) -> trainModel(model1Type, true, data, labels, n, nFeatures,
+                        mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub),
+                (data, n) -> predictModel(model1Type, true, data, n, nFeatures),
+                "Model 1 (" + model1Type + ")",
+                (data, labels, n) -> trainModel(model2Type, false, data, labels, n, nFeatures,
+                        mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub),
+                (data, n) -> predictModel(model2Type, false, data, n, nFeatures),
+                "Model 2 (" + model2Type + ")",
+                classNames, out);
+        this.model1TrainMetrics = result.model1Train();
+        this.model1ValMetrics = result.model1Val();
+        this.model2TrainMetrics = result.model2Train();
+        this.model2ValMetrics = result.model2Val();
     }
 }
