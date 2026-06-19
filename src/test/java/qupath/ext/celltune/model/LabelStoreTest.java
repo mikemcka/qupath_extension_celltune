@@ -182,4 +182,59 @@ class LabelStoreTest {
         // original label unchanged
         assertEquals("T", store.getLabel("cell-1"));
     }
+
+    /**
+     * Regression test for the thread-safety fix: concurrent put on one thread
+     * while another thread repeatedly iterates the store (via the streaming
+     * readers) must not throw {@link java.util.ConcurrentModificationException}.
+     * With the unsynchronised {@code LinkedHashMap} this was flaky; with the
+     * synchronised map + guarded compound operations it is safe.
+     */
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void concurrentPutAndIterateDoesNotThrow() throws InterruptedException {
+        var store = new LabelStore("test");
+        for (int i = 0; i < 200; i++) store.setLabel("seed-" + i, "T");
+
+        int iterations = 5_000;
+        var error = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var start = new java.util.concurrent.CountDownLatch(1);
+
+        Runnable writer = () -> {
+            try {
+                start.await();
+                for (int i = 0; i < iterations && error.get() == null; i++) {
+                    store.setLabel("w-" + i, (i % 2 == 0) ? "A" : "B");
+                    if (i % 7 == 0) store.removeLabel("w-" + (i - 1));
+                }
+            } catch (Throwable t) {
+                error.compareAndSet(null, t);
+            }
+        };
+        Runnable reader = () -> {
+            try {
+                start.await();
+                for (int i = 0; i < iterations && error.get() == null; i++) {
+                    store.getClassNames();
+                    store.getClassCounts();
+                    store.getEffectiveLabels();
+                    store.retainClasses(Set.of("A", "B", "T"));
+                }
+            } catch (Throwable t) {
+                error.compareAndSet(null, t);
+            }
+        };
+
+        var tWriter = new Thread(writer, "ls-writer");
+        var tReader = new Thread(reader, "ls-reader");
+        tWriter.start();
+        tReader.start();
+        start.countDown();
+        tWriter.join();
+        tReader.join();
+
+        if (error.get() != null) {
+            fail("Concurrent access threw: " + error.get());
+        }
+    }
 }

@@ -15,7 +15,12 @@ import java.util.stream.Collectors;
 public class LabelStore {
 
     private final String name;
-    private final Map<String, String> labels;  // cellId → class name
+    // cellId → class name. Wrapped in a synchronised map because the same store
+    // is mutated from the JavaFX thread (manual labelling), the training thread,
+    // and the image-switch listener. Single-key operations are guarded by the
+    // wrapper; compound iterate/stream operations below additionally synchronise
+    // on {@code labels} (required for safe iteration of a synchronised map).
+    private final Map<String, String> labels;
 
     /**
      * Create an empty label store.
@@ -24,7 +29,7 @@ public class LabelStore {
      */
     public LabelStore(String name) {
         this.name = name;
-        this.labels = new LinkedHashMap<>();
+        this.labels = Collections.synchronizedMap(new LinkedHashMap<>());
     }
 
     /**
@@ -35,7 +40,7 @@ public class LabelStore {
      */
     public LabelStore(String name, Map<String, String> labels) {
         this.name = name;
-        this.labels = new LinkedHashMap<>(labels);
+        this.labels = Collections.synchronizedMap(new LinkedHashMap<>(labels));
     }
 
     /** Assign a class label to a cell. Overwrites any existing label. */
@@ -106,9 +111,11 @@ public class LabelStore {
      * annotations stripped) that have at least one labelled cell
      */
     public Set<String> getClassNames() {
-        return labels.values().stream()
-                .map(LabelStore::effectiveClassName)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        synchronized (labels) {
+            return labels.values().stream()
+                    .map(LabelStore::effectiveClassName)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
     /**
@@ -118,27 +125,39 @@ public class LabelStore {
      */
     public Map<String, String> getEffectiveLabels() {
         Map<String, String> result = new LinkedHashMap<>();
-        labels.forEach((id, raw) -> result.put(id, effectiveClassName(raw)));
+        synchronized (labels) {
+            labels.forEach((id, raw) -> result.put(id, effectiveClassName(raw)));
+        }
         return result;
     }
 
     /** @return count of labelled cells per class */
     public Map<String, Long> getClassCounts() {
-        return labels.values().stream()
-                .collect(Collectors.groupingBy(c -> c, LinkedHashMap::new, Collectors.counting()));
+        synchronized (labels) {
+            return labels.values().stream()
+                    .collect(Collectors.groupingBy(c -> c, LinkedHashMap::new, Collectors.counting()));
+        }
     }
 
     /** @return all cell IDs that have a specific class label */
     public List<String> getCellsWithLabel(String className) {
-        return labels.entrySet().stream()
-                .filter(e -> className.equals(e.getValue()))
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toList());
+        synchronized (labels) {
+            return labels.entrySet().stream()
+                    .filter(e -> className.equals(e.getValue()))
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toList());
+        }
     }
 
     /** Merge all labels from another store into this one. Existing labels are overwritten. */
     public void mergeFrom(LabelStore other) {
-        labels.putAll(other.labels);
+        // Snapshot the source under its own lock, then put-all under ours, to
+        // avoid holding two map monitors at once (deadlock-safe ordering).
+        Map<String, String> snapshot;
+        synchronized (other.labels) {
+            snapshot = new LinkedHashMap<>(other.labels);
+        }
+        labels.putAll(snapshot);
     }
 
     /**
@@ -150,9 +169,11 @@ public class LabelStore {
      * @return number of labels removed
      */
     public int retainClasses(Set<String> validClasses) {
-        int before = labels.size();
-        labels.entrySet().removeIf(e -> !validClasses.contains(effectiveClassName(e.getValue())));
-        return before - labels.size();
+        synchronized (labels) {
+            int before = labels.size();
+            labels.entrySet().removeIf(e -> !validClasses.contains(effectiveClassName(e.getValue())));
+            return before - labels.size();
+        }
     }
 
     /**
@@ -166,14 +187,16 @@ public class LabelStore {
      * @return number of labels renamed
      */
     public int renameClass(String oldName, String newName) {
-        int count = 0;
-        for (var entry : labels.entrySet()) {
-            if (oldName.equals(effectiveClassName(entry.getValue()))) {
-                entry.setValue(newName);
-                count++;
+        synchronized (labels) {
+            int count = 0;
+            for (var entry : labels.entrySet()) {
+                if (oldName.equals(effectiveClassName(entry.getValue()))) {
+                    entry.setValue(newName);
+                    count++;
+                }
             }
+            return count;
         }
-        return count;
     }
 
     /**
@@ -186,22 +209,26 @@ public class LabelStore {
      * @return number of labels restored
      */
     public int restoreMergedLabels(String mergedSuffix) {
-        int count = 0;
-        for (var entry : labels.entrySet()) {
-            String raw = entry.getValue();
-            if (raw != null && raw.endsWith(mergedSuffix)) {
-                int idx = raw.indexOf("-mergedInto(");
-                String original = idx >= 0 ? raw.substring(0, idx) : raw;
-                entry.setValue(original);
-                count++;
+        synchronized (labels) {
+            int count = 0;
+            for (var entry : labels.entrySet()) {
+                String raw = entry.getValue();
+                if (raw != null && raw.endsWith(mergedSuffix)) {
+                    int idx = raw.indexOf("-mergedInto(");
+                    String original = idx >= 0 ? raw.substring(0, idx) : raw;
+                    entry.setValue(original);
+                    count++;
+                }
             }
+            return count;
         }
-        return count;
     }
 
     /** Create a deep copy of this label store. */
     public LabelStore copy() {
-        return new LabelStore(name, labels);
+        synchronized (labels) {
+            return new LabelStore(name, labels);
+        }
     }
 
     public String getName() { return name; }

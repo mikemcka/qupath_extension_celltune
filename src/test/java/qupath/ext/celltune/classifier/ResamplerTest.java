@@ -173,4 +173,41 @@ class ResamplerTest {
         assertEquals(c0, 10, "Majority class should not change");
         assertEquals(result.rows().size(), result.labels().size());
     }
+
+    // ── label-index validation (regression for the out-of-range guard) ──────
+
+    @Test
+    void labelOutOfRangeThrowsClearMessage() {
+        List<float[]> r = rows(4, 0f, 0f);
+        List<Integer> l = new ArrayList<>(List.of(0, 1, 2, 5)); // 5 invalid when nClasses=3
+        var ex = assertThrows(IllegalArgumentException.class,
+                () -> Resampler.apply(r, l, 3, ResamplingStrategy.SMOTE, null));
+        assertTrue(ex.getMessage().contains("index 3"), "Message should name the offending index");
+        assertTrue(ex.getMessage().contains("[0, 3)"), "Message should state the valid range");
+    }
+
+    @Test
+    void negativeLabelThrows() {
+        List<float[]> r = rows(3, 0f, 0f);
+        List<Integer> l = new ArrayList<>(List.of(0, -1, 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> Resampler.apply(r, l, 2, ResamplingStrategy.NONE, null));
+    }
+
+    @Test
+    void nClassesBelowOneThrows() {
+        List<float[]> r = rows(2, 0f, 0f);
+        List<Integer> l = new ArrayList<>(List.of(0, 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> Resampler.apply(r, l, 0, ResamplingStrategy.NONE, null));
+    }
+
+    @Test
+    void validLabelsPassValidation() {
+        List<float[]> r = rows(4, 0f, 0f);
+        List<Integer> l = new ArrayList<>(List.of(0, 1, 1, 0));
+        // Should not throw; NONE returns a copy unchanged.
+        Resampler.Result result = Resampler.apply(r, l, 2, ResamplingStrategy.NONE, null);
+        assertEquals(4, result.labels().size());
+    }
 }

@@ -734,6 +734,7 @@ public class ProjectStateManager {
             Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
             return Files.exists(filePath);
         } catch (IOException e) {
+            logger.debug("hasImageLabels: cannot resolve label path for '{}': {}", imageName, e.getMessage());
             return false;
         }
     }
@@ -794,6 +795,8 @@ public class ProjectStateManager {
             Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
             return Files.exists(filePath);
         } catch (IOException e) {
+            logger.debug("hasImageLabels: cannot resolve label path for '{}' (scope '{}'): {}",
+                    imageName, scope, e.getMessage());
             return false;
         }
     }

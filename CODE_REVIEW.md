@@ -19,9 +19,9 @@ Legend: **[FIX]** addressed in this pass · **[DEFER]** documented, left for a f
 | # | Severity | Finding | Disposition |
 |---|----------|---------|-------------|
 | 1 | High | `LabelStore` shared `LinkedHashMap` is unsynchronised; mutated from UI, training, and image-switch threads | **[FIX]** Phase B |
-| 2 | Medium | Unguarded `project.getEntry()` dereferences at a subset of ~38 call sites | **[FIX]** Phase B (audited subset) |
+| 2 | — | Unguarded `project.getEntry()` dereferences | **[WONTFIX]** — false positive after audit (all sites already guarded) |
 | 3 | Medium | `Resampler` does not validate class indices → `ArrayIndexOutOfBoundsException` on corrupt labels | **[FIX]** Phase B |
-| 4 | Medium | Swallow-all `catch (Throwable)` / silent `catch` hide state-corruption causes | **[FIX]** Phase B (add logging) |
+| 4 | Low | Two `hasImageLabels` IOException catches return `false` with no log | **[FIX]** Phase B (debug log; rest already logged) |
 | 5 | Low | Robust-z math duplicated with **divergent** behaviour across two analyzers | **[FIX]** Phase C (preserve both behaviours) |
 | 6 | Low | CSV escaping reimplemented three times with inconsistent quoting | **[FIX]** Phase C |
 | 7 | Low | Background executors created ad hoc in 4+ classes; no shared factory | **[FIX]** Phase C |
@@ -47,18 +47,18 @@ convention to an enforced invariant.
 **Fix (Phase B):** wrap in `Collections.synchronizedMap(new LinkedHashMap<>())` and guard
 the compound read-modify methods on the map monitor. Add a concurrent put/iterate test.
 
-### 2. Unguarded `project.getEntry()` dereferences — **Medium** — [FIX]
-`project.getEntry(imageData)` returns `null` when an image is opened without a project.
-There are ~38 call sites; **most are already guarded** (`project != null ? project.getEntry(...) : null`).
-The unguarded sites that immediately dereference the result include
-[CompositeClassificationDialog.java:65](src/main/java/qupath/ext/celltune/ui/CompositeClassificationDialog.java#L65)
-& :225, [DistanceMeasurementsDialog.java:100](src/main/java/qupath/ext/celltune/ui/DistanceMeasurementsDialog.java#L100),
+### 2. Unguarded `project.getEntry()` dereferences — **investigated** — [WONTFIX]
+`project.getEntry(imageData)` returns `null` when an image is opened without a project, so an
+earlier pass flagged ~38 call sites as risky. **On audit, every site is already guarded** —
+either by a null-check on the result (`if (entry != null)` / ternary) or by an early
+`if (project == null) return;` upstream (e.g. [TrainingTileExtractor.java:151](src/main/java/qupath/ext/celltune/ui/TrainingTileExtractor.java#L151)
+guards :172). The four originally-cited "unguarded" sites
+([CompositeClassificationDialog.java:65](src/main/java/qupath/ext/celltune/ui/CompositeClassificationDialog.java#L65)/:225,
+[DistanceMeasurementsDialog.java:100](src/main/java/qupath/ext/celltune/ui/DistanceMeasurementsDialog.java#L100),
 [TrainingTileExtractor.java:172](src/main/java/qupath/ext/celltune/ui/TrainingTileExtractor.java#L172),
-[ClassificationPanel.java:485](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java#L485).
-See also [.planning/codebase/CONCERNS.md](.planning/codebase/CONCERNS.md) which tracks the
-`CellTuneExtension` prediction-path sites.
-**Fix (Phase B):** audit; add a guarded helper and apply only to the unguarded sites.
-Leave already-guarded sites untouched.
+[ClassificationPanel.java:485](src/main/java/qupath/ext/celltune/ui/ClassificationPanel.java#L485))
+are all correctly null-checked. No change; adding redundant guards would be noise. The
+codebase is disciplined here.
 
 ### 3. `Resampler` does not validate label indices — **Medium** — [FIX]
 [classifier/Resampler.java](src/main/java/qupath/ext/celltune/classifier/Resampler.java)
@@ -67,15 +67,14 @@ indexes per-class buckets by label value without bounds-checking. A corrupt labe
 bare `ArrayIndexOutOfBoundsException` deep in training rather than a diagnosable error.
 **Fix (Phase B):** validate indices ∈ `[0, nClasses)` up front and fail with a clear message.
 
-### 4. Swallow-all / silent catches obscure failures — **Medium** — [FIX]
-[ScatterPlotView.java:816](src/main/java/qupath/ext/celltune/ui/ScatterPlotView.java#L816)
-catches `Throwable` around the embedding fallback (separate from the legitimate
-`LinkageError` catch at L764), and several load paths in
-[ProjectStateManager.java](src/main/java/qupath/ext/celltune/io/ProjectStateManager.java)
-return `null` on a bare `catch`. The fallback behaviour is correct, but a silent failure
-makes state-corruption undebuggable for a researcher in the field.
-**Fix (Phase B):** keep the fallbacks; add warning-level logging with context. No behaviour
-change beyond logging.
+### 4. Silent catches — **Low** — [FIX, narrow]
+Mostly a false positive: [ScatterPlotView.java:816](src/main/java/qupath/ext/celltune/ui/ScatterPlotView.java#L816)
+already `logger.error(...)`s and shows the user an actionable message, and the
+[ProjectStateManager](src/main/java/qupath/ext/celltune/io/ProjectStateManager.java) load
+paths already `logger.warn(...)` on every exception. The only genuinely silent paths are the
+two `hasImageLabels(...)` cheap existence checks that `catch (IOException) { return false; }`.
+**Fix (Phase B):** added a `logger.debug(...)` to both so a path-resolution failure is
+diagnosable. Behaviour unchanged.
 
 ### 12. arcsinh on negative input — **investigated** — [WONTFIX]
 An earlier pass flagged [FeatureNormalizer.java:124](src/main/java/qupath/ext/celltune/model/FeatureNormalizer.java#L124)
