@@ -272,7 +272,7 @@ public final class ClassManager {
     }
 
     /** Purge all entries whose effective class equals {@code className}. */
-    private static int purgeClassFromFile(Path path, String className) throws IOException {
+    static int purgeClassFromFile(Path path, String className) throws IOException {
         Map<String, String> labels = readLabelFile(path);
         int before = labels.size();
         labels.entrySet().removeIf(e -> className.equals(LabelStore.effectiveClassName(e.getValue())));
@@ -282,9 +282,9 @@ public final class ClassManager {
     }
 
     /** Rewrite entries matching any source class into the merge-encoded form. */
-    private static int mergeClassesInFile(Path path,
-                                          List<String> sourceClasses,
-                                          String targetClass) throws IOException {
+    static int mergeClassesInFile(Path path,
+                                  List<String> sourceClasses,
+                                  String targetClass) throws IOException {
         Map<String, String> labels = readLabelFile(path);
         int count = 0;
         for (var entry : labels.entrySet()) {
@@ -318,20 +318,35 @@ public final class ClassManager {
     private static int undoMergeInFile(Path path, String targetClass, QuPathGUI qupath)
             throws IOException {
         Map<String, String> labels = readLabelFile(path);
+        List<String> restoredOriginals = restoreMergedInMap(labels, targetClass);
+        for (String original : restoredOriginals) {
+            // Re-add the original PathClass to QuPath if absent (idempotent).
+            addPathClassOnFxThread(qupath, original);
+        }
+        if (!restoredOriginals.isEmpty()) writeLabelFile(path, labels);
+        return restoredOriginals.size();
+    }
+
+    /**
+     * In-place undo of a merge within a label map: every value ending with
+     * {@code "-mergedInto(<targetClass>)"} is reverted to its innermost original
+     * class. Pure (no I/O, no QuPath) so it can be unit-tested directly.
+     *
+     * @return the original class names restored, one per reverted entry (order
+     *         preserved; duplicates kept so the count equals entries changed)
+     */
+    static List<String> restoreMergedInMap(Map<String, String> labels, String targetClass) {
         String suffix = MERGE_SEPARATOR + targetClass + MERGE_CLOSE;
-        int count = 0;
+        List<String> restoredOriginals = new ArrayList<>();
         for (var entry : labels.entrySet()) {
             String raw = entry.getValue();
-            if (raw.endsWith(suffix)) {
+            if (raw != null && raw.endsWith(suffix)) {
                 String original = innermostOriginal(raw);
                 entry.setValue(original);
-                // Re-add the original PathClass to QuPath if absent
-                addPathClassOnFxThread(qupath, original);
-                count++;
+                restoredOriginals.add(original);
             }
         }
-        if (count > 0) writeLabelFile(path, labels);
-        return count;
+        return restoredOriginals;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

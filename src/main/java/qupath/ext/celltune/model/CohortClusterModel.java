@@ -306,7 +306,7 @@ public final class CohortClusterModel {
     }
 
     /** Random distinct indices in [0, n) — partial Fisher–Yates. */
-    private static int[] sampleIndices(int n, int count, Random rng) {
+    static int[] sampleIndices(int n, int count, Random rng) {
         if (count >= n) {
             int[] all = new int[n];
             for (int i = 0; i < n; i++) {
@@ -329,7 +329,7 @@ public final class CohortClusterModel {
         return out;
     }
 
-    private static int nearestCentroid(double[] z, double[][] cents) {
+    static int nearestCentroid(double[] z, double[][] cents) {
         int best = 0;
         double bestD = Double.MAX_VALUE;
         for (int c = 0; c < cents.length; c++) {
