@@ -153,28 +153,39 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~3.8k | lifecycle + state I/O + 16 dialog launchers + utility scripts |
+| `CellTuneExtension.java` | ~3.7k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts now extracted |
 | `ClassificationPanel.java` | ~1.8k | `doTrain()` ~600 lines |
 | `ScatterPlotView.java` | ~2.0k | `recompute()` ~200 lines, scope divergence |
 | `ProjectStateManager.java` | ~1.5k | 30+ load/save methods, mixed concerns |
 | `DualModelClassifier.java` | ~1.0k | `trainAndPredict()` ~380 lines |
 | `ReviewController.java` | ~0.9k | tile-mode vs normal-mode divergence |
 
-**This pass [FIX]** — `FileSystemUtilities` extracted from `ProjectStateManager`: the pure
-`zipDirectory` / `deleteDirectoryRecursively` file operations now live in
-[io/FileSystemUtilities.java](src/main/java/qupath/ext/celltune/io/FileSystemUtilities.java)
-with direct unit tests; `ProjectStateManager` keeps thin delegating wrappers so internal
-callers and the existing reset test are unaffected.
+**Done [FIX]:**
+- `FileSystemUtilities` extracted from `ProjectStateManager`: the pure
+  `zipDirectory` / `deleteDirectoryRecursively` file operations now live in
+  [io/FileSystemUtilities.java](src/main/java/qupath/ext/celltune/io/FileSystemUtilities.java)
+  with direct unit tests; `ProjectStateManager` keeps thin delegating wrappers so internal
+  callers and the existing reset test are unaffected.
+- `UtilityScripts` extracted from `CellTuneExtension`: the five standalone Utility-Scripts-menu
+  helpers (cell filtering, hierarchy resolution, annotation locking, measurement deletion,
+  GeoJSON import) plus their private helpers moved verbatim to
+  [UtilityScripts.java](src/main/java/qupath/ext/celltune/UtilityScripts.java) as static methods.
+  The menu items now delegate. The only behavioural delta is the hierarchy-event **source**
+  (a private sentinel instead of the extension instance) — verified safe: no listener filters
+  by source, matching the existing `CohortClusterModel` pattern. `CellTuneExtension` shrank
+  from ~4.5k to ~3.7k lines. **Needs a manual QuPath smoke test** of the five menu items, since
+  these interactive scripts have no automated coverage.
 
-**[DEFER]** — the other Phase-D candidates turned out **not** to be safe, behavior-preserving
-extractions on inspection, so they are left for a follow-up with manual QuPath QA:
+**[DEFER]** — left for a follow-up with manual QuPath QA:
 - `DualModelClassifier` → `PredictionBatcher` / `TrainValMetricsComputer`: the two near-identical
   chunked-prediction loops ([DualModelClassifier.java:438](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L438),
   [:550](src/main/java/qupath/ext/celltune/classifier/DualModelClassifier.java#L550)) are
   entangled with model state, the feature extractor, instance accumulators, and
   `Platform.runLater`/`setPathClass` UI calls — and the ML path has no automated coverage.
+- `exportAnnotationRegions` (OME-TIFF export) left in `CellTuneExtension`: heaviest script,
+  pulls in the native OME writer / `RoiMaskedServer` / pyramid machinery — deferred to keep the
+  blind (no-QA) move low-risk.
 - `ProjectFileLayout` (path constants): low risk but low value; skipped to avoid churn.
-- `CellTuneExtension` → `UtilityScripts`: large surface, heavy shared-state coupling.
 
 **[DEFER]** — larger decompositions, same rationale (near-zero UI coverage):
 - `ClassificationPanel.doTrain()` → `TrainingOrchestrator` + `DataPoolingService` + `FeatureMappingService`
