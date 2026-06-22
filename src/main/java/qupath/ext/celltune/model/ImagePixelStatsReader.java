@@ -15,6 +15,10 @@ import java.util.List;
  * Reads a low-resolution version of a (typically pyramidal) image from an
  * {@link ImageServer} and computes whole-image {@link ImagePixelStats.ImageStats}.
  * <p>
+ * Part of the image pixel prescreen, whose statistics methodology was adapted from
+ * <a href="https://pypi.org/project/pixel-patrol/">pixel-patrol</a> (MIT) — see
+ * {@link ImagePixelStats} for the attribution note.
+ * <p>
  * The resolution is chosen so the long edge of the region read is approximately
  * {@link #DEFAULT_MAX_LONG_EDGE} pixels: the requested downsample is
  * {@code max(1, longEdge / maxLongEdge)}, and QuPath serves it from the nearest

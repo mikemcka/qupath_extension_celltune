@@ -13,6 +13,10 @@ import java.util.Map;
 /**
  * Contextualises whole-image pixel statistics against the whole project.
  * <p>
+ * Part of the image pixel prescreen, whose statistics methodology was adapted from
+ * <a href="https://pypi.org/project/pixel-patrol/">pixel-patrol</a> (MIT) — see
+ * {@link ImagePixelStats} for the attribution note.
+ * <p>
  * Given one {@link ImagePixelStats.ImageStats} per project image, this computes a
  * handful of robust (MAD-scaled) z-scores for image-level summary scalars
  * (empty/background fraction, mean foreground coverage, peak saturation, median
