@@ -96,7 +96,19 @@ manual QuPath QA where it touched interactive paths):
     the trained `classifier`) plus a `Runnable` callback for the Class Control re-launch from the scatter
     plot. `showConfusions` was **left in place** (it writes `lastAgreementRates` and triggers
     auto-classify, so it's not read-only). `CellTuneExtension` ~3.12k → ~2.85k; seven now-dead imports
-    dropped. **Needs a manual QuPath smoke test** of each launched view.
+    dropped (PR #19). _QA'd: all five launched views._
+18. **`ImportExport`** (this branch) — third slice of the `CellTuneExtension` split: the whole
+    cell-table / ground-truth / marker-table import &amp; export group moved to one root-package class.
+    `exportCellTable` (self-contained), `exportGroundTruth` (+ the static `appendImportedRowsToCsv` /
+    `appendOtherImageLabelsToCsv` helpers and `askExportFeatureOptions`/`ExportFeatureOptions`),
+    `importMarkerTable` and `importGroundTruth` lifted verbatim. The exports are read-only (state passed
+    as parameters); the two **imports return their result** (`CellTypeTable`, or a `GroundTruthImportResult`
+    of new labels + imported rows/feature-names) and the extension's thin handler assigns the fields and
+    calls `syncPanelState()` in one place — so `ImportExport` has no session-state side effects. The only
+    behaviour delta is that `syncPanelState()` now runs just after the import's save/notify instead of just
+    before (end state identical). `ensureActiveBinaryMarker` and the two binary GT wrappers stay in the
+    extension. `CellTuneExtension` ~2.85k → ~2.21k; 16 now-dead imports dropped. **Needs a manual QuPath
+    smoke test** of cell-table export, GT export/import (spatial + training), and marker-table import.
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
 QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
@@ -247,7 +259,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~2.85k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary + analysis-view launchers now extracted |
+| `CellTuneExtension.java` | ~2.2k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary, analysis-view launchers + import/export now extracted |
 | `ClassificationPanel.java` | ~1.76k (was ~1.9k) | `doTrain()` cross-image pooling + batch apply → `TrainingOrchestrator`; pure feature-mapping/data-pooling already extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
@@ -340,9 +352,10 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   `trainAndPredict` call, classifier-state save and FX completion stay inline (diminishing returns to
   extract further; tightly bound to the panel's controls and the JavaFX lifecycle)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
-  (in progress: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16) and the read-only
-  **analysis-view launchers** → `AnalysisViews` (stage 17) extracted; the stateful managers — binary-mode,
-  review-mode, image-state-sync, export/import — and `MenuItemFactory` remain)
+  (in progress: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16), the read-only
+  **analysis-view launchers** → `AnalysisViews` (stage 17), and **import/export** → `ImportExport`
+  (stage 18) extracted; the stateful managers — binary-mode, review-mode, image-state-sync — `showConfusions`/
+  reset, and `MenuItemFactory` remain)
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
   [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), and the

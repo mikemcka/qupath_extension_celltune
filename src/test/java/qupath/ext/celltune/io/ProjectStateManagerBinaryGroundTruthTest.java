@@ -48,6 +48,59 @@ class ProjectStateManagerBinaryGroundTruthTest {
         assertNull(ProjectStateManager.loadBinaryImportedTrainingData(project, "CD8"));
     }
 
+    @Test
+    void deleteBinaryImportedTrainingDataRemovesPayload() throws Exception {
+        Project<BufferedImage> project = fakeProject(tempDir.resolve("del-binary/project.qpproj"));
+
+        ProjectStateManager.saveBinaryImportedTrainingData(project, "CD4",
+                List.of("feat_a"),
+                List.of(new GroundTruthIO.TrainingRow("CD4_pos", new float[]{1.0f})));
+        assertNotNull(ProjectStateManager.loadBinaryImportedTrainingData(project, "CD4"));
+
+        // First delete removes it and reports true; payload is gone afterwards.
+        assertTrue(ProjectStateManager.deleteBinaryImportedTrainingData(project, "CD4"));
+        assertNull(ProjectStateManager.loadBinaryImportedTrainingData(project, "CD4"));
+
+        // Deleting again is a no-op and reports false.
+        assertFalse(ProjectStateManager.deleteBinaryImportedTrainingData(project, "CD4"));
+    }
+
+    @Test
+    void clearImportedTrainingDataStripsRowsButKeepsRestOfState() throws Exception {
+        Project<BufferedImage> project = fakeProject(tempDir.resolve("clear-multi/project.qpproj"));
+
+        // Seed a full classifier state (labels + class names + a model byte), then add imported rows.
+        var labels = new qupath.ext.celltune.model.LabelStore("CellTune");
+        labels.setLabel("cell-1", "Tumour");
+        ProjectStateManager.saveState(project, "MyClassifier", labels,
+                List.of("feat_a", "feat_b"), List.of("Tumour", "Stroma"),
+                new byte[]{1, 2, 3}, null);
+        ProjectStateManager.saveImportedTrainingData(project, List.of("feat_a", "feat_b"),
+                List.of(new GroundTruthIO.TrainingRow("Tumour", new float[]{1.0f, 2.0f})));
+
+        // Sanity: imported rows are present before clearing.
+        assertNotNull(ProjectStateManager.decodeImportedTrainingRows(ProjectStateManager.loadState(project)));
+
+        assertTrue(ProjectStateManager.clearImportedTrainingData(project));
+
+        var state = ProjectStateManager.loadState(project);
+        assertNotNull(state);
+        // Imported rows + feature names are gone...
+        assertNull(ProjectStateManager.decodeImportedTrainingRows(state));
+        assertNull(ProjectStateManager.getImportedTrainingFeatureNames(state));
+        // ...but the rest of the state is intact.
+        assertEquals("MyClassifier", state.name);
+        assertEquals(List.of("Tumour", "Stroma"), state.classNames);
+        assertEquals("Tumour", state.labels.get("cell-1"));
+        assertArrayEquals(new byte[]{1, 2, 3}, ProjectStateManager.decodeXGBoostModel(state));
+    }
+
+    @Test
+    void clearImportedTrainingDataIsNoOpWithoutState() throws Exception {
+        Project<BufferedImage> project = fakeProject(tempDir.resolve("clear-empty/project.qpproj"));
+        assertFalse(ProjectStateManager.clearImportedTrainingData(project));
+    }
+
     @SuppressWarnings("unchecked")
     private static Project<BufferedImage> fakeProject(Path projectFile) throws IOException {
         Files.createDirectories(projectFile.getParent());

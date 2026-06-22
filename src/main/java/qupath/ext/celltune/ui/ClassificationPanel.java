@@ -82,6 +82,8 @@ public class ClassificationPanel extends VBox {
     private final Label labelCountLabel = new Label("Labels: 0");
     private final Label predCountLabel = new Label("Predictions: 0");
     private final Label importedCountLabel = new Label("Imported rows: 0");
+    private final Button clearImportedButton = new Button("Clear");
+    private Runnable onClearImportedData;
     private final Spinner<Integer> roundsSpinner;
     private final Spinner<Integer> depthSpinner;
     private final Spinner<Integer> workersSpinner;
@@ -222,7 +224,15 @@ public class ClassificationPanel extends VBox {
                         + "by this training run are reduced."));
 
         // ── Status row ──
-        HBox statsRow = new HBox(12, labelCountLabel, predCountLabel, importedCountLabel);
+        clearImportedButton.setTooltip(new Tooltip(
+                "Remove imported training rows for the active context (binary marker, or multi-class). "
+                        + "Labels, models and predictions are not affected."));
+        clearImportedButton.setStyle("-fx-font-size: 10px; -fx-padding: 1 6 1 6;");
+        clearImportedButton.setDisable(true);
+        clearImportedButton.setOnAction(e -> {
+            if (onClearImportedData != null) onClearImportedData.run();
+        });
+        HBox statsRow = new HBox(12, labelCountLabel, predCountLabel, importedCountLabel, clearImportedButton);
         statsRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Progress ──
@@ -371,6 +381,10 @@ public class ClassificationPanel extends VBox {
 
     public void setOnFeatureImportance(Runnable cb) {
         this.onFeatureImportance = cb;
+    }
+
+    public void setOnClearImportedData(Runnable cb) {
+        this.onClearImportedData = cb;
     }
 
     public void setApplyToImagesCount(int count) {
@@ -1250,6 +1264,7 @@ public class ClassificationPanel extends VBox {
         labelCountLabel.setText("Labels: " + labelCount);
         predCountLabel.setText("Predictions: " + predCount);
         importedCountLabel.setText("Imported rows: " + importedCount);
+        clearImportedButton.setDisable(importedCount == 0);
     }
 
     private void collectLabelsFromAnnotations(LabelStore store) {
