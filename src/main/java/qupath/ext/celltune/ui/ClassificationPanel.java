@@ -5,8 +5,8 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import qupath.ext.celltune.classifier.DataPoolingService;
 import qupath.ext.celltune.classifier.DualModelClassifier;
-import qupath.ext.celltune.classifier.FeatureMappingService;
 import qupath.ext.celltune.classifier.FeaturePruner;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
@@ -774,41 +774,16 @@ public class ClassificationPanel extends VBox {
                 }
 
                 // Always include explicitly imported training rows (if any).
-                if (importedRowsSnapshot != null && !importedRowsSnapshot.isEmpty()
-                        && importedFeatureNamesSnapshot != null && !importedFeatureNamesSnapshot.isEmpty()) {
-
+                var pooledImported = DataPoolingService.poolImportedRows(
+                        importedRowsSnapshot, importedFeatureNamesSnapshot, finalFeatureNames);
+                if (pooledImported.addedCount() > 0) {
                     if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
                     if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
-
-                    int[] featureMap = FeatureMappingService.buildFeatureIndexMap(
-                            importedFeatureNamesSnapshot, finalFeatureNames);
-                    int mappedFeatureCount = 0;
-                    for (int idx : featureMap) {
-                        if (idx >= 0) mappedFeatureCount++;
-                    }
-
-                    if (mappedFeatureCount > 0) {
-                        int added = 0;
-                        for (var row : importedRowsSnapshot) {
-                            if (row == null || row.label() == null || row.label().isBlank()) continue;
-                            float[] src = row.features();
-                            if (src == null) continue;
-
-                            float[] aligned = FeatureMappingService.alignRow(src, featureMap);
-
-                            supplementaryRows.add(aligned);
-                            supplementaryLabels.add(row.label());
-                            added++;
-                        }
-                        if (added > 0) {
-                            int addedFinal = added;
-                            int mappedFinal = mappedFeatureCount;
-                            trainLog.accept("Merged " + addedFinal + " imported training rows ("
-                                    + mappedFinal + "/" + finalFeatureNames.size() + " features aligned).");
-                        }
-                    }
-
-                    // Imported rows are now available as supplementary training data.
+                    supplementaryRows.addAll(pooledImported.rows());
+                    supplementaryLabels.addAll(pooledImported.labels());
+                    trainLog.accept("Merged " + pooledImported.addedCount() + " imported training rows ("
+                            + pooledImported.mappedFeatureCount() + "/" + finalFeatureNames.size()
+                            + " features aligned).");
                 }
 
                 classifier.trainAndPredict(detections, storeCopy, extractor,
