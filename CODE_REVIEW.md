@@ -56,10 +56,29 @@ manual QuPath QA where it touched interactive paths):
     lines and sheds 19 now-unused imports (the AWT raster + image-server stack). **Needs a manual
     QuPath smoke test** of the export (no automated coverage is possible for the interactive
     OME writer path).
+13. **`ProjectStateManager` persistence split** (this branch) — the deferred persistence
+    decomposition, done. `io/PredictionPersistence`, `io/BinaryClassifierPersistence`,
+    `io/LabelPersistence` and `io/MarkerTablePersistence` were extracted as focused, package-private
+    helpers; `ProjectStateManager` keeps thin delegating wrappers so all ~109 call sites and behaviour
+    are unchanged (the `FileSystemUtilities` facade pattern). The dead, never-called composite-rule/
+    config persistence (~240 lines) was deleted. `ProjectStateManager` drops ~1.6k → ~0.85k (under
+    1000). New round-trip tests `PredictionPersistenceTest` and `LabelPersistenceTest`; the binary and
+    marker-table helpers stay covered by the existing tests via the unchanged facade. _Pure IO — no
+    QuPath QA needed; verified with `clean compileJava test`._
+14. **`FeatureMappingService` + `DataPoolingService`** (this branch) — the pure, testable core of the
+    deferred `ClassificationPanel.doTrain` split. `classifier/FeatureMappingService`
+    (`buildFeatureIndexMap` + `alignRow`, deduping a live copy in `ClassificationPanel` and a dead copy
+    in `CellTuneExtension`) and `classifier/DataPoolingService` (`poolImportedRows`) lift the imported-row
+    feature-alignment/pooling out of `doTrain`, both unit-tested (`FeatureMappingServiceTest`,
+    `DataPoolingServiceTest`). The residual `doTrain` FX/threading orchestration (`TrainingOrchestrator`)
+    stays deferred — it needs manual QuPath QA to verify.
 
-**Still open (deferred):** the remaining large interactive/stateful decompositions —
-`ClassificationPanel.doTrain`, the `ProjectStateManager` persistence split, the `CellTuneExtension`
-manager split, and the `ReviewController` tile/normal strategy split.
+**Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
+QuPath QA to verify safely — `ClassificationPanel.doTrain`'s `TrainingOrchestrator` (residual FX/
+threading orchestration; the pure helpers are now extracted), the `io/LabelPersistence` **dedup of the
+entangled `collectLabelsFromAnnotations`/`persist*` methods across `CellTuneExtension` and
+`ClassificationPanel`** (#8 — distinct from the per-image-file IO extracted in stage 13), the
+`CellTuneExtension` manager split, and the `ReviewController` tile/normal strategy split.
 See the per-item rationale in the **Structure** section below.
 
 ---
@@ -204,9 +223,9 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 | File | Lines | God-method |
 |------|-------|-----------|
 | `CellTuneExtension.java` | ~3.4k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts + region export now extracted |
-| `ClassificationPanel.java` | ~1.8k | `doTrain()` ~600 lines |
+| `ClassificationPanel.java` | ~1.9k | `doTrain()` ~600 lines; pure feature-mapping + data-pooling now extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
-| `ProjectStateManager.java` | ~1.5k | 30+ load/save methods, mixed concerns |
+| `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
 | `DualModelClassifier.java` | ~1.0k | `trainAndPredict()` ~380 lines |
 | `ReviewController.java` | ~0.9k | tile-mode vs normal-mode divergence |
 
@@ -276,9 +295,21 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   and the extracted math is directly unit-testable. A status-bar progress bar was also added so
   the control-locking assign/apply runs show legible progress.
 
-**[DEFER]** — larger decompositions, same rationale (near-zero UI coverage):
-- `ClassificationPanel.doTrain()` → `TrainingOrchestrator` + `DataPoolingService` + `FeatureMappingService`
-- `ProjectStateManager` → `ClassifierStatePersistence` + `LabelPersistence` + `PredictionPersistence` + `BinaryClassifierPersistence`
+**Also done [FIX]:**
+- `ProjectStateManager` persistence split — extracted `PredictionPersistence` /
+  `BinaryClassifierPersistence` / `LabelPersistence` / `MarkerTablePersistence` as focused
+  package-private helpers behind delegating wrappers (behaviour-preserving), deleted the dead
+  composite-rule/config persistence, ~1.6k → ~0.85k lines, round-trip tests added. See completed
+  stage 13. (This is the per-image label-**file IO**; the #8 dedup of the entangled
+  `collectLabelsFromAnnotations`/`persist*` methods across the two big UI/extension classes is still
+  deferred — it needs per-class state threading + QuPath QA.)
+- `ClassificationPanel.doTrain()` pure core — `FeatureMappingService` (feature index map + row align,
+  also dedups a dead `CellTuneExtension` copy) and `DataPoolingService` (imported-row pooling)
+  extracted and unit-tested. See completed stage 14.
+
+**[DEFER]** — larger decompositions, same rationale (near-zero UI coverage, need manual QuPath QA):
+- `ClassificationPanel.doTrain()` → `TrainingOrchestrator` — the residual FX/threading orchestration
+  (progress dialog, background train thread, classifier wiring, state save, batch apply)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
