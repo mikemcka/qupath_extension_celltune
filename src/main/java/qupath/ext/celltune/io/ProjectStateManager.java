@@ -407,6 +407,37 @@ public class ProjectStateManager {
     }
 
     /**
+     * Strip the imported training data (rows + feature names) from the saved multi-class
+     * classifier state, leaving the trained models, labels, feature selection and everything
+     * else intact. A no-op if there is no saved state file.
+     *
+     * @return true if a state file existed and was rewritten without the imported rows
+     * @throws IOException if writing fails
+     */
+    public static boolean clearImportedTrainingData(Project<?> project) throws IOException {
+        Path statePath = getCellTuneDir(project).resolve(STATE_FILENAME);
+        if (!Files.exists(statePath)) {
+            return false;
+        }
+        SavedState state;
+        try {
+            String json = Files.readString(statePath, StandardCharsets.UTF_8);
+            state = GSON.fromJson(json, SavedState.class);
+        } catch (Exception ex) {
+            logger.warn("Failed to read state for imported-data clear: {}", ex.getMessage());
+            return false;
+        }
+        if (state == null) {
+            return false;
+        }
+        state.importedTrainingFeatureNames = null;
+        state.importedTrainingRows = null;
+        writeState(statePath, state);
+        logger.info("Cleared imported training data from {}", statePath);
+        return true;
+    }
+
+    /**
      * Reconstruct a {@link LabelStore} from a saved state.
      *
      * @param state the loaded state
@@ -834,6 +865,17 @@ public class ProjectStateManager {
     public static BinaryImportedTrainingData loadBinaryImportedTrainingData(Project<?> project,
                                                                             String sanitizedMarkerName) throws IOException {
         return BinaryClassifierPersistence.loadBinaryImportedTrainingData(project, sanitizedMarkerName);
+    }
+
+    /**
+     * Delete the imported training payload for a binary marker, if present.
+     *
+     * @return true if a payload file existed and was deleted
+     * @throws IOException if deletion fails
+     */
+    public static boolean deleteBinaryImportedTrainingData(Project<?> project,
+                                                           String sanitizedMarkerName) throws IOException {
+        return BinaryClassifierPersistence.deleteBinaryImportedTrainingData(project, sanitizedMarkerName);
     }
 
     // -- Marker table persistence -----------------------------------------------

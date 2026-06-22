@@ -226,6 +226,7 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setOnApplyToImages(() -> applyBinaryClassifierToImages(qupath));
         classificationPanel.setOnManualLabelMode(() -> showManualLabelMode(qupath));
         classificationPanel.setOnFeatureImportance(() -> showFeatureImportance(qupath));
+        classificationPanel.setOnClearImportedData(() -> clearImportedTrainingData(qupath));
         classificationPanel.setBinaryTargetImagesSupplier(() ->
                 binaryTargetImages == null ? List.of() : new ArrayList<>(binaryTargetImages));
 
@@ -1755,6 +1756,15 @@ public class CellTuneExtension implements QuPathExtension {
             labelStore = result.labelStore();
             importedTrainingRows = result.importedRows();
             importedTrainingFeatureNames = result.importedFeatureNames();
+            syncPanelState();
+        }
+    }
+
+    /** Clear imported training rows for the active context (binary marker, or multi-class). */
+    private void clearImportedTrainingData(QuPathGUI qupath) {
+        if (ImportExport.clearImportedTrainingData(qupath, activeBinaryMarker)) {
+            importedTrainingRows = null;
+            importedTrainingFeatureNames = null;
             syncPanelState();
         }
     }

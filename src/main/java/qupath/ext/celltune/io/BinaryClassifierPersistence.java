@@ -151,6 +151,23 @@ final class BinaryClassifierPersistence {
         return outPath;
     }
 
+    /**
+     * Delete the imported training payload for a binary marker, if present.
+     *
+     * @return true if a payload file existed and was deleted
+     */
+    static boolean deleteBinaryImportedTrainingData(Project<?> project,
+                                                    String sanitizedMarkerName) throws IOException {
+        String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);
+        Path importedDir = getBinaryImportedDir(project);
+        Path inPath = importedDir.resolve(safeMarker + ".json");
+        boolean deleted = Files.deleteIfExists(inPath);
+        if (deleted) {
+            logger.info("Deleted binary imported training rows for '{}'", safeMarker);
+        }
+        return deleted;
+    }
+
     static BinaryImportedTrainingData loadBinaryImportedTrainingData(Project<?> project,
                                                                      String sanitizedMarkerName) throws IOException {
         String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);

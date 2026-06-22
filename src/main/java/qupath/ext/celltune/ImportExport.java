@@ -753,4 +753,45 @@ final class ImportExport {
             return null;
         }
     }
+
+    /**
+     * Clear the imported training rows for the active context — the binary marker if one is
+     * active, otherwise multi-class mode — after a typed confirmation. Labels, trained models
+     * and predictions are left untouched. Deletes the persisted payload
+     * ({@code binary-imported/<marker>.json} in binary mode, or the imported-rows fields of
+     * {@code classifier-state.json} in multi-class mode).
+     *
+     * @param activeBinaryMarker the active binary marker, or null/blank for multi-class
+     * @return true if the user confirmed — the caller should then null its in-memory imported-rows
+     *         fields and refresh the panel; false on cancel or failure
+     */
+    static boolean clearImportedTrainingData(QuPathGUI qupath, String activeBinaryMarker) {
+        boolean binary = activeBinaryMarker != null && !activeBinaryMarker.isBlank();
+        String context = binary
+                ? "the \"" + activeBinaryMarker + "\" binary classifier"
+                : "multi-class mode";
+
+        boolean confirmed = Dialogs.showConfirmDialog(EXTENSION_NAME,
+                "Remove all imported training rows for " + context + "?\n\n"
+                        + "Your labels, trained models and predictions are not affected.");
+        if (!confirmed) return false;
+
+        var project = qupath.getProject();
+        if (project != null) {
+            try {
+                if (binary) {
+                    ProjectStateManager.deleteBinaryImportedTrainingData(project, activeBinaryMarker);
+                } else {
+                    ProjectStateManager.clearImportedTrainingData(project);
+                }
+            } catch (IOException ex) {
+                logger.error("Failed to clear imported training data", ex);
+                Dialogs.showErrorMessage(EXTENSION_NAME,
+                        "Failed to clear imported training data: " + ex.getMessage());
+                return false;
+            }
+        }
+        Dialogs.showInfoNotification(EXTENSION_NAME, "Cleared imported training rows for " + context + ".");
+        return true;
+    }
 }
