@@ -693,6 +693,7 @@ public class ClassificationPanel extends VBox {
                 ? binaryTargetImagesSupplier.get() : null;
         final List<String> batchTargetImages = suppliedTargets == null
                 ? List.of() : List.copyOf(suppliedTargets);
+        final int workers = workersSpinner.getValue();
         Thread trainThread = new Thread(() -> {
             try {
                 // Auto-backup labels
@@ -707,70 +708,10 @@ public class ClassificationPanel extends VBox {
                 List<String> supplementaryLabels = null;
 
                 if (poolAllImages && projectRef != null) {
-                    supplementaryRows = new ArrayList<>();
-                    supplementaryLabels = new ArrayList<>();
-
-                    @SuppressWarnings("unchecked")
-                    var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) projectRef.getImageList();
-                    var currentEntry = projectRef.getEntry(imageData);
-
-                    trainLog.accept("Pooling labels from other project images\u2026");
-                    for (var entry : allEntries) {
-                        if (currentEntry != null && entry.equals(currentEntry)) continue;
-
-                        // Fast check: skip images with no saved label file to avoid
-                        // the expensive readImageData() call for unlabelled images.
-                        if (!ProjectStateManager.hasImageLabels(projectRef, scope, entry.getImageName())) continue;
-
-                        try {
-                            // Load saved labels first (no image I/O required)
-                            LabelStore otherLabels = new LabelStore("temp");
-                            try {
-                                var savedLabels = ProjectStateManager.loadImageLabels(
-                                        projectRef, scope, entry.getImageName());
-                                if (savedLabels != null) {
-                                    otherLabels.mergeFrom(savedLabels);
-                                }
-                            } catch (Exception lsEx) {
-                                // No saved labels for this image — that's fine
-                            }
-
-                            if (otherLabels.size() == 0) continue;
-
-                            // Only now open the image to extract features
-                            var otherImageData = entry.readImageData();
-                            var otherHierarchy = otherImageData.getHierarchy();
-                            var otherDetections = otherHierarchy.getDetectionObjects();
-                            if (otherDetections.isEmpty()) continue;
-
-                            var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
-                            otherExtractor.setNormalizer(featureNormalizer);
-                            Map<String, PathObject> otherCellById = new LinkedHashMap<>();
-                            for (PathObject cell : otherDetections) {
-                                otherCellById.put(cell.getID().toString(), cell);
-                            }
-
-                            int added = 0;
-                            for (var labelEntry : otherLabels.getAllLabels().entrySet()) {
-                                PathObject cell = otherCellById.get(labelEntry.getKey());
-                                if (cell == null) continue;
-                                supplementaryRows.add(otherExtractor.extractRow(cell));
-                                // Strip merge-history annotation so training sees the effective class
-                                supplementaryLabels.add(
-                                        LabelStore.effectiveClassName(labelEntry.getValue()));
-                                added++;
-                            }
-                            if (added > 0) {
-                                int addedFinal = added;
-                                trainLog.accept("  + " + addedFinal + " labelled cells from "
-                                        + entry.getImageName());
-                            }
-                        } catch (Exception ex) {
-                            trainLog.accept("  ! Could not read " + entry.getImageName()
-                                    + " (" + ex.getMessage() + ")");
-                        }
-                    }
-                    trainLog.accept("Pooled total: " + supplementaryRows.size() + " rows.");
+                    var pooled = TrainingOrchestrator.poolLabelsFromOtherImages(
+                            projectRef, imageData, scope, finalFeatureNames, featureNormalizer, trainLog);
+                    supplementaryRows = pooled.rows();
+                    supplementaryLabels = pooled.labels();
                 }
 
                 // Always include explicitly imported training rows (if any).
@@ -834,96 +775,9 @@ public class ClassificationPanel extends VBox {
 
                 int batchApplied = 0;
                 if (projectRef != null && !batchTargetImages.isEmpty()) {
-                    @SuppressWarnings("unchecked")
-                    var typedProject = (qupath.lib.projects.Project<BufferedImage>)
-                            (qupath.lib.projects.Project<?>) projectRef;
-                    var currentEntry = projectRef.getEntry(imageData);
-                    String currentImageName = currentEntry != null ? currentEntry.getImageName() : null;
-
-                    // Parallelise per-image classification using the user-chosen worker
-                    // count from the sidebar spinner. Capped at the number of target
-                    // images. Booster.predict in XGBoost4J / LightGBM4J is thread-safe
-                    // and predictOnly(populateSets=false) does not mutate shared state.
-                    int parallelism = Math.min(workersSpinner.getValue(), batchTargetImages.size());
-                    parallelism = Math.max(1, parallelism);
-                    trainLog.accept("Applying classifier to " + batchTargetImages.size()
-                            + " target image(s) using " + parallelism + " worker(s)\u2026");
-
-                    var poolExec = java.util.concurrent.Executors.newFixedThreadPool(parallelism, r -> {
-                        Thread t = new Thread(r, "CellTune-BatchPredict");
-                        t.setDaemon(true);
-                        return t;
-                    });
-                    var appliedCounter = new java.util.concurrent.atomic.AtomicInteger(0);
-                    var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
-
-                    for (String imgName : batchTargetImages) {
-                        if (currentImageName != null && currentImageName.equals(imgName)) continue;
-
-                        var entryOpt = typedProject.getImageList().stream()
-                                .filter(en -> en.getImageName().equals(imgName))
-                                .findFirst();
-                        if (entryOpt.isEmpty()) continue;
-
-                        final var entry = entryOpt.get();
-                        final String imgNameFinal = imgName;
-                        futures.add(poolExec.submit(() -> {
-                            try {
-                                trainLog.accept("[" + imgNameFinal + "] Loading\u2026");
-                                var otherImageData = entry.readImageData();
-                                if (otherImageData == null) return;
-                                var otherDetections = otherImageData.getHierarchy().getDetectionObjects();
-                                if (otherDetections.isEmpty()) {
-                                    trainLog.accept("[" + imgNameFinal + "] Skipped (no detections)");
-                                    return;
-                                }
-
-                                var otherExtractor = new CellFeatureExtractor(finalFeatureNames);
-                                otherExtractor.setNormalizer(featureNormalizer);
-                                var otherPredAll = classifier.predictAndCollect(otherDetections, otherExtractor,
-                                        m -> trainLog.accept("[" + imgNameFinal + "] " + m));
-
-                                var saveReady = new java.util.concurrent.CountDownLatch(1);
-                                Platform.runLater(() -> {
-                                    otherImageData.getHierarchy().fireHierarchyChangedEvent(this);
-                                    saveReady.countDown();
-                                });
-                                try {
-                                    saveReady.await();
-                                } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                    return;
-                                }
-
-                                entry.saveImageData(otherImageData);
-                                // Persist the per-image PopulationSet so the Project
-                                // Prediction Summary and review-mode sampling can pull
-                                // disagreements from this image.
-                                try {
-                                    ProjectStateManager.saveImagePredictions(
-                                            projectRef, imgNameFinal, otherPredAll);
-                                } catch (Exception persistEx) {
-                                    trainLog.accept("[" + imgNameFinal + "] WARN: could not save predictions JSON: "
-                                            + persistEx.getMessage());
-                                }
-                                int n = appliedCounter.incrementAndGet();
-                                trainLog.accept("[" + imgNameFinal + "] Saved (" + n + "/"
-                                        + batchTargetImages.size() + ")");
-                            } catch (Exception ex) {
-                                trainLog.accept("[" + imgNameFinal + "] ERROR: " + ex.getMessage());
-                            }
-                        }));
-                    }
-
-                    poolExec.shutdown();
-                    for (var f : futures) {
-                        try {
-                            f.get();
-                        } catch (Exception ex) {
-                            // already logged inside the task
-                        }
-                    }
-                    batchApplied = appliedCounter.get();
+                    batchApplied = TrainingOrchestrator.applyToTargetImages(
+                            projectRef, imageData, batchTargetImages, workers,
+                            classifier, finalFeatureNames, featureNormalizer, this, trainLog);
                 }
 
                 final int totalBatchApplied = batchApplied;

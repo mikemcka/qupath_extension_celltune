@@ -70,15 +70,23 @@ manual QuPath QA where it touched interactive paths):
     (`buildFeatureIndexMap` + `alignRow`, deduping a live copy in `ClassificationPanel` and a dead copy
     in `CellTuneExtension`) and `classifier/DataPoolingService` (`poolImportedRows`) lift the imported-row
     feature-alignment/pooling out of `doTrain`, both unit-tested (`FeatureMappingServiceTest`,
-    `DataPoolingServiceTest`). The residual `doTrain` FX/threading orchestration (`TrainingOrchestrator`)
-    stays deferred — it needs manual QuPath QA to verify.
+    `DataPoolingServiceTest`).
+15. **`ui/TrainingOrchestrator`** (this branch) — the two self-contained, IO-bound concerns of the
+    `doTrain` background pipeline lifted out behind explicit parameters: `poolLabelsFromOtherImages`
+    (read saved per-image labels project-wide, open each labelled image, extract supplementary rows)
+    and `applyToTargetImages` (parallel batch-classify target images + persist per-image predictions).
+    Verbatim moves, behaviour preserved 1:1; `doTrain` keeps validation, feature prep, progress UI, the
+    `trainAndPredict` call, classifier-state save and FX completion. `ClassificationPanel` ~1.9k → ~1.76k.
+    Mirrors the `ReviewController` → `ImagePrefetcher`/`TileEntryCleaner` precedent. **Needs manual
+    QuPath QA** (train → predict, cross-image pooling, batch apply) — no automated coverage of the
+    interactive train path.
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
-QuPath QA to verify safely — `ClassificationPanel.doTrain`'s `TrainingOrchestrator` (residual FX/
-threading orchestration; the pure helpers are now extracted), the `io/LabelPersistence` **dedup of the
-entangled `collectLabelsFromAnnotations`/`persist*` methods across `CellTuneExtension` and
-`ClassificationPanel`** (#8 — distinct from the per-image-file IO extracted in stage 13), the
-`CellTuneExtension` manager split, and the `ReviewController` tile/normal strategy split.
+QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
+UI/save/FX completion left inline after stage 15; further extraction has diminishing returns), the
+`io/LabelPersistence` **dedup of the entangled `collectLabelsFromAnnotations`/`persist*` methods across
+`CellTuneExtension` and `ClassificationPanel`** (#8 — distinct from the per-image-file IO extracted in
+stage 13), the `CellTuneExtension` manager split, and the `ReviewController` tile/normal strategy split.
 See the per-item rationale in the **Structure** section below.
 
 ---
@@ -223,7 +231,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 | File | Lines | God-method |
 |------|-------|-----------|
 | `CellTuneExtension.java` | ~3.4k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts + region export now extracted |
-| `ClassificationPanel.java` | ~1.9k | `doTrain()` ~600 lines; pure feature-mapping + data-pooling now extracted |
+| `ClassificationPanel.java` | ~1.76k (was ~1.9k) | `doTrain()` cross-image pooling + batch apply → `TrainingOrchestrator`; pure feature-mapping/data-pooling already extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
 | `DualModelClassifier.java` | ~1.0k | `trainAndPredict()` ~380 lines |
@@ -306,10 +314,14 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 - `ClassificationPanel.doTrain()` pure core — `FeatureMappingService` (feature index map + row align,
   also dedups a dead `CellTuneExtension` copy) and `DataPoolingService` (imported-row pooling)
   extracted and unit-tested. See completed stage 14.
+- `ClassificationPanel.doTrain()` IO blocks — `ui/TrainingOrchestrator.poolLabelsFromOtherImages`
+  (cross-image label pooling) and `applyToTargetImages` (parallel batch apply) extracted verbatim.
+  See completed stage 15.
 
 **[DEFER]** — larger decompositions, same rationale (near-zero UI coverage, need manual QuPath QA):
-- `ClassificationPanel.doTrain()` → `TrainingOrchestrator` — the residual FX/threading orchestration
-  (progress dialog, background train thread, classifier wiring, state save, batch apply)
+- `ClassificationPanel.doTrain()` residual orchestration — validation, feature prep, progress UI, the
+  `trainAndPredict` call, classifier-state save and FX completion stay inline (diminishing returns to
+  extract further; tightly bound to the panel's controls and the JavaFX lifecycle)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
