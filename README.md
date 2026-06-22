@@ -128,10 +128,30 @@ Optional per-feature transforms can be applied before training and inference:
 
 ## License
 
-[Add your license here]
+License to be finalised — this extension builds on prior work and the license is still under
+discussion with the upstream authors.
+
+> **Relevant to the license decision:** the shadow JAR bundles third-party libraries whose own
+> licenses constrain how this extension may be distributed — most notably **Smile**, which is
+> dual-licensed **GPL-3.0 / commercial**. Using Smile under its open-source arm makes the
+> distributed combined work GPL-3.0 (consistent with QuPath, which is itself GPL-3.0). See the
+> bundled-library licenses under [Acknowledgements](#acknowledgements).
 
 ## Acknowledgements
 
+### Inspiration & references
 - **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.weizmann.ac.il/mcb/Keren/home) — the active learning cell classification workflow that this extension emulates. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
+- **[pixel-patrol](https://pypi.org/project/pixel-patrol/)** (MIT) — the whole-image, per-channel pixel-statistics approach behind the **image pixel prescreen** (which summary statistics to compute and how images are flagged) was adapted from pixel-patrol. The Java implementation (`model/ImagePixelStats`, `model/ImagePixelStatsReader`, `model/PixelCohortAnalyzer`) is original to this project.
 - **[qupath-extension-xgboost](https://github.com/zindy/qupath-extension-xgboost)** by [Zindy](https://github.com/zindy) — a QuPath 0.7 XGBoost extension whose project structure, Gradle configuration, and XGBoost4J integration patterns served as a reference implementation for this extension.
 - Built on the [QuPath extension template](https://github.com/qupath/qupath-extension-template).
+
+### Bundled libraries
+The shadow ("fat") JAR bundles the following third-party libraries; their licenses apply to the distributed JAR:
+
+| Library | License | Used for |
+|---------|---------|----------|
+| [QuPath](https://qupath.github.io/) | GPL-3.0 | Host platform the extension runs in |
+| [Smile](https://github.com/haifengl/smile) (`smile-core`) | Dual: **GPL-3.0 / commercial** (© Haifeng Li / SMILE.AI, LLC) | PCA, UMAP, k-means for the cell scatter plot & clustering |
+| [XGBoost4J](https://github.com/dmlc/xgboost) | Apache-2.0 | Gradient-boosted model 1 |
+| [LightGBM4J](https://github.com/metarank/lightgbm4j) wrapping [LightGBM](https://github.com/microsoft/LightGBM) | MIT / MIT | Gradient-boosted model 2 |
+| [Bytedeco JavaCPP presets](https://github.com/bytedeco/javacpp-presets) → native [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS), [ARPACK-NG](https://github.com/opencollab/arpack-ng) | Apache-2.0 / BSD-3-Clause / BSD-3-Clause | Native BLAS/LAPACK for Smile's PCA/UMAP (pulled in transitively by Smile) |

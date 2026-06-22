@@ -8,6 +8,11 @@ import java.util.List;
  * Whole-image, per-channel pixel statistics computed on a low-resolution version
  * of a (typically pyramidal) image.
  * <p>
+ * <b>Attribution:</b> the set of whole-image summary statistics computed here, and the idea of
+ * using them as a cheap image-quality prescreen, were adapted from
+ * <a href="https://pypi.org/project/pixel-patrol/">pixel-patrol</a> (MIT licence). This Java
+ * implementation is original to this project.
+ * <p>
  * This class is the pixel-level twin of the cell-composition analytics in
  * {@link CohortAnomalyAnalyzer}: instead of summarising an image by the classes
  * of its cells, it summarises an image by the intensity distribution of its raw
