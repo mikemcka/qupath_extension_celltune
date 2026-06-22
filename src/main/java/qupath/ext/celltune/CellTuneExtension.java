@@ -1100,100 +1100,15 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         return filtered;
     }
 
-    private static final class SamplingContext {
-        private final PopulationSet predictions;
-        private final Map<String, String> cellToImage;
-
-        private SamplingContext(PopulationSet predictions, Map<String, String> cellToImage) {
-            this.predictions = predictions;
-            this.cellToImage = cellToImage;
-        }
-
-        private PopulationSet predictions() {
-            return predictions;
-        }
-
-        private Map<String, String> cellToImage() {
-            return cellToImage;
-        }
-    }
-
-    private SamplingContext buildSamplingContext(QuPathGUI qupath) {
-        return buildSamplingContext(qupath, false);
-    }
-
-    private SamplingContext buildSamplingContext(QuPathGUI qupath, boolean currentImageOnly) {
-        PopulationSet pooled = new PopulationSet("Pred_ALL");
-        Map<String, String> cellToImage = new LinkedHashMap<>();
-
-        var project = qupath.getProject();
-        var imageData = qupath.getImageData();
-        String currentImageName = null;
-        if (project != null && imageData != null) {
-            var entry = project.getEntry(imageData);
-            if (entry != null) {
-                currentImageName = entry.getImageName();
-            }
-        }
-
-        if (predAll != null && predAll.size() > 0) {
-            addPredictionsToSamplingPool(pooled, predAll, currentImageName, cellToImage);
-        } else if (project != null && currentImageName != null) {
-            try {
-                var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageName);
-                if (loadedCurrent != null && loadedCurrent.size() > 0) {
-                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageName, cellToImage);
-                }
-            } catch (Exception ignored) {
-            }
-        }
-
-        if (project != null && !currentImageOnly) {
-            @SuppressWarnings("unchecked")
-            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
-            for (var entry : entries) {
-                if (entry == null || entry.getImageName() == null) continue;
-                if (currentImageName != null && currentImageName.equals(entry.getImageName())) continue;
-
-                try {
-                    var loaded = ProjectStateManager.loadImagePredictions(project, entry.getImageName());
-                    if (loaded != null && loaded.size() > 0) {
-                        addPredictionsToSamplingPool(pooled, loaded, entry.getImageName(), cellToImage);
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-        }
-
-        return new SamplingContext(pooled, cellToImage);
-    }
-
-    private static void addPredictionsToSamplingPool(PopulationSet pooled,
-                                                     PopulationSet source,
-                                                     String imageName,
-                                                     Map<String, String> cellToImage) {
-        if (source == null || source.size() == 0) return;
-        String safeImageName = (imageName == null || imageName.isBlank()) ? "image" : imageName;
-
-        for (var entry : source.getAll().entrySet()) {
-            String cellId = entry.getKey();
-            if (cellId == null || cellId.isBlank()) continue;
-            if (pooled.get(cellId) != null) continue;
-
-            pooled.put(cellId, entry.getValue());
-            cellToImage.put(cellId, safeImageName);
-        }
-    }
-
     private boolean sampleForReviewBatch(QuPathGUI qupath,
-                                         SamplingContext samplingContext,
+                                         ReviewSampling.SamplingContext samplingContext,
                                          int sampleSize) {
         if (samplingContext == null || samplingContext.predictions() == null
                 || samplingContext.predictions().size() == 0 || sampleSize <= 0) {
             return false;
         }
 
-        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, activeBinaryMarker, labelStore, lastSampledCellIds);
+        Set<String> reviewedCellIds = ReviewSampling.buildReviewedCellIdsForSampling(qupath, activeBinaryMarker, labelStore, lastSampledCellIds);
         lastSampledCellIds = UncertaintySampler.sample(
                 samplingContext.predictions(),
                 classifier.getClassNames(),
@@ -1312,37 +1227,6 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
                 logger.warn("Failed to save reviewed labels for {}: {}", imageName, ex.getMessage());
             }
         }
-    }
-
-    private static Set<String> buildReviewedCellIdsForSampling(
-            QuPathGUI qupath,
-            String scope,
-            LabelStore labels,
-            List<String> previouslySampledIds) {
-        Set<String> reviewed = new LinkedHashSet<>();
-        if (labels != null) {
-            reviewed.addAll(labels.getAllLabels().keySet());
-        }
-        if (previouslySampledIds != null) {
-            reviewed.addAll(previouslySampledIds);
-        }
-
-        if (qupath != null && qupath.getProject() != null) {
-            @SuppressWarnings("unchecked")
-            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
-            for (var entry : entries) {
-                if (entry == null || entry.getImageName() == null) continue;
-                try {
-                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
-                    if (imageLabels != null) {
-                        reviewed.addAll(imageLabels.getAllLabels().keySet());
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-        }
-
-        return reviewed;
     }
 
     /**
@@ -1518,7 +1402,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
             }
         }
 
-        SamplingContext samplingContext = buildSamplingContext(qupath, currentImageOnly);
+        ReviewSampling.SamplingContext samplingContext = ReviewSampling.buildSamplingContext(qupath, predAll, currentImageOnly);
         long disagreeCount = samplingContext.predictions().getDisagreementCount();
         if (disagreeCount == 0) {
             Dialogs.showInfoNotification(EXTENSION_NAME,
