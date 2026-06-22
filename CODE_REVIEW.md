@@ -122,6 +122,20 @@ manual QuPath QA where it touched interactive paths):
     wrappers). `CellTuneExtension` ~2.21k → **~2.0k** (from ~4.5k originally); two now-dead imports dropped.
     **Needs careful manual QuPath QA** — enter/switch/exit binary mode, train + persist a binary classifier,
     the self-heal on contaminated stores, and that multi-class state is correctly restored on exit.
+    _QA'd; also fixed a pre-existing bug found during QA — binary-mode imported rows leaked into multi-class
+    (doTrain wrote them to the multi-class classifier-state.json; handleImageChange reloaded them ignoring
+    binary mode), now both guarded to multi-class only._
+20. **`ReviewSampling`** (this branch) — the pure, testable **sampling core** of review mode, extracted
+    from `CellTuneExtension`: `SamplingContext`, `buildSamplingContext` (pool the current image's
+    predictions + every other project image's saved predictions, de-duped), `addPredictionsToSamplingPool`,
+    and `buildReviewedCellIdsForSampling`. State is passed in as parameters (no session-state coupling), so
+    the dedup logic is unit-tested (`ReviewSamplingTest`). The **rest of review mode stays in the
+    extension** — `showReviewMode`/`showManualLabelMode`/`sampleForReviewBatch`/tile review and the
+    `lastSampled*` session fields are FX glue woven into `handleImageChange` and the docked panel (a full
+    `ReviewModeOrchestrator` would relocate ~450 lines behind a ~20-member Host while owning no private
+    state — high churn, low decoupling), so it's left until there's review/queue test scaffolding (matches
+    the reviewer's caution on the irreducibly cross-cutting `ReviewController` split). `CellTuneExtension`
+    ~2.0k → ~1.89k. _QA: confirm Enter Review Mode still samples disagreement cells as before._
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
 QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
@@ -272,7 +286,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~2.0k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary, analysis-view launchers, import/export + binary-mode manager now extracted |
+| `CellTuneExtension.java` | ~1.9k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary, analysis-view launchers, import/export, binary-mode manager + review sampling now extracted |
 | `ClassificationPanel.java` | ~1.76k (was ~1.9k) | `doTrain()` cross-image pooling + batch apply → `TrainingOrchestrator`; pure feature-mapping/data-pooling already extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
@@ -365,11 +379,12 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   `trainAndPredict` call, classifier-state save and FX completion stay inline (diminishing returns to
   extract further; tightly bound to the panel's controls and the JavaFX lifecycle)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
-  (in progress, ~4.5k → ~2.0k so far: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16),
+  (in progress, ~4.5k → ~1.9k so far: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16),
   read-only **analysis-view launchers** → `AnalysisViews` (stage 17), **import/export** → `ImportExport`
-  (stage 18), and **binary mode** → `BinaryClassifierManager` (stage 19) extracted; the remaining stateful
-  pieces — review-mode, image-state-sync (`handleImageChange`), `showConfusions`/reset, and `MenuItemFactory`
-  — remain)
+  (stage 18), **binary mode** → `BinaryClassifierManager` (stage 19), and review **sampling core** →
+  `ReviewSampling` (stage 20) extracted; remaining: the review-mode FX orchestration + `lastSampled*` glue
+  (woven into `handleImageChange`/panel — left until review/queue test scaffolding exists), image-state-sync
+  (`handleImageChange`), `showConfusions`/reset, and `MenuItemFactory`)
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
   [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), and the
