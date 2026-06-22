@@ -389,7 +389,13 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
                 if (savedTable != null) {
                     this.cellTypeTable = savedTable;
                 }
-                var state = ProjectStateManager.loadState(project);
+                // Only restore the multi-class session (feature selection, imported training
+                // rows, normalizer, classifier) when NOT in binary mode. In binary mode that
+                // state was loaded by enterBinaryMode for the active marker and is project/
+                // marker-level (not per-image), so reloading it from the multi-class
+                // classifier-state.json on an image switch would clobber the binary session
+                // and surface multi-class imported rows under the binary classifier.
+                var state = (activeBinaryMarker == null) ? ProjectStateManager.loadState(project) : null;
                 if (state != null) {
                     if (state.selectedFeatures != null) this.selectedFeatures = new ArrayList<>(state.selectedFeatures);
                     this.importedTrainingFeatureNames = ProjectStateManager.getImportedTrainingFeatureNames(state);
