@@ -48,10 +48,18 @@ manual QuPath QA where it touched interactive paths):
     and keeps all QuPath hierarchy/viewer mutation. Also adds a status-bar progress bar for
     the control-locking assign/apply runs. _QA'd: render modes, box/lasso/legend select,
     viewer↔plot sync, project assign, UMAP, export._
+12. **`AnnotationRegionExporter`** (this branch) — the OME-TIFF annotation-region export
+    (`exportAnnotationRegions` dialog + the reflective `writeOmePyramid`/`applyBuilderOption`
+    helpers + the tileable, polygon-masking `RoiMaskedServer`) lifted verbatim out of
+    `CellTuneExtension` into its own root-package class, mirroring the `UtilityScripts` move.
+    The menu item delegates; behaviour is preserved 1:1. `CellTuneExtension` drops ~3.7k → ~3.4k
+    lines and sheds 19 now-unused imports (the AWT raster + image-server stack). **Needs a manual
+    QuPath smoke test** of the export (no automated coverage is possible for the interactive
+    OME writer path).
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions —
 `ClassificationPanel.doTrain`, the `ProjectStateManager` persistence split, the `CellTuneExtension`
-manager split, the `ReviewController` tile/normal strategy split, and `exportAnnotationRegions`.
+manager split, and the `ReviewController` tile/normal strategy split.
 See the per-item rationale in the **Structure** section below.
 
 ---
@@ -195,7 +203,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~3.7k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts now extracted |
+| `CellTuneExtension.java` | ~3.4k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts + region export now extracted |
 | `ClassificationPanel.java` | ~1.8k | `doTrain()` ~600 lines |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~1.5k | 30+ load/save methods, mixed concerns |
@@ -238,10 +246,17 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   The shared `stratifiedSplit` moved there too (early-stopping calls it). Removed two dead
   helpers (`extractRowSubset`/`extractLabelSubset`). `DualModelClassifier` ~3.5k→ smaller again.
 
-**[DEFER]** — left for a follow-up with manual QuPath QA:
-- `exportAnnotationRegions` (OME-TIFF export) left in `CellTuneExtension`: heaviest script,
-  pulls in the native OME writer / `RoiMaskedServer` / pyramid machinery — deferred to keep the
-  blind (no-QA) move low-risk.
+**Done [FIX]:**
+- `exportAnnotationRegions` (OME-TIFF export) → [AnnotationRegionExporter.java](src/main/java/qupath/ext/celltune/AnnotationRegionExporter.java):
+  the heaviest Utility-Scripts helper — the export dialog, the reflective `writeOmePyramid`/
+  `applyBuilderOption` OME-writer calls, and the tileable polygon-masking `RoiMaskedServer` —
+  moved verbatim out of `CellTuneExtension` into its own root-package class (mirroring the
+  `UtilityScripts` move). The menu item delegates; behaviour preserved 1:1. `CellTuneExtension`
+  drops ~3.7k → ~3.4k and sheds 19 now-dead imports (the AWT raster + image-server stack).
+  Compiles + full test suite green. **Manual QuPath smoke test of the export still required** —
+  the interactive OME-writer path has no automated coverage.
+
+**[DEFER]** — left for a follow-up:
 - `ProjectFileLayout` (path constants): low risk but low value; skipped to avoid churn.
 
 **Also done [FIX]:**
