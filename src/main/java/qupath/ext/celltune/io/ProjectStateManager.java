@@ -13,7 +13,6 @@ import qupath.ext.celltune.classifier.CompositeClassificationRule;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.TrainingMetrics;
 import qupath.ext.celltune.io.GroundTruthIO;
-import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.CellTypeTable;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
@@ -53,7 +52,9 @@ public class ProjectStateManager {
     private static final int COMPOSITE_RULES_SCHEMA_VERSION = 1;
     private static final String MARKER_TABLE_FILENAME = "marker-table.json";
     private static final int MARKER_TABLE_SCHEMA_VERSION = 1;
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    // Package-private so the focused persistence helpers in this package
+    // (PredictionPersistence, …) share one identically-configured Gson instance.
+    static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final DateTimeFormatter TIMESTAMP_FMT =
             DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
@@ -770,8 +771,9 @@ public class ProjectStateManager {
 
     /**
      * Replace characters that are unsafe in file names with underscores.
+     * Package-private so the focused persistence helpers in this package share it.
      */
-    private static String sanitiseFileName(String name) {
+    static String sanitiseFileName(String name) {
         return name.replaceAll("[^a-zA-Z0-9._\\-]", "_");
     }
 
@@ -820,26 +822,6 @@ public class ProjectStateManager {
     // â”€â”€ Per-image sampled cell state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static final String IMAGE_SAMPLED_DIR = "image-sampled";
-    private static final String IMAGE_PREDICTIONS_DIR = "image-predictions";
-
-    /**
-     * Internal JSON shape for persisted per-image predictions.
-     */
-    private static class SavedPredictions {
-        List<String> classNames;
-        List<SavedPredictionEntry> predictions;
-    }
-
-    /**
-     * Internal JSON shape for a single persisted cell prediction.
-     */
-    private static class SavedPredictionEntry {
-        String cellId;
-        String model1Label;
-        String model2Label;
-        float[] model1Probs;
-        float[] model2Probs;
-    }
 
     /**
      * Save sampled cell IDs for a specific image.
@@ -880,43 +862,7 @@ public class ProjectStateManager {
     public static Path saveImagePredictions(Project<?> project,
                                             String imageName,
                                             PopulationSet predAll) throws IOException {
-        if (predAll == null || predAll.size() == 0) {
-            return null;
-        }
-
-        Path dir = getCellTuneDir(project).resolve(IMAGE_PREDICTIONS_DIR);
-        Files.createDirectories(dir);
-
-        String safeFileName = sanitiseFileName(imageName) + ".json";
-        Path outPath = dir.resolve(safeFileName);
-
-        SavedPredictions state = new SavedPredictions();
-        state.predictions = new ArrayList<>(predAll.size());
-
-        List<String> classNames = null;
-        for (CellPrediction pred : predAll.getAll().values()) {
-            if (classNames == null || classNames.isEmpty()) {
-                classNames = pred.getClassNames();
-            }
-
-            SavedPredictionEntry row = new SavedPredictionEntry();
-            row.cellId = pred.getCellId();
-            row.model1Label = pred.getModel1Label();
-            row.model2Label = pred.getModel2Label();
-            row.model1Probs = pred.getModel1Probs();
-            row.model2Probs = pred.getModel2Probs();
-            state.predictions.add(row);
-        }
-
-        if (classNames == null || classNames.isEmpty() || state.predictions.isEmpty()) {
-            return null;
-        }
-
-        state.classNames = List.copyOf(classNames);
-        Files.writeString(outPath, GSON.toJson(state), StandardCharsets.UTF_8);
-        logger.info("Saved {} predictions for image '{}' to {}",
-                state.predictions.size(), imageName, outPath);
-        return outPath;
+        return PredictionPersistence.saveImagePredictions(project, imageName, predAll);
     }
 
     /**
@@ -924,51 +870,7 @@ public class ProjectStateManager {
      */
     public static PopulationSet loadImagePredictions(Project<?> project,
                                                      String imageName) throws IOException {
-        Path dir = getCellTuneDir(project).resolve(IMAGE_PREDICTIONS_DIR);
-        String safeFileName = sanitiseFileName(imageName) + ".json";
-        Path filePath = dir.resolve(safeFileName);
-
-        if (!Files.exists(filePath)) {
-            return null;
-        }
-
-        SavedPredictions saved = GSON.fromJson(Files.readString(filePath, StandardCharsets.UTF_8),
-                SavedPredictions.class);
-        if (saved == null || saved.classNames == null || saved.classNames.isEmpty()
-                || saved.predictions == null || saved.predictions.isEmpty()) {
-            return null;
-        }
-
-        PopulationSet predAll = new PopulationSet("Pred_ALL");
-        for (SavedPredictionEntry row : saved.predictions) {
-            if (row == null || row.cellId == null || row.cellId.isBlank()
-                    || row.model1Label == null || row.model2Label == null
-                    || row.model1Probs == null || row.model2Probs == null) {
-                continue;
-            }
-
-            if (row.model1Probs.length != saved.classNames.size()
-                    || row.model2Probs.length != saved.classNames.size()) {
-                continue;
-            }
-
-            CellPrediction pred = new CellPrediction(
-                    row.cellId,
-                    row.model1Label,
-                    row.model2Label,
-                    row.model1Probs,
-                    row.model2Probs,
-                    saved.classNames);
-            predAll.put(row.cellId, pred);
-        }
-
-        if (predAll.size() == 0) {
-            return null;
-        }
-
-        logger.info("Loaded {} predictions for image '{}' from {}",
-                predAll.size(), imageName, filePath);
-        return predAll;
+        return PredictionPersistence.loadImagePredictions(project, imageName);
     }
 
 
@@ -976,16 +878,7 @@ public class ProjectStateManager {
      * List the names of all images in the project that have saved prediction files.
      */
     public static List<String> listImagesWithPredictions(Project<?> project) throws IOException {
-        Path dir = getCellTuneDir(project).resolve(IMAGE_PREDICTIONS_DIR);
-        if (!Files.exists(dir)) return List.of();
-        List<String> result = new ArrayList<>();
-        for (var entry : project.getImageList()) {
-            String name = entry.getImageName();
-            if (Files.exists(dir.resolve(sanitiseFileName(name) + ".json"))) {
-                result.add(name);
-            }
-        }
-        return result;
+        return PredictionPersistence.listImagesWithPredictions(project);
     }
     // â”€â”€ Binary classifier persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
