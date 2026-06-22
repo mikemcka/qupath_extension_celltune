@@ -5,6 +5,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import qupath.ext.celltune.classifier.DataPoolingService;
 import qupath.ext.celltune.classifier.DualModelClassifier;
 import qupath.ext.celltune.classifier.FeaturePruner;
 import qupath.ext.celltune.classifier.ModelType;
@@ -773,47 +774,16 @@ public class ClassificationPanel extends VBox {
                 }
 
                 // Always include explicitly imported training rows (if any).
-                if (importedRowsSnapshot != null && !importedRowsSnapshot.isEmpty()
-                        && importedFeatureNamesSnapshot != null && !importedFeatureNamesSnapshot.isEmpty()) {
-
+                var pooledImported = DataPoolingService.poolImportedRows(
+                        importedRowsSnapshot, importedFeatureNamesSnapshot, finalFeatureNames);
+                if (pooledImported.addedCount() > 0) {
                     if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
                     if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
-
-                    int[] featureMap = buildFeatureIndexMap(importedFeatureNamesSnapshot, finalFeatureNames);
-                    int mappedFeatureCount = 0;
-                    for (int idx : featureMap) {
-                        if (idx >= 0) mappedFeatureCount++;
-                    }
-
-                    if (mappedFeatureCount > 0) {
-                        int added = 0;
-                        for (var row : importedRowsSnapshot) {
-                            if (row == null || row.label() == null || row.label().isBlank()) continue;
-                            float[] src = row.features();
-                            if (src == null) continue;
-
-                            float[] aligned = new float[finalFeatureNames.size()];
-                            for (int f = 0; f < aligned.length; f++) {
-                                int srcIdx = featureMap[f];
-                                if (srcIdx >= 0 && srcIdx < src.length) {
-                                    float val = src[srcIdx];
-                                    aligned[f] = Float.isFinite(val) ? val : 0f;
-                                }
-                            }
-
-                            supplementaryRows.add(aligned);
-                            supplementaryLabels.add(row.label());
-                            added++;
-                        }
-                        if (added > 0) {
-                            int addedFinal = added;
-                            int mappedFinal = mappedFeatureCount;
-                            trainLog.accept("Merged " + addedFinal + " imported training rows ("
-                                    + mappedFinal + "/" + finalFeatureNames.size() + " features aligned).");
-                        }
-                    }
-
-                    // Imported rows are now available as supplementary training data.
+                    supplementaryRows.addAll(pooledImported.rows());
+                    supplementaryLabels.addAll(pooledImported.labels());
+                    trainLog.accept("Merged " + pooledImported.addedCount() + " imported training rows ("
+                            + pooledImported.mappedFeatureCount() + "/" + finalFeatureNames.size()
+                            + " features aligned).");
                 }
 
                 classifier.trainAndPredict(detections, storeCopy, extractor,
@@ -1936,20 +1906,5 @@ public class ClassificationPanel extends VBox {
         }
 
         return reviewed;
-    }
-
-    private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
-                                              List<String> targetFeatureNames) {
-        Map<String, Integer> sourceByName = new HashMap<>();
-        for (int i = 0; i < sourceFeatureNames.size(); i++) {
-            sourceByName.put(sourceFeatureNames.get(i).strip().toLowerCase(Locale.ROOT), i);
-        }
-
-        int[] map = new int[targetFeatureNames.size()];
-        for (int i = 0; i < targetFeatureNames.size(); i++) {
-            String key = targetFeatureNames.get(i).strip().toLowerCase(Locale.ROOT);
-            map[i] = sourceByName.getOrDefault(key, -1);
-        }
-        return map;
     }
 }
