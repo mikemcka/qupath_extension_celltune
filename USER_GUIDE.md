@@ -2,7 +2,7 @@
 
 A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML models in parallel (XGBoost + LightGBM by default) and uses their **disagreement** to surface the cells that need your attention. Everything runs in-process.
 
-Please note that function speed is dependant on hardware and size of project during analysis. Windows and tasks may take a moment to appear or start running especially with larger projects and images, **please be patient**.
+Please note that function speed is dependent on hardware and size of project during analysis. Windows and tasks may take a moment to appear or start running especially with larger projects and images, **please be patient**.
 
 Windows and boxes can be expanded or contracted by clicking and dragging corners which will display buttons correctly. You will see an arrow appear if you are mousing over the correct spot on the window.
 
@@ -59,7 +59,7 @@ Windows and boxes can be expanded or contracted by clicking and dragging corners
 
 1. Build (or download) `qupath-extension-celltune-0.1.0-SNAPSHOT-all.jar`. See [CLAUDE.md](CLAUDE.md#build--test) for build instructions.
 2. Drop the JAR into QuPath's `extensions/` folder, or drag-and-drop it onto the running QuPath window.
-3. Restart QuPath. The **CellTune Classifier** panel docks into the analysis tab pane on the right, you can mouse over the area and scroll the mouse wheel to ouncover it.
+3. Restart QuPath. The **CellTune Classifier** panel docks into the analysis tab pane on the right, you can mouse over the area and scroll the mouse wheel to uncover it.
 4. Some commands also live under the **Extensions → CellTune Classifier** menu.
 
 Disable the extension at any time from **Edit → Preferences → CellTune Classifier → Enable**.
@@ -284,7 +284,7 @@ The defaults are tuned for typical multiplex panels. Adjust as follows:
 
 **Resampling strategies** (visible when Enable data balancing is on):
 
-**Leave as default if you don't understand this** This is complicated and involves generating synthetic data or removing datapoints from a feature set which will vary as your training dataset chnages over time.
+**Leave as default if you don't understand this** This is complicated and involves generating synthetic data or removing datapoints from a feature set which will vary as your training dataset changes over time.
 
 | Strategy | Effect |
 |---|---|
@@ -303,7 +303,7 @@ Defaults work for ~90% of cases. Switch to `SMOTE` alone if Tomek is removing to
 
 ### 5.5 Train
 
-Click **Train**. A progress dialog shows the current step (feature extraction, balancing, fold training, etc.). Before training starts, a timestamped backup of the label store is written to `<project>/celltune/labels_backup_*.json`. You will recieve a notifcation if you have insufficent memory for training at this time.
+Click **Train**. A progress dialog shows the current step (feature extraction, balancing, fold training, etc.). Before training starts, a timestamped backup of the label store is written to `<project>/celltune/labels_backup_*.json`. You will receive a notification if you have insufficient memory for training at this time.
 
 Status bar after success: `Training complete — 523 cells classified, 47 disagreements.`
 
@@ -987,7 +987,7 @@ off the pyramid and summarises each one by its raw pixel intensities, then ranks
 and flags images against the cohort. Use it to spot slides that are mostly
 background, over-exposed, weakly stained, or otherwise unusual, so you can fix or
 exclude them before investing in analysis. It is useful to identify images which will 
-need additonal attenmtion and labelling during cell classification. It is the pixel-level twin of the
+need additional attention and labelling during cell classification. It is the pixel-level twin of the
 [Project Prediction Summary](#8-project-prediction-summary) (which needs cells);
 this one needs none.
 
@@ -1101,7 +1101,7 @@ columns — including `LaplacianVariance` — for every channel in the cohort), 
 - **Label at least 20–30 cells per class** before the first Train, then trust the disagreement-driven Review Mode to grow your label set efficiently.
 - **Selecting cells** Hold Ctrl key on windows/linux or Command on Mac to select multiple cells at the same time to label.
 - **Channel Viewer** View > Channel viewer is very useful, it will display a view of the target area which all channels selected in channel select displayed.
-- **Resolve heirarchy before exporting** We also have noticed a bug where parent annotations are missing for exported cells, ContainingAnnotations will display them correctly.
+- **Resolve hierarchy before exporting** We also have noticed a bug where parent annotations are missing for exported cells, ContainingAnnotations will display them correctly.
 - **F1 scores can lie.** A held-out 20% split is honest within an image but optimistic across the project. Always sanity-check on a few unseen slides before believing the metrics.
 - **Pick different model types for Model 1 and Model 2.** Two XGBoosts won't disagree much, which kills the whole point.
 - **Workers spinner caps at 8.** Each worker loads a full slide; expect ~2–4 GB RAM per worker on COMET data.
