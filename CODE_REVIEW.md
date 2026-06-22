@@ -135,7 +135,16 @@ manual QuPath QA where it touched interactive paths):
     `ReviewModeOrchestrator` would relocate ~450 lines behind a ~20-member Host while owning no private
     state — high churn, low decoupling), so it's left until there's review/queue test scaffolding (matches
     the reviewer's caution on the irreducibly cross-cutting `ReviewController` split). `CellTuneExtension`
-    ~2.0k → ~1.89k. _QA: confirm Enter Review Mode still samples disagreement cells as before._
+    ~2.0k → ~1.89k. _QA'd: Enter Review Mode still samples disagreement cells as before._
+21. **`MenuItemFactory`** (this branch) — the Extensions &gt; CellTune menu construction lifted out of
+    `CellTuneExtension.addMenuItems` into root-package `MenuItemFactory`, with `item()`/`group()` helpers
+    that collapse the repeated `new MenuItem(...) + setOnAction + disable-binding` boilerplate. Pure
+    construction; labels, submenu layout (Export / Import / Utility Scripts), separators and ordering
+    preserved 1:1. The 17 menu handlers on the extension became package-private so the factory can wire
+    them (`ext::showScatterPlot` etc.); the shared `enableExtensionProperty` is passed in. `addMenuItems`
+    is now a one-line delegate; three now-dead javafx menu imports dropped. `CellTuneExtension` ~1.89k →
+    ~1.76k. _QA: open Extensions &gt; CellTune and confirm every item/submenu is present, ordered, and
+    launches its dialog (and is greyed out when the extension is disabled)._
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
 QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
@@ -286,7 +295,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~1.9k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary, analysis-view launchers, import/export, binary-mode manager + review sampling now extracted |
+| `CellTuneExtension.java` | ~1.76k (was ~4.5k) | lifecycle + state I/O + thin dialog-launcher handlers; utility scripts, region export, project-prediction-summary, analysis-view launchers, import/export, binary-mode manager, review sampling + menu factory now extracted |
 | `ClassificationPanel.java` | ~1.76k (was ~1.9k) | `doTrain()` cross-image pooling + batch apply → `TrainingOrchestrator`; pure feature-mapping/data-pooling already extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
@@ -379,12 +388,12 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   `trainAndPredict` call, classifier-state save and FX completion stay inline (diminishing returns to
   extract further; tightly bound to the panel's controls and the JavaFX lifecycle)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
-  (in progress, ~4.5k → ~1.9k so far: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16),
+  (in progress, ~4.5k → ~1.76k so far: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16),
   read-only **analysis-view launchers** → `AnalysisViews` (stage 17), **import/export** → `ImportExport`
-  (stage 18), **binary mode** → `BinaryClassifierManager` (stage 19), and review **sampling core** →
-  `ReviewSampling` (stage 20) extracted; remaining: the review-mode FX orchestration + `lastSampled*` glue
-  (woven into `handleImageChange`/panel — left until review/queue test scaffolding exists), image-state-sync
-  (`handleImageChange`), `showConfusions`/reset, and `MenuItemFactory`)
+  (stage 18), **binary mode** → `BinaryClassifierManager` (stage 19), review **sampling core** →
+  `ReviewSampling` (stage 20), and **menu construction** → `MenuItemFactory` (stage 21) extracted; remaining:
+  the review-mode FX orchestration + `lastSampled*` glue (woven into `handleImageChange`/panel — left until
+  review/queue test scaffolding exists), image-state-sync (`handleImageChange`), and `showConfusions`/reset)
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
   [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), and the
