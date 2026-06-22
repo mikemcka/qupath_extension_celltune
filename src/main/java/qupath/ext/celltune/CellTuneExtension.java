@@ -1877,21 +1877,6 @@ public class CellTuneExtension implements QuPathExtension {
         return reviewed;
     }
 
-    private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
-                                              List<String> targetFeatureNames) {
-        var sourceByName = new java.util.HashMap<String, Integer>();
-        for (int i = 0; i < sourceFeatureNames.size(); i++) {
-            sourceByName.put(sourceFeatureNames.get(i).strip().toLowerCase(java.util.Locale.ROOT), i);
-        }
-
-        int[] map = new int[targetFeatureNames.size()];
-        for (int i = 0; i < targetFeatureNames.size(); i++) {
-            String key = targetFeatureNames.get(i).strip().toLowerCase(java.util.Locale.ROOT);
-            map[i] = sourceByName.getOrDefault(key, -1);
-        }
-        return map;
-    }
-
     /**
      * Collect ground-truth labels from classified point annotations in a hierarchy.
      * Works with any image's hierarchy — used for both the current image and other

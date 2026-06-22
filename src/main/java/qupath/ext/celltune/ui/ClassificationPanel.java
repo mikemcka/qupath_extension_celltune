@@ -6,6 +6,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.classifier.FeatureMappingService;
 import qupath.ext.celltune.classifier.FeaturePruner;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.ResamplingStrategy;
@@ -779,7 +780,8 @@ public class ClassificationPanel extends VBox {
                     if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
                     if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
 
-                    int[] featureMap = buildFeatureIndexMap(importedFeatureNamesSnapshot, finalFeatureNames);
+                    int[] featureMap = FeatureMappingService.buildFeatureIndexMap(
+                            importedFeatureNamesSnapshot, finalFeatureNames);
                     int mappedFeatureCount = 0;
                     for (int idx : featureMap) {
                         if (idx >= 0) mappedFeatureCount++;
@@ -792,14 +794,7 @@ public class ClassificationPanel extends VBox {
                             float[] src = row.features();
                             if (src == null) continue;
 
-                            float[] aligned = new float[finalFeatureNames.size()];
-                            for (int f = 0; f < aligned.length; f++) {
-                                int srcIdx = featureMap[f];
-                                if (srcIdx >= 0 && srcIdx < src.length) {
-                                    float val = src[srcIdx];
-                                    aligned[f] = Float.isFinite(val) ? val : 0f;
-                                }
-                            }
+                            float[] aligned = FeatureMappingService.alignRow(src, featureMap);
 
                             supplementaryRows.add(aligned);
                             supplementaryLabels.add(row.label());
@@ -1936,20 +1931,5 @@ public class ClassificationPanel extends VBox {
         }
 
         return reviewed;
-    }
-
-    private static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
-                                              List<String> targetFeatureNames) {
-        Map<String, Integer> sourceByName = new HashMap<>();
-        for (int i = 0; i < sourceFeatureNames.size(); i++) {
-            sourceByName.put(sourceFeatureNames.get(i).strip().toLowerCase(Locale.ROOT), i);
-        }
-
-        int[] map = new int[targetFeatureNames.size()];
-        for (int i = 0; i < targetFeatureNames.size(); i++) {
-            String key = targetFeatureNames.get(i).strip().toLowerCase(Locale.ROOT);
-            map[i] = sourceByName.getOrDefault(key, -1);
-        }
-        return map;
     }
 }
