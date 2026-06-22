@@ -8,10 +8,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
-import javafx.scene.control.Menu;
-import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
-import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
@@ -652,143 +649,18 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
     }
 
     private void addMenuItems(QuPathGUI qupath) {
-        var menu = qupath.getMenu("Extensions>" + EXTENSION_NAME, true);
-
-        MenuItem projectSummaryItem = new MenuItem(resources.getString("menu.prediction.summary"));
-        projectSummaryItem.setOnAction(e -> showProjectPredictionSummary(qupath));
-        projectSummaryItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem intensityHeatmapItem = new MenuItem(resources.getString("menu.intensity.heatmaps"));
-        intensityHeatmapItem.setOnAction(e -> showIntensityHeatmaps(qupath));
-        intensityHeatmapItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem pixelPrescreenItem = new MenuItem(resources.getString("menu.pixel.prescreen"));
-        pixelPrescreenItem.setOnAction(e -> showImagePixelPrescreen(qupath));
-        pixelPrescreenItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem scatterPlotItem = new MenuItem("Scatter Plots and Clustering...");
-        scatterPlotItem.setOnAction(e -> showScatterPlot(qupath));
-        scatterPlotItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem exportItem = new MenuItem(resources.getString("menu.export.short"));
-        exportItem.setOnAction(e -> exportCellTable(qupath));
-        exportItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem importMarkersItem = new MenuItem(resources.getString("menu.import.markers.short"));
-        importMarkersItem.setOnAction(e -> importMarkerTable(qupath));
-        importMarkersItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem exportGtItem = new MenuItem(resources.getString("menu.export.groundtruth.short"));
-        exportGtItem.setOnAction(e -> exportGroundTruth(qupath));
-        exportGtItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem importGtItem = new MenuItem(resources.getString("menu.import.groundtruth.short"));
-        importGtItem.setOnAction(e -> importGroundTruth(qupath));
-        importGtItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem exportBinaryGroundTruthItem = new MenuItem(resources.getString("menu.export.binary.groundtruth.short"));
-        exportBinaryGroundTruthItem.setOnAction(e -> exportActiveBinaryGroundTruth(qupath));
-        exportBinaryGroundTruthItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem importBinaryGroundTruthItem = new MenuItem(resources.getString("menu.import.binary.groundtruth.short"));
-        importBinaryGroundTruthItem.setOnAction(e -> importActiveBinaryGroundTruth(qupath));
-        importBinaryGroundTruthItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem featuresItem = new MenuItem(resources.getString("menu.features"));
-        featuresItem.setOnAction(e -> showFeatureSelection(qupath));
-        featuresItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem normalizeItem = new MenuItem("Normalise Features");
-        normalizeItem.setOnAction(e -> showNormalization(qupath));
-        normalizeItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem binaryItem = new MenuItem("Binary Classifiers...");
-        binaryItem.setOnAction(e -> showBinaryClassifiers(qupath));
-        binaryItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem compositeItem = new MenuItem("Composite Classification...");
-        compositeItem.setOnAction(e -> showCompositeClassification(qupath));
-        compositeItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem classControlItem = new MenuItem("Class Control...");
-        classControlItem.setOnAction(e -> showClassControl(qupath));
-        classControlItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem distancesItem = new MenuItem("Generate Distance Measurements...");
-        distancesItem.setOnAction(e -> showDistanceMeasurements(qupath));
-        distancesItem.disableProperty().bind(enableExtensionProperty.not());
-
-        // Group the export/import actions into two submenus to keep the
-        // top-level dropdown compact.
-        Menu exportMenu = new Menu(resources.getString("menu.group.export"));
-        exportMenu.disableProperty().bind(enableExtensionProperty.not());
-        exportMenu.getItems().addAll(exportItem, exportGtItem, exportBinaryGroundTruthItem);
-
-        Menu importMenu = new Menu(resources.getString("menu.group.import"));
-        importMenu.disableProperty().bind(enableExtensionProperty.not());
-        importMenu.getItems().addAll(importMarkersItem, importGtItem, importBinaryGroundTruthItem);
-
-        // Utility scripts: ad-hoc helpers commonly reused across projects.
-        MenuItem filterCellsItem = new MenuItem(resources.getString("menu.utility.filter.cells"));
-        filterCellsItem.setOnAction(e -> UtilityScripts.filterCellsBySizeAndCircularity(qupath));
-        filterCellsItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem resolveHierarchyItem = new MenuItem(resources.getString("menu.utility.resolve.hierarchy"));
-        resolveHierarchyItem.setOnAction(e -> UtilityScripts.resolveHierarchy(qupath));
-        resolveHierarchyItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem lockAnnotationsItem = new MenuItem(resources.getString("menu.utility.lock.annotations"));
-        lockAnnotationsItem.setOnAction(e -> UtilityScripts.lockAllAnnotations(qupath));
-        lockAnnotationsItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem deleteMeasurementsItem = new MenuItem(resources.getString("menu.utility.delete.measurements"));
-        deleteMeasurementsItem.setOnAction(e -> UtilityScripts.deleteMeasurementsByKeyword(qupath));
-        deleteMeasurementsItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem resetProjectItem = new MenuItem(resources.getString("menu.utility.reset.project"));
-        resetProjectItem.setOnAction(e -> showResetProjectState(qupath));
-        resetProjectItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem importGeoJsonItem = new MenuItem(resources.getString("menu.utility.import.geojson"));
-        importGeoJsonItem.setOnAction(e -> UtilityScripts.importGeoJsonObjects(qupath));
-        importGeoJsonItem.disableProperty().bind(enableExtensionProperty.not());
-
-        MenuItem exportRegionsItem = new MenuItem(resources.getString("menu.utility.export.regions"));
-        exportRegionsItem.setOnAction(e -> AnnotationRegionExporter.exportAnnotationRegions(qupath));
-        exportRegionsItem.disableProperty().bind(enableExtensionProperty.not());
-
-        Menu utilityScriptsMenu = new Menu(resources.getString("menu.group.utilities"));
-        utilityScriptsMenu.disableProperty().bind(enableExtensionProperty.not());
-        utilityScriptsMenu.getItems().addAll(filterCellsItem, resolveHierarchyItem, lockAnnotationsItem, importGeoJsonItem, exportRegionsItem, deleteMeasurementsItem, new SeparatorMenuItem(), resetProjectItem);
-        menu.getItems().addAll(
-                binaryItem,
-                compositeItem,
-                classControlItem,
-                featuresItem,
-                normalizeItem,
-                new SeparatorMenuItem(),
-                projectSummaryItem,
-                intensityHeatmapItem,
-                pixelPrescreenItem,
-                scatterPlotItem,
-                distancesItem,
-                new SeparatorMenuItem(),
-                exportMenu,
-                importMenu,
-                new SeparatorMenuItem(),
-                utilityScriptsMenu
-        );
+        MenuItemFactory.addMenuItems(qupath, this, enableExtensionProperty);
     }
 
-    private void showDistanceMeasurements(QuPathGUI qupath) {
+    void showDistanceMeasurements(QuPathGUI qupath) {
         AnalysisViews.showDistanceMeasurements(qupath);
     }
 
-    private void showIntensityHeatmaps(QuPathGUI qupath) {
+    void showIntensityHeatmaps(QuPathGUI qupath) {
         AnalysisViews.showIntensityHeatmaps(qupath);
     }
 
-    private void showScatterPlot(QuPathGUI qupath) {
+    void showScatterPlot(QuPathGUI qupath) {
         AnalysisViews.showScatterPlot(qupath, predAll, featureNormalizer, () -> showClassControl(qupath));
     }
 
@@ -806,7 +678,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
      * also clearing CellTune label points and cell classifications from every
      * image. Guarded by a typed "RESET" confirmation.
      */
-    private void showResetProjectState(QuPathGUI qupath) {
+    void showResetProjectState(QuPathGUI qupath) {
         var project = qupath.getProject();
         if (project == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, resources.getString("classify.no_project"));
@@ -1014,11 +886,11 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
      * step at the start of a project. Reads run sequentially on a background
      * thread to keep memory bounded and the UI responsive.
      */
-    private void showImagePixelPrescreen(QuPathGUI qupath) {
+    void showImagePixelPrescreen(QuPathGUI qupath) {
         AnalysisViews.showImagePixelPrescreen(qupath);
     }
 
-    private void showProjectPredictionSummary(QuPathGUI qupath) {
+    void showProjectPredictionSummary(QuPathGUI qupath) {
         // Ensure latest in-memory predictions for current image are included in the summary.
         persistCurrentImagePredictions(qupath);
         ProjectPredictionSummary.show(qupath, predAll);
@@ -1596,11 +1468,11 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         view.show();
     }
 
-    private void exportCellTable(QuPathGUI qupath) {
+    void exportCellTable(QuPathGUI qupath) {
         ImportExport.exportCellTable(qupath);
     }
 
-    private void importMarkerTable(QuPathGUI qupath) {
+    void importMarkerTable(QuPathGUI qupath) {
         CellTypeTable imported = ImportExport.importMarkerTable(qupath);
         if (imported != null) {
             cellTypeTable = imported;
@@ -1610,12 +1482,12 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
 
     // ── Ground truth export/import ─────────────────────────────
 
-    private void exportGroundTruth(QuPathGUI qupath) {
+    void exportGroundTruth(QuPathGUI qupath) {
         ImportExport.exportGroundTruth(qupath, labelStore, activeBinaryMarker,
                 importedTrainingRows, importedTrainingFeatureNames, featureNormalizer);
     }
 
-    private void importGroundTruth(QuPathGUI qupath) {
+    void importGroundTruth(QuPathGUI qupath) {
         var result = ImportExport.importGroundTruth(qupath, labelStore,
                 importedTrainingRows, importedTrainingFeatureNames, activeBinaryMarker);
         if (result != null) {
@@ -1644,19 +1516,19 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         return true;
     }
 
-    private void exportActiveBinaryGroundTruth(QuPathGUI qupath) {
+    void exportActiveBinaryGroundTruth(QuPathGUI qupath) {
         if (!ensureActiveBinaryMarker()) return;
         exportGroundTruth(qupath);
     }
 
-    private void importActiveBinaryGroundTruth(QuPathGUI qupath) {
+    void importActiveBinaryGroundTruth(QuPathGUI qupath) {
         if (!ensureActiveBinaryMarker()) return;
         importGroundTruth(qupath);
     }
 
     // ── Feature selection ──────────────────────────────────────────────────────
 
-    private void showFeatureSelection(QuPathGUI qupath) {
+    void showFeatureSelection(QuPathGUI qupath) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -1714,7 +1586,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
 
     // ── Normalization ──────────────────────────────────────────────────────────
 
-    private void showNormalization(QuPathGUI qupath) {
+    void showNormalization(QuPathGUI qupath) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -1763,7 +1635,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
      * Show the Binary Classifiers management dialog.
      * Loads the registry from disk, wires callbacks, and shows the panel in a modal stage.
      */
-    private void showBinaryClassifiers(QuPathGUI qupath) {
+    void showBinaryClassifiers(QuPathGUI qupath) {
         binaryManager.showBinaryClassifiers(qupath);
     }
 
@@ -1800,14 +1672,14 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         classificationPanel.setApplyToImagesCount(binaryTargetImages.size());
     }
 
-    private void showCompositeClassification(QuPathGUI qupath) {
+    void showCompositeClassification(QuPathGUI qupath) {
         new CompositeClassificationDialog(qupath).showAndWait();
     }
 
     /** Singleton dialog instance — reuse across menu invocations. */
     private ClassControlDialog classControlDialog;
 
-    private void showClassControl(QuPathGUI qupath) {
+    void showClassControl(QuPathGUI qupath) {
         if (classControlDialog == null) {
             classControlDialog = new ClassControlDialog(
                     qupath,
