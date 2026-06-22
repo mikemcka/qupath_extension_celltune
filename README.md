@@ -125,6 +125,7 @@ Optional per-feature transforms can be applied before training and inference:
 ## TODO / Future Exploration
 - tab pfn model wrapper
 - chatbot integration through mcp
+- **Swap the k-means clustering library to relax licensing** — replace Smile's k-means (used by the cell scatter plot / clustering) with an Apache-2.0–licensed implementation such as [Apache Spark MLlib](https://spark.apache.org/mllib/) (Apache-2.0), to remove Smile's GPL-3.0 constraint on the bundled JAR. Note: Smile also supplies the scatter plot's **PCA** and **UMAP**, so fully dropping the GPL dependency would mean replacing those too; and Spark is a heavyweight dependency, so a lighter Apache-2.0 k-means may be preferable.
 
 ## License
 
