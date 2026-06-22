@@ -107,8 +107,21 @@ manual QuPath QA where it touched interactive paths):
     calls `syncPanelState()` in one place — so `ImportExport` has no session-state side effects. The only
     behaviour delta is that `syncPanelState()` now runs just after the import's save/notify instead of just
     before (end state identical). `ensureActiveBinaryMarker` and the two binary GT wrappers stay in the
-    extension. `CellTuneExtension` ~2.85k → ~2.21k; 16 now-dead imports dropped. **Needs a manual QuPath
-    smoke test** of cell-table export, GT export/import (spatial + training), and marker-table import.
+    extension. `CellTuneExtension` ~2.85k → ~2.21k; 16 now-dead imports dropped (PR #20). _QA'd: export/
+    import flows + the new Clear-imported-rows button._
+19. **`BinaryClassifierManager`** (this branch) — fourth slice, and the first **stateful** one. Binary
+    mode (`enterBinaryMode`/`exitBinaryMode`, `showBinaryClassifiers`, and `scrubBinaryPerImageLabels`)
+    plus its private state (the `preBinary*` multi-class snapshot and the marker `binaryRegistry`) moved
+    into root-package `BinaryClassifierManager`. The shared session fields it must read/write (label
+    store, classifier, imported rows/feature-names, active marker + class names) are reached through a
+    `BinaryClassifierManager.Host` interface the extension implements with plain accessors, plus
+    `syncPanelState()` / `selectAndExpandDockPanel()`; so those fields stay where the rest of the
+    extension reads them. Lifted verbatim (incl. the contamination self-heal + snapshot-only-on-transition
+    logic). `resetInMemoryState` now calls `binaryManager.reset()`. `applyBinaryClassifierToImages` and
+    `ensureActiveBinaryMarker` stay in the extension (shared `binaryTargetImages` / used by the import-export
+    wrappers). `CellTuneExtension` ~2.21k → **~2.0k** (from ~4.5k originally); two now-dead imports dropped.
+    **Needs careful manual QuPath QA** — enter/switch/exit binary mode, train + persist a binary classifier,
+    the self-heal on contaminated stores, and that multi-class state is correctly restored on exit.
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
 QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
@@ -259,7 +272,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~2.2k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary, analysis-view launchers + import/export now extracted |
+| `CellTuneExtension.java` | ~2.0k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export, project-prediction-summary, analysis-view launchers, import/export + binary-mode manager now extracted |
 | `ClassificationPanel.java` | ~1.76k (was ~1.9k) | `doTrain()` cross-image pooling + batch apply → `TrainingOrchestrator`; pure feature-mapping/data-pooling already extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
@@ -352,10 +365,11 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   `trainAndPredict` call, classifier-state save and FX completion stay inline (diminishing returns to
   extract further; tightly bound to the panel's controls and the JavaFX lifecycle)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
-  (in progress: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16), the read-only
-  **analysis-view launchers** → `AnalysisViews` (stage 17), and **import/export** → `ImportExport`
-  (stage 18) extracted; the stateful managers — binary-mode, review-mode, image-state-sync — `showConfusions`/
-  reset, and `MenuItemFactory` remain)
+  (in progress, ~4.5k → ~2.0k so far: **Project Prediction Summary** → `ProjectPredictionSummary` (stage 16),
+  read-only **analysis-view launchers** → `AnalysisViews` (stage 17), **import/export** → `ImportExport`
+  (stage 18), and **binary mode** → `BinaryClassifierManager` (stage 19) extracted; the remaining stateful
+  pieces — review-mode, image-state-sync (`handleImageChange`), `showConfusions`/reset, and `MenuItemFactory`
+  — remain)
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
   [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), and the

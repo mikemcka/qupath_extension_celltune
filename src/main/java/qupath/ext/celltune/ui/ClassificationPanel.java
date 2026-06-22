@@ -752,24 +752,32 @@ public class ClassificationPanel extends VBox {
 
                 // Save classifier state
                 if (projectRef != null) {
-                    var state = classifier.toClassifierState("CellTune");
-                    ProjectStateManager.saveState(projectRef, state.getName(),
-                            storeCopy, state.getFeatureNames(), state.getClassNames(),
-                            state.getXgboostBytes(), state.getLightgbmBytes(),
-                            state.getRfModel1Bytes(), state.getRfModel2Bytes(),
-                            state.getModel1Type(), state.getModel2Type(),
-                            importedFeatureNamesSnapshot, importedRowsSnapshot);
+                    // In binary mode the trained binary classifier is persisted separately
+                    // (the onClassifierChanged callback -> saveBinaryState), and its imported
+                    // rows live in binary-imported/<marker>.json. Writing the multi-class
+                    // classifier-state.json here would pollute it with the binary classifier's
+                    // labels / imported rows / model (which then leak back into multi-class on
+                    // the next image switch), so only save it in multi-class mode.
+                    if (scope == null) {
+                        var state = classifier.toClassifierState("CellTune");
+                        ProjectStateManager.saveState(projectRef, state.getName(),
+                                storeCopy, state.getFeatureNames(), state.getClassNames(),
+                                state.getXgboostBytes(), state.getLightgbmBytes(),
+                                state.getRfModel1Bytes(), state.getRfModel2Bytes(),
+                                state.getModel1Type(), state.getModel2Type(),
+                                importedFeatureNamesSnapshot, importedRowsSnapshot);
 
-                    // Persist per-model train/val metrics so the "Training Metrics" view
-                    // and confusion matrix are available after reopening the project.
-                    try {
-                        ProjectStateManager.saveTrainingMetrics(projectRef,
-                                classifier.getModel1TrainMetrics(),
-                                classifier.getModel1ValMetrics(),
-                                classifier.getModel2TrainMetrics(),
-                                classifier.getModel2ValMetrics());
-                    } catch (Exception ex) {
-                        System.err.println("[CellTune] Failed to persist training metrics: " + ex.getMessage());
+                        // Persist per-model train/val metrics so the "Training Metrics" view
+                        // and confusion matrix are available after reopening the project.
+                        try {
+                            ProjectStateManager.saveTrainingMetrics(projectRef,
+                                    classifier.getModel1TrainMetrics(),
+                                    classifier.getModel1ValMetrics(),
+                                    classifier.getModel2TrainMetrics(),
+                                    classifier.getModel2ValMetrics());
+                        } catch (Exception ex) {
+                            System.err.println("[CellTune] Failed to persist training metrics: " + ex.getMessage());
+                        }
                     }
 
                     // Save per-image labels for cross-image pooling
