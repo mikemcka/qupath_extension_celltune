@@ -2,14 +2,8 @@ package qupath.ext.celltune.io;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.classifier.CompositeClassificationRule;
 import qupath.ext.celltune.classifier.ModelType;
 import qupath.ext.celltune.classifier.TrainingMetrics;
 import qupath.ext.celltune.io.GroundTruthIO;
@@ -26,7 +20,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -47,10 +40,6 @@ public class ProjectStateManager {
     private static final Logger logger = LoggerFactory.getLogger(ProjectStateManager.class);
     private static final String CELLTUNE_DIR = "celltune";
     private static final String STATE_FILENAME = "classifier-state.json";
-    private static final String COMPOSITE_RULES_FILENAME = "composite-rules.json";
-    private static final int COMPOSITE_RULES_SCHEMA_VERSION = 1;
-    private static final String MARKER_TABLE_FILENAME = "marker-table.json";
-    private static final int MARKER_TABLE_SCHEMA_VERSION = 1;
     // Package-private so the focused persistence helpers in this package
     // (PredictionPersistence, …) share one identically-configured Gson instance.
     static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -847,393 +836,21 @@ public class ProjectStateManager {
         return BinaryClassifierPersistence.loadBinaryImportedTrainingData(project, sanitizedMarkerName);
     }
 
-    // -- Composite rule persistence ---------------------------------------------
-
-    /**
-     * Save named composite rules to {@code <project>/celltune/composite-rules.json}.
-     *
-     * @param project the QuPath project (null-safe - logs warning and returns)
-     * @param rules named rules to persist
-     * @throws IOException if writing fails
-     */
-    public static void saveCompositeRules(Project<?> project,
-                                          List<CompositeClassificationRule> rules) throws IOException {
-        if (project == null) {
-            logger.warn("saveCompositeRules: project is null - skipping save");
-            return;
-        }
-
-        Path dir = getCellTuneDir(project);
-        Path path = dir.resolve(COMPOSITE_RULES_FILENAME);
-
-        JsonObject root = new JsonObject();
-        root.addProperty("version", COMPOSITE_RULES_SCHEMA_VERSION);
-
-        JsonArray rawRules = new JsonArray();
-        LinkedHashSet<String> seenNames = new LinkedHashSet<>();
-
-        List<CompositeClassificationRule> safeRules = rules != null ? rules : List.of();
-        for (CompositeClassificationRule rule : safeRules) {
-            if (rule == null) {
-                logger.warn("saveCompositeRules: skipping null rule entry");
-                continue;
-            }
-
-            String dedupeKey = rule.name().toLowerCase();
-            if (!seenNames.add(dedupeKey)) {
-                logger.warn("saveCompositeRules: duplicate rule name '{}' skipped", rule.name());
-                continue;
-            }
-
-            JsonObject rawRule = new JsonObject();
-            rawRule.addProperty("name", rule.name());
-            rawRule.addProperty("expression", rule.expression());
-
-            JsonArray rawConditions = new JsonArray();
-            for (CompositeClassificationRule.MarkerCondition condition : rule.conditions()) {
-                JsonObject rawCondition = new JsonObject();
-                rawCondition.addProperty("marker", condition.markerName());
-                rawCondition.addProperty("polarity", String.valueOf(condition.polarity().symbol()));
-                rawConditions.add(rawCondition);
-            }
-            rawRule.add("conditions", rawConditions);
-            rawRules.add(rawRule);
-        }
-
-        root.add("rules", rawRules);
-        Files.writeString(path, GSON.toJson(root), StandardCharsets.UTF_8);
-        logger.info("Saved {} composite rule(s) to {}", rawRules.size(), path);
-    }
-
-    /**
-     * Load named composite rules from {@code <project>/celltune/composite-rules.json}.
-     * Invalid rule rows are skipped with warnings; valid rows continue loading.
-     *
-     * @param project the QuPath project (null-safe - returns empty list)
-     * @return mutable list of valid composite rules
-     * @throws IOException if file reading fails
-     */
-    public static List<CompositeClassificationRule> loadCompositeRules(Project<?> project) throws IOException {
-        if (project == null) {
-            return new ArrayList<>();
-        }
-
-        Path dir = getCellTuneDir(project);
-        Path path = dir.resolve(COMPOSITE_RULES_FILENAME);
-        if (!Files.exists(path)) {
-            return new ArrayList<>();
-        }
-
-        String json = Files.readString(path, StandardCharsets.UTF_8);
-        JsonElement root;
-        try {
-            root = JsonParser.parseString(json);
-        } catch (JsonSyntaxException ex) {
-            logger.warn("loadCompositeRules: invalid JSON in {}: {}", path, ex.getMessage());
-            return new ArrayList<>();
-        }
-
-        JsonArray rawRules = null;
-        if (root.isJsonObject()) {
-            JsonObject rootObj = root.getAsJsonObject();
-            JsonElement rawVersion = rootObj.get("version");
-            if (rawVersion != null && rawVersion.isJsonPrimitive() && rawVersion.getAsJsonPrimitive().isNumber()) {
-                int version = rawVersion.getAsInt();
-                if (version != COMPOSITE_RULES_SCHEMA_VERSION) {
-                    logger.warn("loadCompositeRules: schema version {} in {} (expected {})", version, path,
-                            COMPOSITE_RULES_SCHEMA_VERSION);
-                }
-            }
-            JsonElement rulesElement = rootObj.get("rules");
-            if (rulesElement != null && rulesElement.isJsonArray()) {
-                rawRules = rulesElement.getAsJsonArray();
-            }
-        } else if (root.isJsonArray()) {
-            // Legacy fallback: top-level array of rule objects
-            rawRules = root.getAsJsonArray();
-        }
-
-        if (rawRules == null) {
-            return new ArrayList<>();
-        }
-
-        List<CompositeClassificationRule> loaded = new ArrayList<>();
-        LinkedHashSet<String> seenNames = new LinkedHashSet<>();
-
-        for (JsonElement rawRuleElement : rawRules) {
-            if (!rawRuleElement.isJsonObject()) {
-                logger.warn("loadCompositeRules: skipping non-object rule entry");
-                continue;
-            }
-
-            JsonObject rawRule = rawRuleElement.getAsJsonObject();
-            String name = getOptionalString(rawRule, "name");
-            if (name == null || name.isBlank()) {
-                logger.warn("loadCompositeRules: skipping rule with missing name");
-                continue;
-            }
-
-            try {
-                CompositeClassificationRule parsedRule;
-
-                String expression = getOptionalString(rawRule, "expression");
-                if (expression != null && !expression.isBlank()) {
-                    parsedRule = CompositeClassificationRule.parse(name, expression);
-                } else {
-                    JsonElement rawConditionsElement = rawRule.get("conditions");
-                    if (rawConditionsElement == null || !rawConditionsElement.isJsonArray()) {
-                        logger.warn("loadCompositeRules: rule '{}' missing expression/conditions - skipped", name);
-                        continue;
-                    }
-                    List<CompositeClassificationRule.MarkerCondition> conditions =
-                            parseRuleConditions(rawConditionsElement.getAsJsonArray());
-                    parsedRule = CompositeClassificationRule.of(name, conditions);
-                }
-
-                String dedupeKey = parsedRule.name().toLowerCase();
-                if (!seenNames.add(dedupeKey)) {
-                    logger.warn("loadCompositeRules: duplicate rule name '{}' skipped", parsedRule.name());
-                    continue;
-                }
-                loaded.add(parsedRule);
-            } catch (IllegalArgumentException ex) {
-                logger.warn("loadCompositeRules: skipping malformed rule '{}': {}", name, ex.getMessage());
-            }
-        }
-
-        logger.info("Loaded {} composite rule(s) from {}", loaded.size(), path);
-        return loaded;
-    }
-
-    private static String getOptionalString(JsonObject obj, String key) {
-        JsonElement raw = obj.get(key);
-        if (raw == null || raw.isJsonNull() || !raw.isJsonPrimitive() || !raw.getAsJsonPrimitive().isString()) {
-            return null;
-        }
-        return raw.getAsString();
-    }
-
-    private static List<CompositeClassificationRule.MarkerCondition> parseRuleConditions(JsonArray rawConditions) {
-        List<CompositeClassificationRule.MarkerCondition> conditions = new ArrayList<>();
-        for (JsonElement rawConditionElement : rawConditions) {
-            if (!rawConditionElement.isJsonObject()) {
-                throw new IllegalArgumentException("Rule condition entry is not an object");
-            }
-
-            JsonObject rawCondition = rawConditionElement.getAsJsonObject();
-            String marker = getOptionalString(rawCondition, "marker");
-            String polarityToken = getOptionalString(rawCondition, "polarity");
-            if (marker == null || marker.isBlank() || polarityToken == null || polarityToken.isBlank()) {
-                throw new IllegalArgumentException("Rule condition missing marker or polarity");
-            }
-
-            CompositeClassificationRule.Polarity polarity = CompositeClassificationRule.Polarity.fromToken(polarityToken);
-            conditions.add(CompositeClassificationRule.MarkerCondition.of(marker, polarity));
-        }
-        return conditions;
-    }
-    // -- Composite classifier config persistence --------------------------------
-
-    /**
-     * Save the composite classifier selection (which markers are checked) to
-     * {@code <project>/celltune/composite-config.json}.
-     *
-     * @param project         the QuPath project (null-safe - logs warning and returns)
-     * @param selectedMarkers the marker names to persist
-     * @throws IOException if writing fails
-     */
-    public static void saveCompositeConfig(Project<?> project,
-                                           List<String> selectedMarkers) throws IOException {
-        if (project == null) {
-            logger.warn("saveCompositeConfig: project is null - skipping save");
-            return;
-        }
-        Path dir  = getCellTuneDir(project);
-        Path path = dir.resolve("composite-config.json");
-        String json = GSON.toJson(Map.of("selectedMarkers",
-                selectedMarkers != null ? selectedMarkers : List.of()));
-        Files.writeString(path, json, StandardCharsets.UTF_8);
-        int count = selectedMarkers != null ? selectedMarkers.size() : 0;
-        logger.info("Saved composite config ({} markers) to {}", count, path);
-    }
-
-    /**
-     * Load the composite classifier selection from
-     * {@code <project>/celltune/composite-config.json}.
-     *
-     * @param project the QuPath project (null-safe - returns empty list)
-     * @return mutable list of selected marker names, never null
-     * @throws IOException if reading or parsing fails
-     */
-    public static List<String> loadCompositeConfig(Project<?> project) throws IOException {
-        if (project == null) {
-            return new ArrayList<>();
-        }
-        Path dir  = getCellTuneDir(project);
-        Path path = dir.resolve("composite-config.json");
-        if (!Files.exists(path)) return new ArrayList<>();
-        String json = Files.readString(path, StandardCharsets.UTF_8);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> map = GSON.fromJson(json, Map.class);
-        if (map == null) return new ArrayList<>();
-        Object raw = map.get("selectedMarkers");
-        if (raw instanceof List<?> rawList) {
-            List<String> result = new ArrayList<>();
-            for (Object item : rawList) {
-                if (item instanceof String s) result.add(s);
-            }
-            int count = result.size();
-            logger.info("Loaded composite config: {} markers from {}", count, path);
-            return result;
-        }
-        return new ArrayList<>();
-    }
-
     // -- Marker table persistence -----------------------------------------------
 
     /**
      * Save the imported marker table to {@code <project>/celltune/marker-table.json}
      * so it survives QuPath restarts and no longer has to be re-imported.
-     * <p>
-     * Both CSV formats are preserved losslessly: simple tables store their display
-     * markers, rule tables store their primary/secondary/tertiary gating expressions.
-     *
-     * @param project the QuPath project (null-safe - logs warning and returns)
-     * @param table   the marker table to persist (null or empty clears the file)
-     * @throws IOException if writing fails
      */
     public static void saveMarkerTable(Project<?> project, CellTypeTable table) throws IOException {
-        if (project == null) {
-            logger.warn("saveMarkerTable: project is null - skipping save");
-            return;
-        }
-
-        Path dir = getCellTuneDir(project);
-        Path path = dir.resolve(MARKER_TABLE_FILENAME);
-
-        if (table == null || table.isEmpty()) {
-            Files.deleteIfExists(path);
-            logger.info("Cleared marker table at {}", path);
-            return;
-        }
-
-        JsonObject root = new JsonObject();
-        root.addProperty("version", MARKER_TABLE_SCHEMA_VERSION);
-        boolean hasRules = table.hasGatingRules();
-        root.addProperty("hasRules", hasRules);
-
-        JsonArray entries = new JsonArray();
-        for (String cellType : table.getCellTypes()) {
-            JsonObject entry = new JsonObject();
-            entry.addProperty("cellType", cellType);
-            if (hasRules) {
-                String primary = table.getPrimaryExpression(cellType);
-                String secondary = table.getSecondaryMarkers(cellType);
-                String tertiary = table.getTertiaryMarkers(cellType);
-                if (primary != null) entry.addProperty("primary", primary);
-                if (secondary != null) entry.addProperty("secondary", secondary);
-                if (tertiary != null) entry.addProperty("tertiary", tertiary);
-            } else {
-                JsonArray markers = new JsonArray();
-                for (String marker : table.getMarkers(cellType)) {
-                    markers.add(marker);
-                }
-                entry.add("markers", markers);
-            }
-            entries.add(entry);
-        }
-        root.add("entries", entries);
-
-        Files.writeString(path, GSON.toJson(root), StandardCharsets.UTF_8);
-        logger.info("Saved marker table ({} cell types, {} format) to {}",
-                entries.size(), hasRules ? "rule" : "simple", path);
+        MarkerTablePersistence.saveMarkerTable(project, table);
     }
 
     /**
      * Load the persisted marker table from {@code <project>/celltune/marker-table.json}.
-     *
-     * @param project the QuPath project (null-safe - returns null)
-     * @return the reconstructed marker table, or null if no valid file exists
      */
     public static CellTypeTable loadMarkerTable(Project<?> project) {
-        if (project == null) {
-            return null;
-        }
-
-        Path path;
-        try {
-            path = getCellTuneDir(project).resolve(MARKER_TABLE_FILENAME);
-        } catch (IOException ex) {
-            logger.warn("loadMarkerTable: cannot resolve celltune dir: {}", ex.getMessage());
-            return null;
-        }
-        if (!Files.exists(path)) {
-            return null;
-        }
-
-        JsonObject root;
-        try {
-            String json = Files.readString(path, StandardCharsets.UTF_8);
-            JsonElement parsed = JsonParser.parseString(json);
-            if (!parsed.isJsonObject()) {
-                logger.warn("loadMarkerTable: unexpected JSON shape in {}", path);
-                return null;
-            }
-            root = parsed.getAsJsonObject();
-        } catch (IOException | JsonSyntaxException ex) {
-            logger.warn("loadMarkerTable: failed to read {}: {}", path, ex.getMessage());
-            return null;
-        }
-
-        JsonElement rawVersion = root.get("version");
-        if (rawVersion != null && rawVersion.isJsonPrimitive() && rawVersion.getAsJsonPrimitive().isNumber()
-                && rawVersion.getAsInt() != MARKER_TABLE_SCHEMA_VERSION) {
-            logger.warn("loadMarkerTable: schema version {} in {} (expected {})",
-                    rawVersion.getAsInt(), path, MARKER_TABLE_SCHEMA_VERSION);
-        }
-
-        boolean hasRules = root.has("hasRules") && root.get("hasRules").isJsonPrimitive()
-                && root.get("hasRules").getAsBoolean();
-
-        JsonElement rawEntries = root.get("entries");
-        if (rawEntries == null || !rawEntries.isJsonArray()) {
-            return null;
-        }
-
-        CellTypeTable table = new CellTypeTable();
-        for (JsonElement rawEntry : rawEntries.getAsJsonArray()) {
-            if (!rawEntry.isJsonObject()) continue;
-            JsonObject entry = rawEntry.getAsJsonObject();
-            String cellType = getOptionalString(entry, "cellType");
-            if (cellType == null || cellType.isBlank()) {
-                logger.warn("loadMarkerTable: skipping entry with missing cellType");
-                continue;
-            }
-            if (hasRules) {
-                table.putRule(cellType,
-                        getOptionalString(entry, "primary"),
-                        getOptionalString(entry, "secondary"),
-                        getOptionalString(entry, "tertiary"));
-            } else {
-                List<String> markers = new ArrayList<>();
-                JsonElement rawMarkers = entry.get("markers");
-                if (rawMarkers != null && rawMarkers.isJsonArray()) {
-                    for (JsonElement m : rawMarkers.getAsJsonArray()) {
-                        if (m.isJsonPrimitive() && m.getAsJsonPrimitive().isString()) {
-                            markers.add(m.getAsString());
-                        }
-                    }
-                }
-                table.put(cellType, markers);
-            }
-        }
-
-        if (table.isEmpty()) {
-            return null;
-        }
-        logger.info("Loaded marker table ({} cell types, {} format) from {}",
-                table.size(), hasRules ? "rule" : "simple", path);
-        return table;
+        return MarkerTablePersistence.loadMarkerTable(project);
     }
 }
 
