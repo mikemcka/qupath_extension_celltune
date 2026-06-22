@@ -79,6 +79,15 @@ manual QuPath QA where it touched interactive paths):
     `trainAndPredict` call, classifier-state save and FX completion. `ClassificationPanel` ~1.9k → ~1.76k.
     Mirrors the `ReviewController` → `ImagePrefetcher`/`TileEntryCleaner` precedent.
     _QA'd: train → predict, cross-image pooling, batch apply, project save._
+16. **`ProjectPredictionSummary`** (this branch) — first slice of the `CellTuneExtension` manager split.
+    The whole **Project Prediction Summary** feature (the parallel per-image prediction load behind a
+    progress dialog, cohort anomaly analysis, and `ProjectPredictionSummaryView` launch, plus the
+    `buildPredictionSummaryRow`/`formatClassCounts`/`formatFlagReasons`/`formatHighlightedRareClasses`
+    helpers and the `SummaryInputRow` record) lifted verbatim into root-package
+    `ProjectPredictionSummary` (mirroring `UtilityScripts`/`AnnotationRegionExporter`). The menu handler
+    delegates via a single call — it persists the current image's predictions first, then
+    `ProjectPredictionSummary.show(qupath, predAll)`. `CellTuneExtension` ~3.35k → ~3.12k; three now-dead
+    imports dropped. **Needs a manual QuPath smoke test** of the summary dialog.
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
 QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
@@ -229,7 +238,7 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
 ### 9. Six files exceed 1000 lines — **Medium**
 | File | Lines | God-method |
 |------|-------|-----------|
-| `CellTuneExtension.java` | ~3.4k (was ~4.5k) | lifecycle + state I/O + 16 dialog launchers; utility scripts + region export now extracted |
+| `CellTuneExtension.java` | ~3.1k (was ~4.5k) | lifecycle + state I/O + dialog launchers; utility scripts, region export + project-prediction-summary now extracted |
 | `ClassificationPanel.java` | ~1.76k (was ~1.9k) | `doTrain()` cross-image pooling + batch apply → `TrainingOrchestrator`; pure feature-mapping/data-pooling already extracted |
 | `ScatterPlotView.java` | ~1.6k (was ~2.0k) | `recompute()` ~200 lines; visual layer + math now extracted |
 | `ProjectStateManager.java` | ~0.85k (was ~1.5k) | split into Prediction/Binary/Label/MarkerTable persistence helpers |
@@ -322,6 +331,8 @@ correctness bug, and the unified logic is directly unit-testable without the UI.
   `trainAndPredict` call, classifier-state save and FX completion stay inline (diminishing returns to
   extract further; tightly bound to the panel's controls and the JavaFX lifecycle)
 - `CellTuneExtension` → `BinaryClassifierManager` + `ReviewModeOrchestrator` + `ImageStateSync` + `MenuItemFactory`
+  (in progress: **Project Prediction Summary** extracted to `ProjectPredictionSummary`, stage 16 — more
+  self-contained feature modules to follow before the stateful managers)
 - `ReviewController` → `TileModeStrategy` / `NormalModeStrategy` + `ReviewQueueManager`. Two
   self-contained concerns are **done**: the prefetch lifecycle →
   [ui/ImagePrefetcher.java](src/main/java/qupath/ext/celltune/ui/ImagePrefetcher.java), and the
