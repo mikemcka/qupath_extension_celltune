@@ -26,7 +26,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -577,154 +576,35 @@ public class ProjectStateManager {
     public static Path backupLabels(Project<?> project,
                                     String currentImageName,
                                     LabelStore currentLabels) throws IOException {
-        Path dir = getCellTuneDir(project);
-        String filename = "labels_backup_" + LocalDateTime.now().format(TIMESTAMP_FMT) + ".json";
-        Path outPath = dir.resolve(filename);
-
-        // Collect per-image labels: image -> (cellId -> className).
-        Map<String, Map<String, String>> byImage = new LinkedHashMap<>();
-
-        // Disk-resident per-image labels (other images that aren't currently open).
-        Path labelsDir = dir.resolve(IMAGE_LABELS_DIR);
-        if (Files.isDirectory(labelsDir)) {
-            try (var stream = Files.list(labelsDir)) {
-                for (Path file : (Iterable<Path>) stream::iterator) {
-                    String fname = file.getFileName().toString();
-                    if (!fname.endsWith(".json")) continue;
-                    String imageName = fname.substring(0, fname.length() - ".json".length());
-                    try {
-                        String json = Files.readString(file, StandardCharsets.UTF_8);
-                        @SuppressWarnings("unchecked")
-                        Map<String, String> labels = GSON.fromJson(json, Map.class);
-                        if (labels != null && !labels.isEmpty()) {
-                            byImage.put(imageName, new LinkedHashMap<>(labels));
-                        }
-                    } catch (IOException | JsonSyntaxException e) {
-                        logger.warn("Skipping unreadable label file {}: {}", file, e.getMessage());
-                    }
-                }
-            }
-        }
-
-        // Overlay the current in-memory labels (most up-to-date for the open image).
-        if (currentLabels != null && !currentLabels.getAllLabels().isEmpty()) {
-            String key = currentImageName != null ? currentImageName : "";
-            byImage.put(key, new LinkedHashMap<>(currentLabels.getAllLabels()));
-        }
-
-        // Flatten to a list of records so each entry carries its image name.
-        List<Map<String, String>> records = new ArrayList<>();
-        for (var imgEntry : byImage.entrySet()) {
-            String imageName = imgEntry.getKey().isEmpty() ? null : imgEntry.getKey();
-            for (var lbl : imgEntry.getValue().entrySet()) {
-                Map<String, String> rec = new LinkedHashMap<>();
-                rec.put("cellId", lbl.getKey());
-                rec.put("className", lbl.getValue());
-                rec.put("imageName", imageName);
-                records.add(rec);
-            }
-        }
-
-        Files.writeString(outPath, GSON.toJson(records), StandardCharsets.UTF_8);
-        logger.info("Backed up {} labels across {} image(s) to {}",
-                records.size(), byImage.size(), outPath);
-        return outPath;
+        return LabelPersistence.backupLabels(project, currentImageName, currentLabels);
     }
 
-    // â”€â”€ Per-image label persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    private static final String IMAGE_LABELS_DIR = "image-labels";
+    // ── Per-image label persistence ──────────────────────────────────────────────
 
     /**
      * Save labels for a specific image. Used to persist review and manual labels
      * so they can be pooled into training from other images.
-     *
-     * @param project    the QuPath project
-     * @param imageName  the image name (from ProjectImageEntry.getImageName())
-     * @param labelStore the labels to save
-     * @return path to the saved file
-     * @throws IOException if writing fails
      */
     public static Path saveImageLabels(Project<?> project,
                                        String imageName,
                                        LabelStore labelStore) throws IOException {
-        Path dir = getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
-        Files.createDirectories(dir);
-
-        String safeFileName = sanitiseFileName(imageName) + ".json";
-        Path outPath = dir.resolve(safeFileName);
-
-        String json = GSON.toJson(labelStore.getAllLabels());
-        Files.writeString(outPath, json, StandardCharsets.UTF_8);
-        logger.info("Saved {} labels for image '{}' to {}", labelStore.size(), imageName, outPath);
-        return outPath;
+        return LabelPersistence.saveImageLabels(project, imageName, labelStore);
     }
 
     /**
      * Load labels previously saved for a specific image.
-     *
-     * @param project   the QuPath project
-     * @param imageName the image name (from ProjectImageEntry.getImageName())
-     * @return a LabelStore with the saved labels, or null if none exist
-     * @throws IOException if reading fails
      */
     public static LabelStore loadImageLabels(Project<?> project,
                                              String imageName) throws IOException {
-        Path dir = getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
-        String safeFileName = sanitiseFileName(imageName) + ".json";
-        Path filePath = dir.resolve(safeFileName);
-
-        if (!Files.exists(filePath)) {
-            return null;
-        }
-
-        String json = Files.readString(filePath, StandardCharsets.UTF_8);
-        @SuppressWarnings("unchecked")
-        Map<String, String> labels = GSON.fromJson(json, Map.class);
-        if (labels == null || labels.isEmpty()) {
-            return null;
-        }
-
-        LabelStore store = new LabelStore(imageName, labels);
-        logger.info("Loaded {} labels for image '{}' from {}", store.size(), imageName, filePath);
-        return store;
+        return LabelPersistence.loadImageLabels(project, imageName);
     }
 
     /**
      * Return true if a saved label file exists for the given image.
-     * This is a cheap file-existence check â€” no JSON parsing.
-     *
-     * @param project   the QuPath project
-     * @param imageName the image name (from ProjectImageEntry.getImageName())
+     * This is a cheap file-existence check — no JSON parsing.
      */
     public static boolean hasImageLabels(Project<?> project, String imageName) {
-        try {
-            Path dir = getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
-            Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
-            return Files.exists(filePath);
-        } catch (IOException e) {
-            logger.debug("hasImageLabels: cannot resolve label path for '{}': {}", imageName, e.getMessage());
-            return false;
-        }
-    }
-
-    // ── Scope-aware overloads (binary classifier vs multi-class) ─────────────────
-    //
-    // When {@code scope} is null/blank, labels live in the shared
-    // {@code image-labels/<image>.json} (multi-class).
-    // When {@code scope} is a sanitized binary-marker name, labels live in
-    // {@code binary-image-labels/<scope>/<image>.json} so each binary classifier
-    // owns its own per-image labels and they don't bleed between classifiers.
-
-    private static final String BINARY_IMAGE_LABELS_DIR = "binary-image-labels";
-
-    private static Path resolveImageLabelsDir(Project<?> project, String scope) throws IOException {
-        Path ctDir = getCellTuneDir(project);
-        if (scope == null || scope.isBlank()) {
-            return ctDir.resolve(IMAGE_LABELS_DIR);
-        }
-        String safeScope = sanitiseFileName(scope);
-        return ctDir.resolve(BINARY_IMAGE_LABELS_DIR).resolve(safeScope);
+        return LabelPersistence.hasImageLabels(project, imageName);
     }
 
     /** Save labels for an image within an optional scope (null/blank = multi-class). */
@@ -732,42 +612,19 @@ public class ProjectStateManager {
                                        String scope,
                                        String imageName,
                                        LabelStore labelStore) throws IOException {
-        Path dir = resolveImageLabelsDir(project, scope);
-        Files.createDirectories(dir);
-        String safeFileName = sanitiseFileName(imageName) + ".json";
-        Path outPath = dir.resolve(safeFileName);
-        String json = GSON.toJson(labelStore.getAllLabels());
-        Files.writeString(outPath, json, StandardCharsets.UTF_8);
-        logger.info("Saved {} labels for image '{}' (scope='{}') to {}",
-                labelStore.size(), imageName, scope == null ? "" : scope, outPath);
-        return outPath;
+        return LabelPersistence.saveImageLabels(project, scope, imageName, labelStore);
     }
 
     /** Load labels for an image within an optional scope (null/blank = multi-class). */
     public static LabelStore loadImageLabels(Project<?> project,
                                              String scope,
                                              String imageName) throws IOException {
-        Path dir = resolveImageLabelsDir(project, scope);
-        Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
-        if (!Files.exists(filePath)) return null;
-        String json = Files.readString(filePath, StandardCharsets.UTF_8);
-        @SuppressWarnings("unchecked")
-        Map<String, String> labels = GSON.fromJson(json, Map.class);
-        if (labels == null || labels.isEmpty()) return null;
-        return new LabelStore(imageName, labels);
+        return LabelPersistence.loadImageLabels(project, scope, imageName);
     }
 
     /** True if labels exist for the image within the given scope. */
     public static boolean hasImageLabels(Project<?> project, String scope, String imageName) {
-        try {
-            Path dir = resolveImageLabelsDir(project, scope);
-            Path filePath = dir.resolve(sanitiseFileName(imageName) + ".json");
-            return Files.exists(filePath);
-        } catch (IOException e) {
-            logger.debug("hasImageLabels: cannot resolve label path for '{}' (scope '{}'): {}",
-                    imageName, scope, e.getMessage());
-            return false;
-        }
+        return LabelPersistence.hasImageLabels(project, scope, imageName);
     }
 
     /**
@@ -786,15 +643,7 @@ public class ProjectStateManager {
      * to read them by name.
      */
     public static List<Path> listImageLabelFiles(Project<?> project, String scope) throws IOException {
-        Path dir = resolveImageLabelsDir(project, scope);
-        if (!Files.isDirectory(dir)) return List.of();
-        try (var stream = Files.list(dir)) {
-            return stream
-                    .filter(p -> p.getFileName().toString().endsWith(".json"))
-                    .filter(Files::isRegularFile)
-                    .sorted()
-                    .toList();
-        }
+        return LabelPersistence.listImageLabelFiles(project, scope);
     }
 
     /**
@@ -803,21 +652,15 @@ public class ProjectStateManager {
      * persist the cleaned version directly (without going through LabelStore).
      */
     public static void writeImageLabelsRaw(Path filePath, Map<String, String> labels) throws IOException {
-        Files.createDirectories(filePath.getParent());
-        String json = GSON.toJson(labels);
-        Files.writeString(filePath, json, StandardCharsets.UTF_8);
+        LabelPersistence.writeImageLabelsRaw(filePath, labels);
     }
 
     /**
      * Read a per-image labels file as a raw cellId -> class map. Returns an
      * empty map if the file does not exist or is empty.
      */
-    @SuppressWarnings("unchecked")
     public static Map<String, String> readImageLabelsRaw(Path filePath) throws IOException {
-        if (!Files.exists(filePath)) return new LinkedHashMap<>();
-        String json = Files.readString(filePath, StandardCharsets.UTF_8);
-        Map<String, String> labels = GSON.fromJson(json, Map.class);
-        return labels == null ? new LinkedHashMap<>() : labels;
+        return LabelPersistence.readImageLabelsRaw(filePath);
     }
 
     // â”€â”€ Per-image sampled cell state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
