@@ -77,9 +77,8 @@ manual QuPath QA where it touched interactive paths):
     and `applyToTargetImages` (parallel batch-classify target images + persist per-image predictions).
     Verbatim moves, behaviour preserved 1:1; `doTrain` keeps validation, feature prep, progress UI, the
     `trainAndPredict` call, classifier-state save and FX completion. `ClassificationPanel` ~1.9k → ~1.76k.
-    Mirrors the `ReviewController` → `ImagePrefetcher`/`TileEntryCleaner` precedent. **Needs manual
-    QuPath QA** (train → predict, cross-image pooling, batch apply) — no automated coverage of the
-    interactive train path.
+    Mirrors the `ReviewController` → `ImagePrefetcher`/`TileEntryCleaner` precedent.
+    _QA'd: train → predict, cross-image pooling, batch apply, project save._
 
 **Still open (deferred):** the remaining large interactive/stateful decompositions that need manual
 QuPath QA to verify safely — the residual `doTrain` orchestration (validation/feature-prep/progress
