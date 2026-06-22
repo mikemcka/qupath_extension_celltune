@@ -51,8 +51,6 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import java.awt.image.BufferedImage;
-import qupath.ext.celltune.io.BinaryClassifierRegistry;
-import qupath.ext.celltune.ui.BinaryClassifierPanel;
 import qupath.ext.celltune.ui.ClassControlDialog;
 import qupath.ext.celltune.ui.CompositeClassificationDialog;
 import java.io.IOException;
@@ -80,7 +78,7 @@ import java.util.stream.Collectors;
  * <p>
  * Workflow: Landmark → Train → Confusions → Sample → Review → Retrain
  */
-public class CellTuneExtension implements QuPathExtension {
+public class CellTuneExtension implements QuPathExtension, BinaryClassifierManager.Host {
 
     private static final ResourceBundle resources =
             ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
@@ -128,17 +126,12 @@ public class CellTuneExtension implements QuPathExtension {
     private javafx.scene.control.Tab dockTab;
 
     // ── Binary classifier state ────────────────────────────────────────────────
-    /** Registry of named binary classifiers: sanitizedMarkerName → relativeStatePath. */
-    private Map<String, String> binaryRegistry = new LinkedHashMap<>();
+    /** Owns binary-mode transitions + the pre-binary snapshot and marker registry. */
+    private final BinaryClassifierManager binaryManager = new BinaryClassifierManager(this);
     /** Name of the currently active binary classifier, or null if in multi-class mode. */
     private String activeBinaryMarker = null;
     /** Class names resolved from saved state or label store for the active binary classifier. */
     private List<String> activeBinaryClassNames = null;
-    /** Multi-class state saved before entering binary mode, restored on exit. */
-    private LabelStore preBinaryLabelStore = null;
-    private DualModelClassifier preBinaryClassifier = null;
-    private List<GroundTruthIO.TrainingRow> preBinaryImportedTrainingRows = null;
-    private List<String> preBinaryImportedTrainingFeatureNames = null;
     /** Images pre-selected via "Apply to Images..." button; used in next training run. */
     private List<String> binaryTargetImages = new ArrayList<>();
 
@@ -440,7 +433,8 @@ public class CellTuneExtension implements QuPathExtension {
     }
 
     /** Push current extension state into the docked panel. */
-    private void syncPanelState() {
+    @Override
+    public void syncPanelState() {
         if (classificationPanel == null) return;
         classificationPanel.setLabelStore(labelStore);
         classificationPanel.setClassifier(classifier);
@@ -453,6 +447,35 @@ public class CellTuneExtension implements QuPathExtension {
         classificationPanel.setImportedTrainingData(importedTrainingRows, importedTrainingFeatureNames);
         classificationPanel.setActiveBinaryMarker(activeBinaryMarker);
         classificationPanel.setActiveBinaryClassNames(activeBinaryClassNames);
+    }
+
+    // ── BinaryClassifierManager.Host ─────────────────────────────────────────────
+    // Plain accessors over the shared session fields, so binary mode can read/write them
+    // while they stay where the rest of the extension uses them.
+
+    @Override public LabelStore getLabelStore() { return labelStore; }
+    @Override public void setLabelStore(LabelStore labelStore) { this.labelStore = labelStore; }
+    @Override public DualModelClassifier getClassifier() { return classifier; }
+    @Override public void setClassifier(DualModelClassifier classifier) { this.classifier = classifier; }
+    @Override public List<GroundTruthIO.TrainingRow> getImportedTrainingRows() { return importedTrainingRows; }
+    @Override public void setImportedTrainingRows(List<GroundTruthIO.TrainingRow> rows) { this.importedTrainingRows = rows; }
+    @Override public List<String> getImportedTrainingFeatureNames() { return importedTrainingFeatureNames; }
+    @Override public void setImportedTrainingFeatureNames(List<String> featureNames) { this.importedTrainingFeatureNames = featureNames; }
+    @Override public String getActiveBinaryMarker() { return activeBinaryMarker; }
+    @Override public void setActiveBinaryMarker(String marker) { this.activeBinaryMarker = marker; }
+    @Override public List<String> getActiveBinaryClassNames() { return activeBinaryClassNames; }
+    @Override public void setActiveBinaryClassNames(List<String> classNames) { this.activeBinaryClassNames = classNames; }
+
+    @Override
+    public void selectAndExpandDockPanel(QuPathGUI qupath) {
+        javafx.application.Platform.runLater(() -> {
+            if (dockTab != null) {
+                qupath.getAnalysisTabPane().getSelectionModel().select(dockTab);
+            }
+            if (dockPane != null) {
+                dockPane.setExpanded(true);
+            }
+        });
     }
 
     /** Persist Pred_ALL for the current image so manual mode can show confidence after reload. */
@@ -968,13 +991,9 @@ public class CellTuneExtension implements QuPathExtension {
         this.cellTypeTable = null;
 
         // Binary-classifier session state.
-        this.binaryRegistry = new LinkedHashMap<>();
+        this.binaryManager.reset();
         this.activeBinaryMarker = null;
         this.activeBinaryClassNames = null;
-        this.preBinaryLabelStore = null;
-        this.preBinaryClassifier = null;
-        this.preBinaryImportedTrainingRows = null;
-        this.preBinaryImportedTrainingFeatureNames = null;
         this.binaryTargetImages = new ArrayList<>();
 
         syncPanelState();
@@ -1017,49 +1036,6 @@ public class CellTuneExtension implements QuPathExtension {
         if (activeBinaryMarker == null) return null;
         if (activeBinaryClassNames == null || activeBinaryClassNames.isEmpty()) return null;
         return new java.util.LinkedHashSet<>(activeBinaryClassNames);
-    }
-
-    /**
-     * Rewrite every per-image label file under the given binary marker scope,
-     * stripping any entries whose class is not in {@code allowedClasses}. Files
-     * that become empty are deleted. Errors on individual files are logged and
-     * do not abort the scrub.
-     */
-    private static void scrubBinaryPerImageLabels(qupath.lib.projects.Project<?> project,
-                                                  String markerName,
-                                                  java.util.Set<String> allowedClasses) {
-        if (project == null || markerName == null || allowedClasses == null || allowedClasses.isEmpty()) return;
-        try {
-            var files = ProjectStateManager.listImageLabelFiles(project, markerName);
-            int filesScrubbed = 0;
-            int totalRemoved = 0;
-            for (var file : files) {
-                try {
-                    var labels = ProjectStateManager.readImageLabelsRaw(file);
-                    if (labels.isEmpty()) continue;
-                    int before = labels.size();
-                    labels.entrySet().removeIf(e -> !allowedClasses.contains(e.getValue()));
-                    int removed = before - labels.size();
-                    if (removed == 0) continue;
-                    totalRemoved += removed;
-                    filesScrubbed++;
-                    if (labels.isEmpty()) {
-                        java.nio.file.Files.deleteIfExists(file);
-                    } else {
-                        ProjectStateManager.writeImageLabelsRaw(file, labels);
-                    }
-                } catch (Exception ex) {
-                    logger.warn("Failed to scrub per-image labels file {}: {}", file, ex.getMessage());
-                }
-            }
-            if (totalRemoved > 0) {
-                logger.info("[CellTune] Scrubbed {} foreign-class labels from {} per-image file(s) for binary marker '{}'",
-                        totalRemoved, filesScrubbed, markerName);
-            }
-        } catch (Exception ex) {
-            logger.warn("Failed to enumerate per-image label files for binary marker '{}': {}",
-                    markerName, ex.getMessage());
-        }
     }
 
     /**
@@ -1898,47 +1874,7 @@ public class CellTuneExtension implements QuPathExtension {
      * Loads the registry from disk, wires callbacks, and shows the panel in a modal stage.
      */
     private void showBinaryClassifiers(QuPathGUI qupath) {
-        var project = qupath.getProject();
-        if (project == null) {
-            Dialogs.showErrorMessage(EXTENSION_NAME, "Open a QuPath project first.");
-            return;
-        }
-        try {
-            binaryRegistry = BinaryClassifierRegistry.load(project);
-        } catch (IOException ex) {
-            logger.warn("Failed to load binary classifier registry: {}", ex.getMessage());
-            binaryRegistry = new LinkedHashMap<>();
-        }
-
-        var panel = new BinaryClassifierPanel();
-        panel.setMarkerNames(new ArrayList<>(binaryRegistry.keySet()));
-        panel.setActiveBinaryMarker(activeBinaryMarker);
-
-        panel.setOnRegisterMarker(markerName -> {
-            try {
-                BinaryClassifierRegistry.register(project, binaryRegistry, markerName);
-            } catch (IOException ex) {
-                logger.warn("Failed to register binary classifier '{}': {}", markerName, ex.getMessage());
-            }
-        });
-
-        panel.setOnDeleteMarker(markerName -> {
-            try {
-                BinaryClassifierRegistry.remove(project, binaryRegistry, markerName);
-                if (markerName.equals(activeBinaryMarker)) exitBinaryMode(qupath);
-            } catch (IOException ex) {
-                logger.warn("Failed to remove binary classifier '{}': {}", markerName, ex.getMessage());
-            }
-        });
-
-        panel.setOnOpenMarker(markerName -> enterBinaryMode(qupath, markerName));
-        panel.setOnExitBinaryMode(() -> exitBinaryMode(qupath));
-
-        var stage = new javafx.stage.Stage();
-        stage.initModality(javafx.stage.Modality.APPLICATION_MODAL);
-        stage.setTitle("Binary Classifiers \u2014 " + EXTENSION_NAME);
-        stage.setScene(new javafx.scene.Scene(panel, 420, 340));
-        stage.showAndWait();
+        binaryManager.showBinaryClassifiers(qupath);
     }
 
     private void applyBinaryClassifierToImages(QuPathGUI qupath) {
@@ -2043,140 +1979,7 @@ public class CellTuneExtension implements QuPathExtension {
      * @param markerName the sanitized marker name to activate
      */
     private void enterBinaryMode(QuPathGUI qupath, String markerName) {
-        var project = qupath.getProject();
-        if (project == null) return;
-
-        // Preserve current multi-class state — but only when we're actually transitioning
-        // INTO binary mode. If we're already in binary mode (user switched markers without
-        // exiting first), the existing pre-binary snapshot must be left alone, otherwise we
-        // would clobber it with the previous marker's binary state and lose the multi-class
-        // labels/classifier on exit.
-        if (activeBinaryMarker == null) {
-            preBinaryLabelStore = labelStore;
-            preBinaryClassifier = classifier;
-            preBinaryImportedTrainingRows =
-                    importedTrainingRows == null ? null : new ArrayList<>(importedTrainingRows);
-            preBinaryImportedTrainingFeatureNames =
-                    importedTrainingFeatureNames == null ? null : new ArrayList<>(importedTrainingFeatureNames);
-        }
-
-        // Load binary marker's labels
-        try {
-            this.labelStore = ProjectStateManager.loadBinaryLabels(project, markerName);
-        } catch (IOException ex) {
-            logger.warn("Failed to load binary labels for '{}': {}", markerName, ex.getMessage());
-            this.labelStore = new LabelStore(markerName);
-        }
-
-        // Load trained binary classifier if one exists
-        this.classifier = null;
-        try {
-            ProjectStateManager.SavedState savedState = ProjectStateManager.loadBinaryState(project, markerName);
-            if (savedState != null && (savedState.xgboostModelBase64 != null
-                    || savedState.lightgbmModelBase64 != null
-                    || savedState.rfModel1Base64 != null)) {
-                var cs = new ClassifierState(
-                        savedState.name,
-                        savedState.featureNames,
-                        savedState.classNames,
-                        ProjectStateManager.decodeXGBoostModel(savedState),
-                        ProjectStateManager.decodeLightGBMModel(savedState),
-                        ProjectStateManager.decodeRFModel1(savedState),
-                        ProjectStateManager.decodeRFModel2(savedState),
-                        ProjectStateManager.getModel1Type(savedState),
-                        ProjectStateManager.getModel2Type(savedState));
-                this.classifier = new DualModelClassifier();
-                this.classifier.loadFromState(cs);
-                this.classifier.setTrainingMetrics(
-                        savedState.model1TrainMetrics, savedState.model1ValMetrics,
-                        savedState.model2TrainMetrics, savedState.model2ValMetrics);
-            }
-        } catch (Exception ex) {
-            logger.warn("Failed to load binary classifier state for '{}': {}", markerName, ex.getMessage());
-            this.classifier = null;
-        }
-
-        try {
-            var imported = ProjectStateManager.loadBinaryImportedTrainingData(project, markerName);
-            if (imported != null) {
-                this.importedTrainingFeatureNames = new ArrayList<>(imported.featureNames());
-                this.importedTrainingRows = new ArrayList<>(imported.rows());
-                logger.info("[CellTune] Loaded binary imported training rows for '{}' ({} rows)",
-                        markerName, imported.rows().size());
-            } else {
-                this.importedTrainingFeatureNames = null;
-                this.importedTrainingRows = null;
-            }
-        } catch (Exception ex) {
-            logger.warn("Failed to load binary imported rows for '{}': {}", markerName, ex.getMessage());
-            this.importedTrainingFeatureNames = null;
-            this.importedTrainingRows = null;
-        }
-
-        this.activeBinaryMarker = markerName;
-
-        // Resolve the allowed class names for UI restriction.
-        //
-        // CRITICAL: A binary classifier for marker X is ALWAYS exactly two classes
-        // {X+, X-}. We must NEVER derive this set from the on-disk label store,
-        // because if that file is contaminated with foreign classes (e.g. PD-1+/-
-        // labels in a GrB store) we would then "validate" those foreign classes
-        // and every subsequent retainClasses() filter would become a no-op,
-        // permanently preserving the contamination on every save.
-        //
-        // The trained classifier is allowed to override the canonical pair only
-        // when its class list is a subset of {markerName+, markerName-} — this
-        // covers degenerate single-class classifiers but never widens the set.
-        java.util.LinkedHashSet<String> canonical = new java.util.LinkedHashSet<>();
-        canonical.add(markerName + "+");
-        canonical.add(markerName + "-");
-        if (this.classifier != null
-                && this.classifier.getClassNames() != null
-                && !this.classifier.getClassNames().isEmpty()
-                && canonical.containsAll(this.classifier.getClassNames())) {
-            this.activeBinaryClassNames = List.copyOf(this.classifier.getClassNames());
-        } else {
-            this.activeBinaryClassNames = List.copyOf(canonical);
-        }
-
-        // Self-heal: unconditionally drop any labels whose class is not in the
-        // canonical set for this marker. This evicts cross-contamination from
-        // earlier sessions where labels from other classifiers bled into this
-        // marker's store (e.g. via collectLabelsFromAnnotations or older buggy
-        // save paths). Runs every time the user enters binary mode so a single
-        // open of the panel is enough to clean a contaminated file.
-        if (this.labelStore != null && this.labelStore.size() > 0) {
-            int removed = this.labelStore.retainClasses(canonical);
-            if (removed > 0) {
-                logger.info("[CellTune] Pruned {} foreign-class labels from binary store '{}' on entry",
-                        removed, markerName);
-                try {
-                    ProjectStateManager.saveBinaryLabels(project, markerName, this.labelStore);
-                } catch (IOException ex) {
-                    logger.warn("Failed to persist self-healed binary labels for '{}': {}",
-                            markerName, ex.getMessage());
-                }
-                // Also scrub every per-image label file for this marker so that
-                // disk state matches the now-cleaned in-memory state. Without
-                // this, a stale per-image file would be re-loaded on the next
-                // image switch and reintroduce foreign labels.
-                scrubBinaryPerImageLabels(project, markerName, canonical);
-            }
-        }
-
-        syncPanelState();
-        logger.info("[CellTune] Entered binary mode for marker '{}' (classes: {})",
-                markerName, activeBinaryClassNames);
-
-        // Select and expand the docked classification panel for immediate use
-        javafx.application.Platform.runLater(() -> {
-            if (dockTab != null) {
-                qupath.getAnalysisTabPane().getSelectionModel().select(dockTab);
-            }
-            if (dockPane != null) {
-                dockPane.setExpanded(true);
-            }
-        });
+        binaryManager.enterBinaryMode(qupath, markerName);
     }
 
     /**
@@ -2186,37 +1989,7 @@ public class CellTuneExtension implements QuPathExtension {
      * @param qupath the QuPath GUI
      */
     private void exitBinaryMode(QuPathGUI qupath) {
-        if (activeBinaryMarker == null) return;
-        var project = qupath.getProject();
-
-        // Save binary labels before exiting
-        if (project != null && labelStore != null) {
-            // Defence-in-depth: filter out any labels that don't belong to this binary
-            // classifier's classes before persisting the canonical state.
-            if (activeBinaryClassNames != null && !activeBinaryClassNames.isEmpty()) {
-                labelStore.retainClasses(new java.util.LinkedHashSet<>(activeBinaryClassNames));
-            }
-            try {
-                ProjectStateManager.saveBinaryLabels(project, activeBinaryMarker, labelStore);
-            } catch (IOException ex) {
-                logger.warn("Failed to save binary labels for '{}' on exit: {}", activeBinaryMarker, ex.getMessage());
-            }
-        }
-
-        // Restore multi-class state
-        this.labelStore = (preBinaryLabelStore != null) ? preBinaryLabelStore : new LabelStore("CellTune");
-        this.classifier = preBinaryClassifier;
-        this.importedTrainingRows = preBinaryImportedTrainingRows;
-        this.importedTrainingFeatureNames = preBinaryImportedTrainingFeatureNames;
-        this.activeBinaryMarker = null;
-        this.activeBinaryClassNames = null;
-        this.preBinaryLabelStore = null;
-        this.preBinaryClassifier = null;
-        this.preBinaryImportedTrainingRows = null;
-        this.preBinaryImportedTrainingFeatureNames = null;
-
-        syncPanelState();
-        logger.info("[CellTune] Exited binary mode \u2014 restored multi-class state");
+        binaryManager.exitBinaryMode(qupath);
     }
 }
 
