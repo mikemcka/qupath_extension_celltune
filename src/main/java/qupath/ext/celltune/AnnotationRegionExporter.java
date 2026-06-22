@@ -2,16 +2,22 @@ package qupath.ext.celltune;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressBar;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.fx.dialogs.Dialogs;
@@ -215,8 +221,32 @@ final class AnnotationRegionExporter {
         final boolean pyramid = pyramidCb.isSelected();
         final String compression = compressionBox.getValue();
 
-        Dialogs.showInfoNotification(EXTENSION_NAME,
-                "Exporting " + exportList.size() + " region(s) — see the log for progress.");
+        final int total = exportList.size();
+
+        // Progress dialog — built and shown on the FX thread before the worker starts.
+        // Each annotation is one (potentially long) OME-TIFF write, so the bar advances
+        // once per completed region; the log area mirrors the per-region INFO/ERROR logging.
+        Stage progressStage = new Stage();
+        progressStage.setTitle("Exporting Annotation Regions");
+        progressStage.initOwner(qupath.getStage());
+        progressStage.initModality(Modality.NONE);
+        progressStage.setResizable(true);
+
+        ProgressBar progressBar = new ProgressBar(0);
+        progressBar.setPrefWidth(Double.MAX_VALUE);
+        Label statusLabel = new Label("Starting export… (0 / " + total + ")");
+        TextArea logArea = new TextArea();
+        logArea.setEditable(false);
+        logArea.setPrefHeight(160);
+        logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
+        Button closeBtn = new Button("Close");
+        closeBtn.setDisable(true);
+        closeBtn.setOnAction(e -> progressStage.close());
+
+        VBox progressRoot = new VBox(8, statusLabel, progressBar, logArea, closeBtn);
+        progressRoot.setPadding(new Insets(14));
+        progressStage.setScene(new Scene(progressRoot, 460, 300));
+        progressStage.show();
 
         Thread worker = new Thread(() -> {
             // The OME-TIFF writer ships with the Bio-Formats extension, which is loaded at
@@ -224,37 +254,58 @@ final class AnnotationRegionExporter {
             try {
                 Class.forName("qupath.lib.images.writers.ome.OMEPyramidWriter$Builder");
             } catch (Throwable t) {
-                Platform.runLater(() -> Dialogs.showErrorMessage(EXTENSION_NAME,
-                        "OME-TIFF writer unavailable (the Bio-Formats extension is not loaded in this QuPath instance)."));
+                Platform.runLater(() -> {
+                    progressStage.close();
+                    Dialogs.showErrorMessage(EXTENSION_NAME,
+                            "OME-TIFF writer unavailable (the Bio-Formats extension is not loaded in this QuPath instance).");
+                });
                 return;
             }
 
-            int ok = 0, failed = 0;
+            int ok = 0, failed = 0, done = 0;
             HashMap<String, Integer> nameCount = new HashMap<>();
             for (PathObject ann : exportList) {
                 String rawName = (ann.getName() != null && !ann.getName().isBlank())
                         ? ann.getName().strip() : "Unnamed";
+                final int dStart = done + 1;
+                Platform.runLater(() ->
+                        statusLabel.setText("Exporting " + dStart + " / " + total + ": " + rawName + "…"));
                 String safeName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
                 int c = nameCount.merge(safeName, 1, Integer::sum);
                 String suffix = c > 1 ? "_" + c : "";
                 File outFile = new File(outDir, safeStem + "__" + safeName + suffix + ".ome.tif");
                 RoiMaskedServer masked = null;
+                String logLine;
                 try {
                     masked = new RoiMaskedServer(server, ann.getROI(), ds);
                     writeOmePyramid(masked, compression, ts, threads, bigTiff, pyramid, outFile.getAbsolutePath());
                     ok++;
                     logger.info("[CellTune] Exported annotation '{}' -> {}", rawName, outFile.getAbsolutePath());
+                    logLine = "✓ " + rawName + " -> " + outFile.getName() + "\n";
                 } catch (Throwable t) {
                     failed++;
                     logger.error("[CellTune] Export failed for '{}': {}", rawName, t.toString(), t);
+                    logLine = "✗ " + rawName + ": " + t + "\n";
                 } finally {
                     if (masked != null) {
                         try { masked.close(); } catch (Exception ignored) { /* best effort */ }
                     }
                 }
+                done++;
+                final int dDone = done;
+                final String fLogLine = logLine;
+                Platform.runLater(() -> {
+                    progressBar.setProgress((double) dDone / total);
+                    statusLabel.setText("Processed " + dDone + " / " + total);
+                    logArea.appendText(fLogLine);
+                });
             }
             final int fOk = ok, fFailed = failed;
             Platform.runLater(() -> {
+                statusLabel.setText(fFailed == 0
+                        ? "Done — exported " + fOk + " region(s) to " + outDir.getName() + "."
+                        : "Done — exported " + fOk + " region(s); " + fFailed + " failed (see log).");
+                closeBtn.setDisable(false);
                 if (fFailed == 0)
                     Dialogs.showInfoNotification(EXTENSION_NAME,
                             "Exported " + fOk + " region(s) to " + outDir.getName() + ".");
