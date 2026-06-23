@@ -1,17 +1,16 @@
 package qupath.ext.celltune;
 
-import qupath.ext.celltune.io.ProjectStateManager;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.ext.celltune.model.PopulationSet;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.projects.ProjectImageEntry;
-
 import java.awt.image.BufferedImage;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import qupath.ext.celltune.io.ProjectStateManager;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.ext.celltune.model.PopulationSet;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Pure-ish review-mode sampling helpers lifted out of {@code CellTuneExtension}.
@@ -38,9 +37,8 @@ final class ReviewSampling {
      * @param currentPredAll   the open image's in-memory predictions (may be null)
      * @param currentImageOnly restrict pooling to the current image
      */
-    static SamplingContext buildSamplingContext(QuPathGUI qupath,
-                                                PopulationSet currentPredAll,
-                                                boolean currentImageOnly) {
+    static SamplingContext buildSamplingContext(
+            QuPathGUI qupath, PopulationSet currentPredAll, boolean currentImageOnly) {
         PopulationSet pooled = new PopulationSet("Pred_ALL");
         Map<String, String> cellToImage = new LinkedHashMap<>();
 
@@ -90,10 +88,8 @@ final class ReviewSampling {
      * Add a source image's predictions into {@code pooled}, skipping blank ids and any cell
      * already pooled (first image wins), and record each cell's originating image name.
      */
-    static void addPredictionsToSamplingPool(PopulationSet pooled,
-                                             PopulationSet source,
-                                             String imageName,
-                                             Map<String, String> cellToImage) {
+    static void addPredictionsToSamplingPool(
+            PopulationSet pooled, PopulationSet source, String imageName, Map<String, String> cellToImage) {
         if (source == null || source.size() == 0) return;
         String safeImageName = (imageName == null || imageName.isBlank()) ? "image" : imageName;
 
@@ -112,10 +108,8 @@ final class ReviewSampling {
      * the current in-memory labels, the previously-sampled ids, and every project image's saved
      * labels for the given scope (binary marker, or null for multi-class).
      */
-    static Set<String> buildReviewedCellIdsForSampling(QuPathGUI qupath,
-                                                       String scope,
-                                                       LabelStore labels,
-                                                       List<String> previouslySampledIds) {
+    static Set<String> buildReviewedCellIdsForSampling(
+            QuPathGUI qupath, String scope, LabelStore labels, List<String> previouslySampledIds) {
         Set<String> reviewed = new LinkedHashSet<>();
         if (labels != null) {
             reviewed.addAll(labels.getAllLabels().keySet());
@@ -126,11 +120,13 @@ final class ReviewSampling {
 
         if (qupath != null && qupath.getProject() != null) {
             @SuppressWarnings("unchecked")
-            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            var entries = (List<ProjectImageEntry<BufferedImage>>)
+                    (List<?>) qupath.getProject().getImageList();
             for (var entry : entries) {
                 if (entry == null || entry.getImageName() == null) continue;
                 try {
-                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
+                    LabelStore imageLabels =
+                            ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
                     if (imageLabels != null) {
                         reviewed.addAll(imageLabels.getAllLabels().keySet());
                     }

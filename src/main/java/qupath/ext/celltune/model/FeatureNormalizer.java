@@ -33,7 +33,8 @@ public class FeatureNormalizer {
             try {
                 Transform t = Transform.valueOf(e.getValue());
                 if (t != Transform.NONE) transforms.put(e.getKey(), t);
-            } catch (Exception ignore) {}
+            } catch (Exception ignore) {
+            }
         }
     }
 
@@ -48,10 +49,14 @@ public class FeatureNormalizer {
             this.displayName = displayName;
         }
 
-        public String getDisplayName() { return displayName; }
+        public String getDisplayName() {
+            return displayName;
+        }
 
         @Override
-        public String toString() { return displayName; }
+        public String toString() {
+            return displayName;
+        }
     }
 
     private final Map<String, Transform> transforms;
@@ -91,7 +96,9 @@ public class FeatureNormalizer {
     }
 
     /** @return the arcsinh cofactor (divisor applied before arcsinh) */
-    public double getArcsinhCofactor() { return arcsinhCofactor; }
+    public double getArcsinhCofactor() {
+        return arcsinhCofactor;
+    }
 
     /** Set the arcsinh cofactor (divisor: {@code arcsinh(x / cofactor)}). */
     public void setArcsinhCofactor(double cofactor) {
@@ -121,8 +128,9 @@ public class FeatureNormalizer {
         if (t == null) return value;
         return switch (t) {
             case NONE -> value;
-            case ARCSINH -> (float) Math.log(value / arcsinhCofactor
-                    + Math.sqrt(value * value / (arcsinhCofactor * arcsinhCofactor) + 1));
+            case ARCSINH ->
+                (float) Math.log(
+                        value / arcsinhCofactor + Math.sqrt(value * value / (arcsinhCofactor * arcsinhCofactor) + 1));
             case SQRT -> (float) Math.sqrt(Math.max(0, value));
         };
     }

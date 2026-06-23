@@ -2,16 +2,6 @@ package qupath.ext.celltune.io;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.classifier.ModelType;
-import qupath.ext.celltune.classifier.TrainingMetrics;
-import qupath.ext.celltune.io.GroundTruthIO;
-import qupath.ext.celltune.model.CellTypeTable;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.ext.celltune.model.PopulationSet;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,6 +12,14 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.classifier.ModelType;
+import qupath.ext.celltune.classifier.TrainingMetrics;
+import qupath.ext.celltune.model.CellTypeTable;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.ext.celltune.model.PopulationSet;
+import qupath.lib.projects.Project;
 
 /**
  * Saves and loads the full classifier state to/from a JSON file in the QuPath project folder.
@@ -44,8 +42,7 @@ public class ProjectStateManager {
     // (PredictionPersistence, …) share one identically-configured Gson instance.
     static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     // Package-private so the focused persistence helpers in this package share the format.
-    static final DateTimeFormatter TIMESTAMP_FMT =
-            DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+    static final DateTimeFormatter TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
     private ProjectStateManager() {} // utility class
 
@@ -63,12 +60,12 @@ public class ProjectStateManager {
         public List<String> featureNames;
         public List<String> classNames;
         public Map<String, String> labels; // cellId â†’ class name
-        public String xgboostModelBase64;  // null if not yet trained
+        public String xgboostModelBase64; // null if not yet trained
         public String lightgbmModelBase64; // null if not yet trained
-        public String rfModel1Base64;      // null if not yet trained
-        public String rfModel2Base64;      // null if not yet trained
-        public String model1Type;          // ModelType name, null defaults to XGBOOST
-        public String model2Type;          // ModelType name, null defaults to LIGHTGBM
+        public String rfModel1Base64; // null if not yet trained
+        public String rfModel2Base64; // null if not yet trained
+        public String model1Type; // ModelType name, null defaults to XGBOOST
+        public String model2Type; // ModelType name, null defaults to LIGHTGBM
         // New fields for feature selection and normalization
         public List<String> selectedFeatures;
         public Map<String, String> featureTransforms; // feature name â†’ transform name
@@ -131,8 +128,8 @@ public class ProjectStateManager {
         if (ctDir == null || !Files.isDirectory(ctDir)) {
             return null;
         }
-        Path zipTarget = ctDir.getParent().resolve(
-                "celltune_backup_" + LocalDateTime.now().format(TIMESTAMP_FMT) + ".zip");
+        Path zipTarget = ctDir.getParent()
+                .resolve("celltune_backup_" + LocalDateTime.now().format(TIMESTAMP_FMT) + ".zip");
         Path written = zipDirectory(ctDir, zipTarget);
         if (written != null) {
             logger.info("Backed up CellTune state to {}", written);
@@ -187,19 +184,21 @@ public class ProjectStateManager {
      * @return path to the saved JSON file
      * @throws IOException if writing fails
      */
-    public static Path saveState(Project<?> project,
-                                 String classifierName,
-                                 LabelStore labelStore,
-                                 List<String> featureNames,
-                                 List<String> classNames,
-                                 byte[] xgboostBytes,
-                                 byte[] lightgbmBytes,
-                                 byte[] rfModel1Bytes,
-                                 byte[] rfModel2Bytes,
-                                 ModelType model1Type,
-                                 ModelType model2Type,
-                                 List<String> importedTrainingFeatureNames,
-                                 List<GroundTruthIO.TrainingRow> importedTrainingRows) throws IOException {
+    public static Path saveState(
+            Project<?> project,
+            String classifierName,
+            LabelStore labelStore,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes,
+            byte[] rfModel1Bytes,
+            byte[] rfModel2Bytes,
+            ModelType model1Type,
+            ModelType model2Type,
+            List<String> importedTrainingFeatureNames,
+            List<GroundTruthIO.TrainingRow> importedTrainingRows)
+            throws IOException {
         Path dir = getCellTuneDir(project);
         Path outPath = dir.resolve(STATE_FILENAME);
 
@@ -209,8 +208,7 @@ public class ProjectStateManager {
                 String existingJson = Files.readString(outPath, StandardCharsets.UTF_8);
                 existing = GSON.fromJson(existingJson, SavedState.class);
             } catch (Exception ex) {
-                logger.warn("Failed to read existing state for imported training preservation: {}",
-                        ex.getMessage());
+                logger.warn("Failed to read existing state for imported training preservation: {}", ex.getMessage());
             }
         }
 
@@ -252,28 +250,44 @@ public class ProjectStateManager {
         }
 
         writeState(outPath, state);
-        logger.info("Saved classifier state to {} ({} labels, {} features)",
-                outPath, labelStore.size(), featureNames.size());
+        logger.info(
+                "Saved classifier state to {} ({} labels, {} features)",
+                outPath,
+                labelStore.size(),
+                featureNames.size());
         return outPath;
     }
 
     /**
      * Backward-compatible overload without imported training data.
      */
-    public static Path saveState(Project<?> project,
-                                 String classifierName,
-                                 LabelStore labelStore,
-                                 List<String> featureNames,
-                                 List<String> classNames,
-                                 byte[] xgboostBytes,
-                                 byte[] lightgbmBytes,
-                                 byte[] rfModel1Bytes,
-                                 byte[] rfModel2Bytes,
-                                 ModelType model1Type,
-                                 ModelType model2Type) throws IOException {
-        return saveState(project, classifierName, labelStore, featureNames, classNames,
-                xgboostBytes, lightgbmBytes, rfModel1Bytes, rfModel2Bytes,
-                model1Type, model2Type, null, null);
+    public static Path saveState(
+            Project<?> project,
+            String classifierName,
+            LabelStore labelStore,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes,
+            byte[] rfModel1Bytes,
+            byte[] rfModel2Bytes,
+            ModelType model1Type,
+            ModelType model2Type)
+            throws IOException {
+        return saveState(
+                project,
+                classifierName,
+                labelStore,
+                featureNames,
+                classNames,
+                xgboostBytes,
+                lightgbmBytes,
+                rfModel1Bytes,
+                rfModel2Bytes,
+                model1Type,
+                model2Type,
+                null,
+                null);
     }
 
     /**
@@ -294,8 +308,10 @@ public class ProjectStateManager {
 
         String json = Files.readString(statePath, StandardCharsets.UTF_8);
         SavedState state = GSON.fromJson(json, SavedState.class);
-        logger.info("Loaded classifier state '{}' from {} ({} labels)",
-                state.name, statePath,
+        logger.info(
+                "Loaded classifier state '{}' from {} ({} labels)",
+                state.name,
+                statePath,
                 state.labels != null ? state.labels.size() : 0);
         return state;
     }
@@ -309,8 +325,7 @@ public class ProjectStateManager {
      * @return path to the updated state file
      * @throws IOException if reading/writing the state file fails
      */
-    public static Path saveSelectedFeatures(Project<?> project,
-                                            List<String> selectedFeatures) throws IOException {
+    public static Path saveSelectedFeatures(Project<?> project, List<String> selectedFeatures) throws IOException {
         Path dir = getCellTuneDir(project);
         Path statePath = dir.resolve(STATE_FILENAME);
 
@@ -320,8 +335,7 @@ public class ProjectStateManager {
                 String json = Files.readString(statePath, StandardCharsets.UTF_8);
                 state = GSON.fromJson(json, SavedState.class);
             } catch (Exception ex) {
-                logger.warn("Failed to read existing state for feature selection merge: {}",
-                        ex.getMessage());
+                logger.warn("Failed to read existing state for feature selection merge: {}", ex.getMessage());
                 state = new SavedState();
             }
             if (state == null) state = new SavedState();
@@ -332,12 +346,11 @@ public class ProjectStateManager {
         if (state.name == null || state.name.isBlank()) state.name = "CellTune";
         state.timestamp = LocalDateTime.now().format(TIMESTAMP_FMT);
         state.selectedFeatures =
-                (selectedFeatures == null || selectedFeatures.isEmpty())
-                        ? null
-                        : List.copyOf(selectedFeatures);
+                (selectedFeatures == null || selectedFeatures.isEmpty()) ? null : List.copyOf(selectedFeatures);
 
         writeState(statePath, state);
-        logger.info("Saved selected features to {} ({} features)",
+        logger.info(
+                "Saved selected features to {} ({} features)",
                 statePath,
                 state.selectedFeatures == null ? 0 : state.selectedFeatures.size());
         return statePath;
@@ -349,11 +362,13 @@ public class ProjectStateManager {
      *
      * @return true if the file existed and was updated, false otherwise
      */
-    public static boolean saveTrainingMetrics(Project<?> project,
-                                              TrainingMetrics m1Train,
-                                              TrainingMetrics m1Val,
-                                              TrainingMetrics m2Train,
-                                              TrainingMetrics m2Val) throws IOException {
+    public static boolean saveTrainingMetrics(
+            Project<?> project,
+            TrainingMetrics m1Train,
+            TrainingMetrics m1Val,
+            TrainingMetrics m2Train,
+            TrainingMetrics m2Val)
+            throws IOException {
         Path outPath = getCellTuneDir(project).resolve(STATE_FILENAME);
         if (!Files.exists(outPath)) {
             logger.warn("Cannot save training metrics: no classifier state at {}", outPath);
@@ -379,9 +394,8 @@ public class ProjectStateManager {
     /**
      * Persist imported training vectors/labels immediately, even before model training.
      */
-    public static Path saveImportedTrainingData(Project<?> project,
-                                                List<String> featureNames,
-                                                List<GroundTruthIO.TrainingRow> rows) throws IOException {
+    public static Path saveImportedTrainingData(
+            Project<?> project, List<String> featureNames, List<GroundTruthIO.TrainingRow> rows) throws IOException {
         Path dir = getCellTuneDir(project);
         Path statePath = dir.resolve(STATE_FILENAME);
 
@@ -401,8 +415,7 @@ public class ProjectStateManager {
         state.importedTrainingRows = toSavedTrainingRows(rows);
 
         writeState(statePath, state);
-        logger.info("Saved imported training data to {} ({} rows)",
-                statePath, rows == null ? 0 : rows.size());
+        logger.info("Saved imported training data to {} ({} rows)", statePath, rows == null ? 0 : rows.size());
         return statePath;
     }
 
@@ -490,7 +503,8 @@ public class ProjectStateManager {
      * Get imported training feature names from a saved state.
      */
     public static List<String> getImportedTrainingFeatureNames(SavedState state) {
-        if (state == null || state.importedTrainingFeatureNames == null
+        if (state == null
+                || state.importedTrainingFeatureNames == null
                 || state.importedTrainingFeatureNames.isEmpty()) {
             return null;
         }
@@ -520,8 +534,11 @@ public class ProjectStateManager {
      */
     public static ModelType getModel1Type(SavedState state) {
         if (state.model1Type == null) return ModelType.XGBOOST;
-        try { return ModelType.valueOf(state.model1Type); }
-        catch (IllegalArgumentException e) { return ModelType.XGBOOST; }
+        try {
+            return ModelType.valueOf(state.model1Type);
+        } catch (IllegalArgumentException e) {
+            return ModelType.XGBOOST;
+        }
     }
 
     /**
@@ -529,24 +546,39 @@ public class ProjectStateManager {
      */
     public static ModelType getModel2Type(SavedState state) {
         if (state.model2Type == null) return ModelType.LIGHTGBM;
-        try { return ModelType.valueOf(state.model2Type); }
-        catch (IllegalArgumentException e) { return ModelType.LIGHTGBM; }
+        try {
+            return ModelType.valueOf(state.model2Type);
+        } catch (IllegalArgumentException e) {
+            return ModelType.LIGHTGBM;
+        }
     }
 
     /**
      * Backward-compatible overload for XGBoost + LightGBM only.
      */
-    public static Path saveState(Project<?> project,
-                                 String classifierName,
-                                 LabelStore labelStore,
-                                 List<String> featureNames,
-                                 List<String> classNames,
-                                 byte[] xgboostBytes,
-                                 byte[] lightgbmBytes) throws IOException {
-        return saveState(project, classifierName, labelStore, featureNames, classNames,
-                xgboostBytes, lightgbmBytes, null, null,
-                ModelType.XGBOOST, ModelType.LIGHTGBM,
-                null, null);
+    public static Path saveState(
+            Project<?> project,
+            String classifierName,
+            LabelStore labelStore,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes)
+            throws IOException {
+        return saveState(
+                project,
+                classifierName,
+                labelStore,
+                featureNames,
+                classNames,
+                xgboostBytes,
+                lightgbmBytes,
+                null,
+                null,
+                ModelType.XGBOOST,
+                ModelType.LIGHTGBM,
+                null,
+                null);
     }
 
     static List<SavedState.SavedTrainingRow> toSavedTrainingRows(List<GroundTruthIO.TrainingRow> rows) {
@@ -593,9 +625,8 @@ public class ProjectStateManager {
      * @return path to the backup file
      * @throws IOException if writing fails
      */
-    public static Path backupLabels(Project<?> project,
-                                    String currentImageName,
-                                    LabelStore currentLabels) throws IOException {
+    public static Path backupLabels(Project<?> project, String currentImageName, LabelStore currentLabels)
+            throws IOException {
         return LabelPersistence.backupLabels(project, currentImageName, currentLabels);
     }
 
@@ -605,17 +636,14 @@ public class ProjectStateManager {
      * Save labels for a specific image. Used to persist review and manual labels
      * so they can be pooled into training from other images.
      */
-    public static Path saveImageLabels(Project<?> project,
-                                       String imageName,
-                                       LabelStore labelStore) throws IOException {
+    public static Path saveImageLabels(Project<?> project, String imageName, LabelStore labelStore) throws IOException {
         return LabelPersistence.saveImageLabels(project, imageName, labelStore);
     }
 
     /**
      * Load labels previously saved for a specific image.
      */
-    public static LabelStore loadImageLabels(Project<?> project,
-                                             String imageName) throws IOException {
+    public static LabelStore loadImageLabels(Project<?> project, String imageName) throws IOException {
         return LabelPersistence.loadImageLabels(project, imageName);
     }
 
@@ -628,17 +656,13 @@ public class ProjectStateManager {
     }
 
     /** Save labels for an image within an optional scope (null/blank = multi-class). */
-    public static Path saveImageLabels(Project<?> project,
-                                       String scope,
-                                       String imageName,
-                                       LabelStore labelStore) throws IOException {
+    public static Path saveImageLabels(Project<?> project, String scope, String imageName, LabelStore labelStore)
+            throws IOException {
         return LabelPersistence.saveImageLabels(project, scope, imageName, labelStore);
     }
 
     /** Load labels for an image within an optional scope (null/blank = multi-class). */
-    public static LabelStore loadImageLabels(Project<?> project,
-                                             String scope,
-                                             String imageName) throws IOException {
+    public static LabelStore loadImageLabels(Project<?> project, String scope, String imageName) throws IOException {
         return LabelPersistence.loadImageLabels(project, scope, imageName);
     }
 
@@ -683,14 +707,16 @@ public class ProjectStateManager {
         return LabelPersistence.readImageLabelsRaw(filePath);
     }
 
-    // â”€â”€ Per-image sampled cell state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â”€â”€ Per-image sampled cell state
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static final String IMAGE_SAMPLED_DIR = "image-sampled";
 
     /**
      * Save sampled cell IDs for a specific image.
      */
-    public static Path saveImageSampledCells(Project<?> project, String imageName, List<String> sampledCellIds) throws IOException {
+    public static Path saveImageSampledCells(Project<?> project, String imageName, List<String> sampledCellIds)
+            throws IOException {
         Path dir = getCellTuneDir(project).resolve(IMAGE_SAMPLED_DIR);
         Files.createDirectories(dir);
         String safeFileName = sanitiseFileName(imageName) + ".json";
@@ -718,25 +744,23 @@ public class ProjectStateManager {
         return ids;
     }
 
-    // â”€â”€ Per-image prediction persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â”€â”€ Per-image prediction persistence
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Save Pred_ALL predictions for a specific image.
      */
-    public static Path saveImagePredictions(Project<?> project,
-                                            String imageName,
-                                            PopulationSet predAll) throws IOException {
+    public static Path saveImagePredictions(Project<?> project, String imageName, PopulationSet predAll)
+            throws IOException {
         return PredictionPersistence.saveImagePredictions(project, imageName, predAll);
     }
 
     /**
      * Load Pred_ALL predictions previously saved for a specific image.
      */
-    public static PopulationSet loadImagePredictions(Project<?> project,
-                                                     String imageName) throws IOException {
+    public static PopulationSet loadImagePredictions(Project<?> project, String imageName) throws IOException {
         return PredictionPersistence.loadImagePredictions(project, imageName);
     }
-
 
     /**
      * List the names of all images in the project that have saved prediction files.
@@ -744,7 +768,8 @@ public class ProjectStateManager {
     public static List<String> listImagesWithPredictions(Project<?> project) throws IOException {
         return PredictionPersistence.listImagesWithPredictions(project);
     }
-    // â”€â”€ Binary classifier persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â”€â”€ Binary classifier persistence
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Save a binary classifier's trained state to
@@ -767,20 +792,31 @@ public class ProjectStateManager {
      * @return path to the saved JSON file
      * @throws IOException if writing fails
      */
-    public static Path saveBinaryState(Project<?> project,
-                                       String sanitizedMarkerName,
-                                       LabelStore labelStore,
-                                       List<String> featureNames,
-                                       List<String> classNames,
-                                       byte[] xgboostBytes,
-                                       byte[] lightgbmBytes,
-                                       byte[] rfModel1Bytes,
-                                       byte[] rfModel2Bytes,
-                                       ModelType model1Type,
-                                       ModelType model2Type) throws IOException {
-        return BinaryClassifierPersistence.saveBinaryState(project, sanitizedMarkerName, labelStore,
-                featureNames, classNames, xgboostBytes, lightgbmBytes, rfModel1Bytes, rfModel2Bytes,
-                model1Type, model2Type);
+    public static Path saveBinaryState(
+            Project<?> project,
+            String sanitizedMarkerName,
+            LabelStore labelStore,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes,
+            byte[] rfModel1Bytes,
+            byte[] rfModel2Bytes,
+            ModelType model1Type,
+            ModelType model2Type)
+            throws IOException {
+        return BinaryClassifierPersistence.saveBinaryState(
+                project,
+                sanitizedMarkerName,
+                labelStore,
+                featureNames,
+                classNames,
+                xgboostBytes,
+                lightgbmBytes,
+                rfModel1Bytes,
+                rfModel2Bytes,
+                model1Type,
+                model2Type);
     }
 
     /**
@@ -792,8 +828,7 @@ public class ProjectStateManager {
      * @return the loaded state, or null if no state file exists for this marker
      * @throws IOException if reading or parsing fails
      */
-    public static SavedState loadBinaryState(Project<?> project,
-                                             String sanitizedMarkerName) throws IOException {
+    public static SavedState loadBinaryState(Project<?> project, String sanitizedMarkerName) throws IOException {
         return BinaryClassifierPersistence.loadBinaryState(project, sanitizedMarkerName);
     }
 
@@ -808,9 +843,8 @@ public class ProjectStateManager {
      * @param labelStore          labels to persist
      * @throws IOException if reading or writing fails
      */
-    public static void saveBinaryLabels(Project<?> project,
-                                        String sanitizedMarkerName,
-                                        LabelStore labelStore) throws IOException {
+    public static void saveBinaryLabels(Project<?> project, String sanitizedMarkerName, LabelStore labelStore)
+            throws IOException {
         BinaryClassifierPersistence.saveBinaryLabels(project, sanitizedMarkerName, labelStore);
     }
 
@@ -824,17 +858,14 @@ public class ProjectStateManager {
      * @return a populated LabelStore, never null
      * @throws IOException if reading fails
      */
-    public static LabelStore loadBinaryLabels(Project<?> project,
-                                              String sanitizedMarkerName) throws IOException {
+    public static LabelStore loadBinaryLabels(Project<?> project, String sanitizedMarkerName) throws IOException {
         return BinaryClassifierPersistence.loadBinaryLabels(project, sanitizedMarkerName);
     }
-
 
     /**
      * Marker-specific imported training payload used by binary transfer workflows.
      */
-    public record BinaryImportedTrainingData(List<String> featureNames,
-                                             List<GroundTruthIO.TrainingRow> rows) {}
+    public record BinaryImportedTrainingData(List<String> featureNames, List<GroundTruthIO.TrainingRow> rows) {}
 
     /**
      * Save imported training rows for a specific binary marker.
@@ -846,10 +877,12 @@ public class ProjectStateManager {
      * @return path to the persisted marker payload
      * @throws IOException if writing fails
      */
-    public static Path saveBinaryImportedTrainingData(Project<?> project,
-                                                      String sanitizedMarkerName,
-                                                      List<String> featureNames,
-                                                      List<GroundTruthIO.TrainingRow> rows) throws IOException {
+    public static Path saveBinaryImportedTrainingData(
+            Project<?> project,
+            String sanitizedMarkerName,
+            List<String> featureNames,
+            List<GroundTruthIO.TrainingRow> rows)
+            throws IOException {
         return BinaryClassifierPersistence.saveBinaryImportedTrainingData(
                 project, sanitizedMarkerName, featureNames, rows);
     }
@@ -862,8 +895,8 @@ public class ProjectStateManager {
      * @return marker payload, or null when no payload exists
      * @throws IOException if reading fails
      */
-    public static BinaryImportedTrainingData loadBinaryImportedTrainingData(Project<?> project,
-                                                                            String sanitizedMarkerName) throws IOException {
+    public static BinaryImportedTrainingData loadBinaryImportedTrainingData(
+            Project<?> project, String sanitizedMarkerName) throws IOException {
         return BinaryClassifierPersistence.loadBinaryImportedTrainingData(project, sanitizedMarkerName);
     }
 
@@ -873,8 +906,8 @@ public class ProjectStateManager {
      * @return true if a payload file existed and was deleted
      * @throws IOException if deletion fails
      */
-    public static boolean deleteBinaryImportedTrainingData(Project<?> project,
-                                                           String sanitizedMarkerName) throws IOException {
+    public static boolean deleteBinaryImportedTrainingData(Project<?> project, String sanitizedMarkerName)
+            throws IOException {
         return BinaryClassifierPersistence.deleteBinaryImportedTrainingData(project, sanitizedMarkerName);
     }
 
@@ -895,4 +928,3 @@ public class ProjectStateManager {
         return MarkerTablePersistence.loadMarkerTable(project);
     }
 }
-

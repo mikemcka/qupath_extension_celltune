@@ -1,5 +1,6 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -12,13 +13,13 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.LabelStore;
+import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
-
-import java.util.*;
 
 /**
  * Manual Label Mode — a floating toolbar that lets users click on cells in the
@@ -38,9 +39,6 @@ import java.util.*;
  *  [ ] Auto-advance to next detection
  * </pre>
  */
-import qupath.ext.celltune.model.PopulationSet;
-import qupath.ext.celltune.model.CellPrediction;
-
 public class ManualLabelToolbar {
 
     private static final Logger logger = LoggerFactory.getLogger(ManualLabelToolbar.class);
@@ -56,7 +54,6 @@ public class ManualLabelToolbar {
     private final FlowPane classButtonBox = new FlowPane(4, 4);
     private final MenuButton allClassesMenu = new MenuButton("All Classes \u25BC");
     private final CheckBox autoAdvance = new CheckBox("Auto-advance to next detection");
-
 
     // Currently selected detections (may be more than one)
     private List<PathObject> selectedCells = new ArrayList<>();
@@ -87,7 +84,8 @@ public class ManualLabelToolbar {
     private qupath.lib.objects.hierarchy.PathObjectHierarchy listenedHierarchy;
     // Listener on QuPath's active-image property so we can re-attach the
     // selection listener to the new image and clear the stale highlight ring.
-    private javafx.beans.value.ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>> imageDataListener;
+    private javafx.beans.value.ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>>
+            imageDataListener;
 
     /**
      * When non-null, class buttons and the All Classes menu are restricted to
@@ -106,12 +104,13 @@ public class ManualLabelToolbar {
      * @param predictions    optional current predictions, may be null
      * @param binaryClasses  allowed class names for binary mode, or null for multi-class mode
      */
-    public ManualLabelToolbar(QuPathGUI qupath,
-                              LabelStore labelStore,
-                              Set<String> extraClasses,
-                              Window owner,
-                              PopulationSet predictions,
-                              List<String> binaryClasses) {
+    public ManualLabelToolbar(
+            QuPathGUI qupath,
+            LabelStore labelStore,
+            Set<String> extraClasses,
+            Window owner,
+            PopulationSet predictions,
+            List<String> binaryClasses) {
         this.qupath = qupath;
         this.labelStore = labelStore;
         this.predictions = predictions;
@@ -228,7 +227,9 @@ public class ManualLabelToolbar {
     }
 
     /** @return the stage for external control */
-    public Stage getStage() { return stage; }
+    public Stage getStage() {
+        return stage;
+    }
 
     // ── Selection listener ──────────────────────────────────────────────────
 
@@ -250,8 +251,8 @@ public class ManualLabelToolbar {
                 if (selectedCells.size() == 1) {
                     PathObject cell = selectedCells.get(0);
                     String id = shortId(cell);
-                    String cls = cell.getPathClass() != null
-                            ? cell.getPathClass().getName() : "unlabelled";
+                    String cls =
+                            cell.getPathClass() != null ? cell.getPathClass().getName() : "unlabelled";
                     selectedCellLabel.setText("Selected: " + id + " (" + cls + ")");
                     statusDot.setFill(cell.getPathClass() != null ? Color.LIMEGREEN : Color.WHITE);
                     updatePredictionButtons(cell);
@@ -270,8 +271,7 @@ public class ManualLabelToolbar {
             });
         };
 
-        listenedHierarchy.getSelectionModel()
-                .addPathObjectSelectionListener(selectionListener);
+        listenedHierarchy.getSelectionModel().addPathObjectSelectionListener(selectionListener);
     }
 
     // ── Model prediction buttons (model 1/model 2) ─────────────────────────
@@ -296,14 +296,14 @@ public class ManualLabelToolbar {
         }
 
         // Model 1 button
-        Button mdl1Btn = new Button(String.format("Model 1: %s (%.0f%%)",
-                pred.getModel1Label(), pred.model1Confidence() * 100));
+        Button mdl1Btn =
+                new Button(String.format("Model 1: %s (%.0f%%)", pred.getModel1Label(), pred.model1Confidence() * 100));
         mdl1Btn.setStyle("-fx-background-color: #bbdefb; -fx-font-weight: bold; -fx-font-size: 11px;");
         mdl1Btn.setOnAction(e -> assignLabel(pred.getModel1Label()));
 
         // Model 2 button
-        Button mdl2Btn = new Button(String.format("Model 2: %s (%.0f%%)",
-                pred.getModel2Label(), pred.model2Confidence() * 100));
+        Button mdl2Btn =
+                new Button(String.format("Model 2: %s (%.0f%%)", pred.getModel2Label(), pred.model2Confidence() * 100));
         mdl2Btn.setStyle("-fx-background-color: #f8bbd0; -fx-font-weight: bold; -fx-font-size: 11px;");
         mdl2Btn.setOnAction(e -> assignLabel(pred.getModel2Label()));
 
@@ -315,8 +315,7 @@ public class ManualLabelToolbar {
         // Detach from the hierarchy the listener was actually attached to, not
         // the currently-active image's hierarchy (which may have changed).
         if (listenedHierarchy != null) {
-            listenedHierarchy.getSelectionModel()
-                    .removePathObjectSelectionListener(selectionListener);
+            listenedHierarchy.getSelectionModel().removePathObjectSelectionListener(selectionListener);
         }
         selectionListener = null;
         listenedHierarchy = null;
@@ -438,8 +437,7 @@ public class ManualLabelToolbar {
         // Fire hierarchy update so overlay colours refresh
         var imageData = qupath.getImageData();
         if (imageData != null) {
-            imageData.getHierarchy().fireObjectClassificationsChangedEvent(this,
-                    new ArrayList<>(selectedCells));
+            imageData.getHierarchy().fireObjectClassificationsChangedEvent(this, new ArrayList<>(selectedCells));
         }
 
         // Auto-advance: only meaningful for single-cell labelling
@@ -467,8 +465,7 @@ public class ManualLabelToolbar {
             var viewer = qupath.getViewer();
             if (viewer != null && next.getROI() != null) {
                 viewer.setCenterPixelLocation(
-                        next.getROI().getCentroidX(),
-                        next.getROI().getCentroidY());
+                        next.getROI().getCentroidX(), next.getROI().getCentroidY());
             }
         }
     }

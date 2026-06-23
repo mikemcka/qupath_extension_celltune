@@ -1,31 +1,8 @@
 package qupath.ext.celltune;
 
-import javafx.application.Platform;
-import javafx.geometry.Insets;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.Hyperlink;
-import javafx.scene.control.Label;
-import javafx.scene.control.TextField;
-import javafx.scene.layout.GridPane;
-import javafx.scene.layout.VBox;
-import javafx.stage.FileChooser;
 import com.google.gson.JsonElement;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.fx.dialogs.Dialogs;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.gui.tools.GuiTools;
-import qupath.lib.io.GsonTools;
-import qupath.lib.objects.PathAnnotationObject;
-import qupath.lib.objects.PathDetectionObject;
-import qupath.lib.objects.PathObject;
-import qupath.lib.projects.Project;
-import qupath.lib.projects.ProjectImageEntry;
-import qupath.lib.roi.interfaces.ROI;
 import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -39,6 +16,27 @@ import java.util.Collection;
 import java.util.List;
 import java.util.ResourceBundle;
 import java.util.zip.GZIPInputStream;
+import javafx.application.Platform;
+import javafx.geometry.Insets;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Hyperlink;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.fx.dialogs.Dialogs;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.tools.GuiTools;
+import qupath.lib.io.GsonTools;
+import qupath.lib.objects.PathAnnotationObject;
+import qupath.lib.objects.PathDetectionObject;
+import qupath.lib.objects.PathObject;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Standalone utility scripts surfaced under the Extensions ‣ CellTune ‣ Utility
@@ -53,8 +51,7 @@ import java.util.zip.GZIPInputStream;
  */
 final class UtilityScripts {
 
-    private static final ResourceBundle resources =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle resources = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
     private static final String EXTENSION_NAME = resources.getString("name");
     private static final Logger logger = LoggerFactory.getLogger(UtilityScripts.class);
     /** Stable non-null source for hierarchy-change events fired by these scripts. */
@@ -156,27 +153,36 @@ final class UtilityScripts {
         }
 
         if (toRemove.isEmpty()) {
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "No cells matched the filter (" + criteriaText + ").");
+            Dialogs.showInfoNotification(EXTENSION_NAME, "No cells matched the filter (" + criteriaText + ").");
             return;
         }
 
-        boolean confirm = Dialogs.showConfirmDialog(EXTENSION_NAME, String.format(
-                "Remove %d of %d cells (%s)?%s",
-                toRemove.size(), cells.size(), criteriaText,
-                missing > 0
-                        ? "\n\n" + missing + " cell(s) skipped (missing area/circularity measurements)."
-                        : ""));
+        boolean confirm = Dialogs.showConfirmDialog(
+                EXTENSION_NAME,
+                String.format(
+                        "Remove %d of %d cells (%s)?%s",
+                        toRemove.size(),
+                        cells.size(),
+                        criteriaText,
+                        missing > 0
+                                ? "\n\n" + missing + " cell(s) skipped (missing area/circularity measurements)."
+                                : ""));
         if (!confirm) return;
 
         hierarchy.removeObjects(toRemove, true);
         hierarchy.fireHierarchyChangedEvent(EVENT_SOURCE);
 
-        long remaining = hierarchy.getDetectionObjects().stream().filter(PathObject::isCell).count();
-        Dialogs.showInfoNotification(EXTENSION_NAME,
-                "Removed " + toRemove.size() + " cell(s). " + remaining + " remaining.");
-        logger.info("[CellTune] Size/circularity filter removed {} of {} cells ({}, skipped={}).",
-                toRemove.size(), cells.size(), criteriaText, missing);
+        long remaining = hierarchy.getDetectionObjects().stream()
+                .filter(PathObject::isCell)
+                .count();
+        Dialogs.showInfoNotification(
+                EXTENSION_NAME, "Removed " + toRemove.size() + " cell(s). " + remaining + " remaining.");
+        logger.info(
+                "[CellTune] Size/circularity filter removed {} of {} cells ({}, skipped={}).",
+                toRemove.size(),
+                cells.size(),
+                criteriaText,
+                missing);
     }
 
     /**
@@ -225,9 +231,11 @@ final class UtilityScripts {
         } else if (imageData == null) {
             choice = projectChoice;
         } else {
-            choice = Dialogs.showChoiceDialog(EXTENSION_NAME,
+            choice = Dialogs.showChoiceDialog(
+                    EXTENSION_NAME,
                     "Resolve the object hierarchy for:",
-                    List.of(currentChoice, projectChoice), currentChoice);
+                    List.of(currentChoice, projectChoice),
+                    currentChoice);
             if (choice == null) return;
         }
 
@@ -248,7 +256,8 @@ final class UtilityScripts {
             Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
             return;
         }
-        if (!Dialogs.showConfirmDialog(EXTENSION_NAME,
+        if (!Dialogs.showConfirmDialog(
+                EXTENSION_NAME,
                 "Resolve the hierarchy for all " + entries.size() + " project image(s) and save each?")) {
             return;
         }
@@ -265,37 +274,44 @@ final class UtilityScripts {
                 currentEntry.saveImageData(imageData);
                 done = 1;
             } catch (Exception ex) {
-                logger.warn("[CellTune] Failed to resolve hierarchy for current image {}: {}",
-                        currentEntry.getImageName(), ex.getMessage());
+                logger.warn(
+                        "[CellTune] Failed to resolve hierarchy for current image {}: {}",
+                        currentEntry.getImageName(),
+                        ex.getMessage());
             }
         }
 
         final int alreadyDone = done;
         final var currentEntryF = currentEntry;
-        Thread worker = new Thread(() -> {
-            int ok = alreadyDone;
-            int failed = 0;
-            for (var entry : entries) {
-                if (entry == null) continue;
-                if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
-                try {
-                    var data = entry.readImageData();
-                    data.getHierarchy().resolveHierarchy();
-                    entry.saveImageData(data);
-                    ok++;
-                } catch (Exception ex) {
-                    failed++;
-                    logger.warn("[CellTune] Failed to resolve hierarchy for {}: {}",
-                            entry.getImageName(), ex.getMessage());
-                }
-            }
-            final int okF = ok;
-            final int failedF = failed;
-            Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Resolved hierarchy for " + okF + " image(s)."
-                    + (failedF > 0 ? " " + failedF + " failed (see log)." : "")));
-            logger.info("[CellTune] Project-wide resolveHierarchy complete: {} ok, {} failed.", okF, failedF);
-        }, "celltune-resolve-hierarchy");
+        Thread worker = new Thread(
+                () -> {
+                    int ok = alreadyDone;
+                    int failed = 0;
+                    for (var entry : entries) {
+                        if (entry == null) continue;
+                        if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
+                        try {
+                            var data = entry.readImageData();
+                            data.getHierarchy().resolveHierarchy();
+                            entry.saveImageData(data);
+                            ok++;
+                        } catch (Exception ex) {
+                            failed++;
+                            logger.warn(
+                                    "[CellTune] Failed to resolve hierarchy for {}: {}",
+                                    entry.getImageName(),
+                                    ex.getMessage());
+                        }
+                    }
+                    final int okF = ok;
+                    final int failedF = failed;
+                    Platform.runLater(() -> Dialogs.showInfoNotification(
+                            EXTENSION_NAME,
+                            "Resolved hierarchy for " + okF + " image(s)."
+                                    + (failedF > 0 ? " " + failedF + " failed (see log)." : "")));
+                    logger.info("[CellTune] Project-wide resolveHierarchy complete: {} ok, {} failed.", okF, failedF);
+                },
+                "celltune-resolve-hierarchy");
         worker.setDaemon(true);
         worker.start();
     }
@@ -325,9 +341,8 @@ final class UtilityScripts {
         } else if (imageData == null) {
             choice = projectChoice;
         } else {
-            choice = Dialogs.showChoiceDialog(EXTENSION_NAME,
-                    "Lock all annotations for:",
-                    List.of(currentChoice, projectChoice), currentChoice);
+            choice = Dialogs.showChoiceDialog(
+                    EXTENSION_NAME, "Lock all annotations for:", List.of(currentChoice, projectChoice), currentChoice);
             if (choice == null) return;
         }
 
@@ -341,13 +356,13 @@ final class UtilityScripts {
             }
             int locked = lockAnnotations(annotations);
             hierarchy.fireHierarchyChangedEvent(EVENT_SOURCE);
-            Dialogs.showInfoNotification(EXTENSION_NAME,
+            Dialogs.showInfoNotification(
+                    EXTENSION_NAME,
                     "Locked " + locked + " annotation(s)."
-                    + (locked < annotations.size()
-                            ? " " + (annotations.size() - locked) + " were already locked."
-                            : ""));
-            logger.info("[CellTune] Locked {} of {} annotation(s) on the current image.",
-                    locked, annotations.size());
+                            + (locked < annotations.size()
+                                    ? " " + (annotations.size() - locked) + " were already locked."
+                                    : ""));
+            logger.info("[CellTune] Locked {} of {} annotation(s) on the current image.", locked, annotations.size());
             return;
         }
 
@@ -358,7 +373,8 @@ final class UtilityScripts {
             Dialogs.showInfoNotification(EXTENSION_NAME, "No project images found.");
             return;
         }
-        if (!Dialogs.showConfirmDialog(EXTENSION_NAME,
+        if (!Dialogs.showConfirmDialog(
+                EXTENSION_NAME,
                 "Lock all annotations for all " + entries.size() + " project image(s) and save each?")) {
             return;
         }
@@ -377,41 +393,51 @@ final class UtilityScripts {
                 currentEntry.saveImageData(imageData);
                 doneImages = 1;
             } catch (Exception ex) {
-                logger.warn("[CellTune] Failed to lock annotations for current image {}: {}",
-                        currentEntry.getImageName(), ex.getMessage());
+                logger.warn(
+                        "[CellTune] Failed to lock annotations for current image {}: {}",
+                        currentEntry.getImageName(),
+                        ex.getMessage());
             }
         }
 
         final int alreadyDoneImages = doneImages;
         final int alreadyLocked = lockedSoFar;
         final var currentEntryF = currentEntry;
-        Thread worker = new Thread(() -> {
-            int okImages = alreadyDoneImages;
-            int failed = 0;
-            int totalLocked = alreadyLocked;
-            for (var entry : entries) {
-                if (entry == null) continue;
-                if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
-                try {
-                    var data = entry.readImageData();
-                    totalLocked += lockAnnotations(data.getHierarchy().getAnnotationObjects());
-                    entry.saveImageData(data);
-                    okImages++;
-                } catch (Exception ex) {
-                    failed++;
-                    logger.warn("[CellTune] Failed to lock annotations for {}: {}",
-                            entry.getImageName(), ex.getMessage());
-                }
-            }
-            final int okImagesF = okImages;
-            final int failedF = failed;
-            final int totalLockedF = totalLocked;
-            Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Locked " + totalLockedF + " annotation(s) across " + okImagesF + " image(s)."
-                    + (failedF > 0 ? " " + failedF + " failed (see log)." : "")));
-            logger.info("[CellTune] Project-wide lock complete: {} annotation(s), {} ok, {} failed.",
-                    totalLockedF, okImagesF, failedF);
-        }, "celltune-lock-annotations");
+        Thread worker = new Thread(
+                () -> {
+                    int okImages = alreadyDoneImages;
+                    int failed = 0;
+                    int totalLocked = alreadyLocked;
+                    for (var entry : entries) {
+                        if (entry == null) continue;
+                        if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
+                        try {
+                            var data = entry.readImageData();
+                            totalLocked += lockAnnotations(data.getHierarchy().getAnnotationObjects());
+                            entry.saveImageData(data);
+                            okImages++;
+                        } catch (Exception ex) {
+                            failed++;
+                            logger.warn(
+                                    "[CellTune] Failed to lock annotations for {}: {}",
+                                    entry.getImageName(),
+                                    ex.getMessage());
+                        }
+                    }
+                    final int okImagesF = okImages;
+                    final int failedF = failed;
+                    final int totalLockedF = totalLocked;
+                    Platform.runLater(() -> Dialogs.showInfoNotification(
+                            EXTENSION_NAME,
+                            "Locked " + totalLockedF + " annotation(s) across " + okImagesF + " image(s)."
+                                    + (failedF > 0 ? " " + failedF + " failed (see log)." : "")));
+                    logger.info(
+                            "[CellTune] Project-wide lock complete: {} annotation(s), {} ok, {} failed.",
+                            totalLockedF,
+                            okImagesF,
+                            failedF);
+                },
+                "celltune-lock-annotations");
         worker.setDaemon(true);
         worker.start();
     }
@@ -467,7 +493,8 @@ final class UtilityScripts {
         var choice = dialog.showAndWait();
         if (choice.isEmpty() || choice.get() != ButtonType.OK) return;
 
-        String keyword = keywordField.getText() == null ? "" : keywordField.getText().strip();
+        String keyword =
+                keywordField.getText() == null ? "" : keywordField.getText().strip();
         if (keyword.isEmpty()) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "Please enter a keyword.");
             return;
@@ -483,8 +510,8 @@ final class UtilityScripts {
         } else if (imageData == null) {
             projectWide = true;
         } else {
-            String scope = Dialogs.showChoiceDialog(EXTENSION_NAME, "Apply to:",
-                    List.of(currentChoice, projectChoice), currentChoice);
+            String scope = Dialogs.showChoiceDialog(
+                    EXTENSION_NAME, "Apply to:", List.of(currentChoice, projectChoice), currentChoice);
             if (scope == null) return;
             projectWide = scope.equals(projectChoice);
         }
@@ -512,35 +539,43 @@ final class UtilityScripts {
                         break;
                     }
                 } catch (Exception ex) {
-                    logger.warn("[CellTune] Failed to read {} for measurement preview: {}",
-                            entry.getImageName(), ex.getMessage());
+                    logger.warn(
+                            "[CellTune] Failed to read {} for measurement preview: {}",
+                            entry.getImageName(),
+                            ex.getMessage());
                 }
             }
         }
 
         if (preview.isEmpty()) {
-            Dialogs.showInfoNotification(EXTENSION_NAME,
+            Dialogs.showInfoNotification(
+                    EXTENSION_NAME,
                     "No measurement names contain \"" + keyword + "\""
-                    + (previewImage != null ? " on " + previewImage : "") + ".");
+                            + (previewImage != null ? " on " + previewImage : "") + ".");
             return;
         }
 
-        String columnList = String.join("\n", preview.stream().map(s -> "  \u2022 " + s).toList());
+        String columnList =
+                String.join("\n", preview.stream().map(s -> "  \u2022 " + s).toList());
         int imageCount = projectWide ? project.getImageList().size() : 1;
         String scopeText = projectWide ? ("all " + imageCount + " project image(s)") : "the current image";
-        boolean confirmed = Dialogs.showConfirmDialog(EXTENSION_NAME,
-                "Permanently delete these " + preview.size() + " measurement column(s) from "
-                + scopeText + "?\n\n" + columnList + "\n\nThis cannot be undone.");
+        boolean confirmed = Dialogs.showConfirmDialog(
+                EXTENSION_NAME,
+                "Permanently delete these " + preview.size() + " measurement column(s) from " + scopeText + "?\n\n"
+                        + columnList + "\n\nThis cannot be undone.");
         if (!confirmed) return;
 
         // Current image only.
         if (!projectWide) {
             int touched = removeMeasurementsByKeyword(imageData.getHierarchy().getDetectionObjects(), keyword, cs);
             imageData.getHierarchy().fireHierarchyChangedEvent(EVENT_SOURCE);
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Removed " + preview.size() + " column(s) from " + touched + " detection(s).");
-            logger.info("[CellTune] Deleted measurements matching \"{}\" (caseSensitive={}) from {} detections on current image.",
-                    keyword, cs, touched);
+            Dialogs.showInfoNotification(
+                    EXTENSION_NAME, "Removed " + preview.size() + " column(s) from " + touched + " detection(s).");
+            logger.info(
+                    "[CellTune] Deleted measurements matching \"{}\" (caseSensitive={}) from {} detections on current image.",
+                    keyword,
+                    cs,
+                    touched);
             return;
         }
 
@@ -560,8 +595,10 @@ final class UtilityScripts {
                 if (t > 0) doneImages = 1;
                 doneTouched = t;
             } catch (Exception ex) {
-                logger.warn("[CellTune] Failed to delete measurements for current image {}: {}",
-                        currentEntry.getImageName(), ex.getMessage());
+                logger.warn(
+                        "[CellTune] Failed to delete measurements for current image {}: {}",
+                        currentEntry.getImageName(),
+                        ex.getMessage());
             }
         }
 
@@ -570,35 +607,45 @@ final class UtilityScripts {
         final var currentEntryF = currentEntry;
         final String keywordF = keyword;
         final boolean csF = cs;
-        Thread worker = new Thread(() -> {
-            int images = alreadyImages;
-            long touched = alreadyTouched;
-            int failed = 0;
-            for (var entry : entries) {
-                if (entry == null) continue;
-                if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
-                try {
-                    var data = entry.readImageData();
-                    int t = removeMeasurementsByKeyword(data.getHierarchy().getDetectionObjects(), keywordF, csF);
-                    entry.saveImageData(data);
-                    if (t > 0) images++;
-                    touched += t;
-                } catch (Exception ex) {
-                    failed++;
-                    logger.warn("[CellTune] Failed to delete measurements for {}: {}",
-                            entry.getImageName(), ex.getMessage());
-                }
-            }
-            final int imagesF = images;
-            final long touchedF = touched;
-            final int failedF = failed;
-            Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Removed matching measurements from " + touchedF + " detection(s) across "
-                    + imagesF + " image(s)."
-                    + (failedF > 0 ? " " + failedF + " image(s) failed (see log)." : "")));
-            logger.info("[CellTune] Project-wide measurement delete matching \"{}\": {} detections across {} images, {} failed.",
-                    keywordF, touchedF, imagesF, failedF);
-        }, "celltune-delete-measurements");
+        Thread worker = new Thread(
+                () -> {
+                    int images = alreadyImages;
+                    long touched = alreadyTouched;
+                    int failed = 0;
+                    for (var entry : entries) {
+                        if (entry == null) continue;
+                        if (currentEntryF != null && entry.equals(currentEntryF)) continue; // handled above
+                        try {
+                            var data = entry.readImageData();
+                            int t = removeMeasurementsByKeyword(
+                                    data.getHierarchy().getDetectionObjects(), keywordF, csF);
+                            entry.saveImageData(data);
+                            if (t > 0) images++;
+                            touched += t;
+                        } catch (Exception ex) {
+                            failed++;
+                            logger.warn(
+                                    "[CellTune] Failed to delete measurements for {}: {}",
+                                    entry.getImageName(),
+                                    ex.getMessage());
+                        }
+                    }
+                    final int imagesF = images;
+                    final long touchedF = touched;
+                    final int failedF = failed;
+                    Platform.runLater(() -> Dialogs.showInfoNotification(
+                            EXTENSION_NAME,
+                            "Removed matching measurements from " + touchedF + " detection(s) across "
+                                    + imagesF + " image(s)."
+                                    + (failedF > 0 ? " " + failedF + " image(s) failed (see log)." : "")));
+                    logger.info(
+                            "[CellTune] Project-wide measurement delete matching \"{}\": {} detections across {} images, {} failed.",
+                            keywordF,
+                            touchedF,
+                            imagesF,
+                            failedF);
+                },
+                "celltune-delete-measurements");
         worker.setDaemon(true);
         worker.start();
     }
@@ -607,8 +654,8 @@ final class UtilityScripts {
      * Return the measurement names on the first detection that has any, matching
      * {@code keyword} as a substring (case-insensitive unless {@code caseSensitive}).
      */
-    private static List<String> matchingMeasurementNames(Collection<PathObject> detections,
-                                                          String keyword, boolean caseSensitive) {
+    private static List<String> matchingMeasurementNames(
+            Collection<PathObject> detections, String keyword, boolean caseSensitive) {
         PathObject sample = null;
         for (PathObject det : detections) {
             if (!det.getMeasurementList().getNames().isEmpty()) {
@@ -630,8 +677,8 @@ final class UtilityScripts {
      * Remove every measurement matching {@code keyword} from each detection.
      * Returns the number of detections that had at least one measurement removed.
      */
-    private static int removeMeasurementsByKeyword(Collection<PathObject> detections,
-                                                   String keyword, boolean caseSensitive) {
+    private static int removeMeasurementsByKeyword(
+            Collection<PathObject> detections, String keyword, boolean caseSensitive) {
         List<String> matches = matchingMeasurementNames(detections, keyword, caseSensitive);
         if (matches.isEmpty()) return 0;
         int touched = 0;
@@ -649,8 +696,7 @@ final class UtilityScripts {
         return touched;
     }
 
-    private static final String LARGE_GEOJSON_REPO =
-            "https://github.com/BioimageAnalysisCoreWEHI/import_large_geojson";
+    private static final String LARGE_GEOJSON_REPO = "https://github.com/BioimageAnalysisCoreWEHI/import_large_geojson";
 
     /**
      * Import annotations/detections from a GeoJSON (or gzipped GeoJSON) file into the
@@ -667,17 +713,17 @@ final class UtilityScripts {
 
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Import GeoJSON objects");
-        chooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("GeoJSON", "*.geojson", "*.json", "*.geojson.gz", "*.json.gz"),
-                new FileChooser.ExtensionFilter("All files", "*.*"));
+        chooser.getExtensionFilters()
+                .addAll(
+                        new FileChooser.ExtensionFilter("GeoJSON", "*.geojson", "*.json", "*.geojson.gz", "*.json.gz"),
+                        new FileChooser.ExtensionFilter("All files", "*.*"));
         File file = chooser.showOpenDialog(qupath.getStage());
         if (file == null) return;
 
         double sizeMB = file.length() / (1024.0 * 1024.0);
 
         // Disclaimer + options.
-        Label warning = new Label(
-                "This importer loads the entire GeoJSON into memory and is intended for "
+        Label warning = new Label("This importer loads the entire GeoJSON into memory and is intended for "
                 + "small-to-medium files. Very large files (hundreds of MB / millions of "
                 + "objects) can exhaust QuPath's heap and crash the application — use the "
                 + "dedicated headless pipeline for those:");
@@ -700,8 +746,7 @@ final class UtilityScripts {
         CheckBox clearCb = new CheckBox("Clear existing objects first");
         CheckBox resolveCb = new CheckBox("Resolve hierarchy after import (slower; O(n²))");
 
-        VBox content = new VBox(10, warning, link, new javafx.scene.control.Separator(),
-                fileLabel, clearCb, resolveCb);
+        VBox content = new VBox(10, warning, link, new javafx.scene.control.Separator(), fileLabel, clearCb, resolveCb);
         content.setPadding(new Insets(10));
 
         Dialog<ButtonType> dialog = new Dialog<>();
@@ -720,71 +765,85 @@ final class UtilityScripts {
 
         Dialogs.showInfoNotification(EXTENSION_NAME, "Importing GeoJSON — see the log for progress.");
 
-        Thread worker = new Thread(() -> {
-            List<PathObject> objects;
-            try {
-                objects = parseGeoJsonObjects(file);
-            } catch (Throwable t) {
-                logger.error("[CellTune] GeoJSON parse failed: {}", t.toString(), t);
-                Platform.runLater(() -> Dialogs.showErrorMessage(EXTENSION_NAME,
-                        "Failed to read GeoJSON: " + t.getMessage()));
-                return;
-            }
-            if (objects.isEmpty()) {
-                Platform.runLater(() -> Dialogs.showInfoNotification(EXTENSION_NAME,
-                        "No valid objects found in " + file.getName() + "."));
-                return;
-            }
-
-            List<PathObject> annotations = new ArrayList<>();
-            List<PathObject> detections = new ArrayList<>();
-            List<PathObject> others = new ArrayList<>();
-            for (PathObject o : objects) {
-                if (o instanceof PathAnnotationObject) annotations.add(o);
-                else if (o instanceof PathDetectionObject) detections.add(o);
-                else others.add(o);
-            }
-
-            // Hierarchy mutation happens on the FX thread (the viewer observes it).
-            Platform.runLater(() -> {
-                try {
-                    if (clearExisting) hierarchy.clearAll();
-                    if (!annotations.isEmpty()) {
-                        annotations.forEach(a -> a.setLocked(true));
-                        hierarchy.addObjects(annotations);
+        Thread worker = new Thread(
+                () -> {
+                    List<PathObject> objects;
+                    try {
+                        objects = parseGeoJsonObjects(file);
+                    } catch (Throwable t) {
+                        logger.error("[CellTune] GeoJSON parse failed: {}", t.toString(), t);
+                        Platform.runLater(() ->
+                                Dialogs.showErrorMessage(EXTENSION_NAME, "Failed to read GeoJSON: " + t.getMessage()));
+                        return;
                     }
-                    if (!detections.isEmpty()) {
-                        if (detections.size() > 200_000) {
-                            int chunk = 100_000;
-                            for (int i = 0; i < detections.size(); i += chunk) {
-                                hierarchy.addObjects(detections.subList(i, Math.min(i + chunk, detections.size())));
-                            }
-                        } else {
-                            hierarchy.addObjects(detections);
-                        }
+                    if (objects.isEmpty()) {
+                        Platform.runLater(() -> Dialogs.showInfoNotification(
+                                EXTENSION_NAME, "No valid objects found in " + file.getName() + "."));
+                        return;
                     }
-                    if (!others.isEmpty()) hierarchy.addObjects(others);
-                    if (doResolve) hierarchy.resolveHierarchy();
-                    hierarchy.fireHierarchyChangedEvent(EVENT_SOURCE);
-                    if (entry != null) {
+
+                    List<PathObject> annotations = new ArrayList<>();
+                    List<PathObject> detections = new ArrayList<>();
+                    List<PathObject> others = new ArrayList<>();
+                    for (PathObject o : objects) {
+                        if (o instanceof PathAnnotationObject) annotations.add(o);
+                        else if (o instanceof PathDetectionObject) detections.add(o);
+                        else others.add(o);
+                    }
+
+                    // Hierarchy mutation happens on the FX thread (the viewer observes it).
+                    Platform.runLater(() -> {
                         try {
-                            entry.saveImageData(imageData);
-                        } catch (Exception ex) {
-                            logger.warn("[CellTune] Failed to save image data after GeoJSON import: {}", ex.getMessage());
+                            if (clearExisting) hierarchy.clearAll();
+                            if (!annotations.isEmpty()) {
+                                annotations.forEach(a -> a.setLocked(true));
+                                hierarchy.addObjects(annotations);
+                            }
+                            if (!detections.isEmpty()) {
+                                if (detections.size() > 200_000) {
+                                    int chunk = 100_000;
+                                    for (int i = 0; i < detections.size(); i += chunk) {
+                                        hierarchy.addObjects(
+                                                detections.subList(i, Math.min(i + chunk, detections.size())));
+                                    }
+                                } else {
+                                    hierarchy.addObjects(detections);
+                                }
+                            }
+                            if (!others.isEmpty()) hierarchy.addObjects(others);
+                            if (doResolve) hierarchy.resolveHierarchy();
+                            hierarchy.fireHierarchyChangedEvent(EVENT_SOURCE);
+                            if (entry != null) {
+                                try {
+                                    entry.saveImageData(imageData);
+                                } catch (Exception ex) {
+                                    logger.warn(
+                                            "[CellTune] Failed to save image data after GeoJSON import: {}",
+                                            ex.getMessage());
+                                }
+                            }
+                            Dialogs.showInfoNotification(
+                                    EXTENSION_NAME,
+                                    String.format(
+                                            "Imported %d object(s): %d annotation(s), %d detection(s)%s.",
+                                            objects.size(),
+                                            annotations.size(),
+                                            detections.size(),
+                                            others.isEmpty() ? "" : ", " + others.size() + " other"));
+                            logger.info(
+                                    "[CellTune] GeoJSON import: {} objects ({} ann, {} det, {} other) from {}.",
+                                    objects.size(),
+                                    annotations.size(),
+                                    detections.size(),
+                                    others.size(),
+                                    file.getName());
+                        } catch (Throwable t) {
+                            logger.error("[CellTune] GeoJSON import (add) failed: {}", t.toString(), t);
+                            Dialogs.showErrorMessage(EXTENSION_NAME, "Failed to add objects: " + t.getMessage());
                         }
-                    }
-                    Dialogs.showInfoNotification(EXTENSION_NAME, String.format(
-                            "Imported %d object(s): %d annotation(s), %d detection(s)%s.",
-                            objects.size(), annotations.size(), detections.size(),
-                            others.isEmpty() ? "" : ", " + others.size() + " other"));
-                    logger.info("[CellTune] GeoJSON import: {} objects ({} ann, {} det, {} other) from {}.",
-                            objects.size(), annotations.size(), detections.size(), others.size(), file.getName());
-                } catch (Throwable t) {
-                    logger.error("[CellTune] GeoJSON import (add) failed: {}", t.toString(), t);
-                    Dialogs.showErrorMessage(EXTENSION_NAME, "Failed to add objects: " + t.getMessage());
-                }
-            });
-        }, "celltune-import-geojson");
+                    });
+                },
+                "celltune-import-geojson");
         worker.setDaemon(true);
         worker.start();
     }
@@ -803,10 +862,10 @@ final class UtilityScripts {
         int[] errors = {0};
 
         try (var fis = new FileInputStream(file);
-             var bis = new BufferedInputStream(fis, 16 * 1024 * 1024);
-             java.io.InputStream raw = gz ? new GZIPInputStream(bis, 16 * 1024 * 1024) : bis;
-             var isr = new InputStreamReader(raw, StandardCharsets.UTF_8);
-             JsonReader reader = new JsonReader(isr)) {
+                var bis = new BufferedInputStream(fis, 16 * 1024 * 1024);
+                java.io.InputStream raw = gz ? new GZIPInputStream(bis, 16 * 1024 * 1024) : bis;
+                var isr = new InputStreamReader(raw, StandardCharsets.UTF_8);
+                JsonReader reader = new JsonReader(isr)) {
             reader.setLenient(true);
             JsonToken first = reader.peek();
             if (first == JsonToken.BEGIN_OBJECT) {
@@ -830,17 +889,22 @@ final class UtilityScripts {
                 throw new IOException("Unexpected JSON structure (expected object or array, got " + first + ").");
             }
         }
-        logger.info("[CellTune] Parsed GeoJSON: {} objects ({} errors) in {} ms.",
-                out.size(), errors[0], System.currentTimeMillis() - t0);
+        logger.info(
+                "[CellTune] Parsed GeoJSON: {} objects ({} errors) in {} ms.",
+                out.size(),
+                errors[0],
+                System.currentTimeMillis() - t0);
         return out;
     }
 
     /** Read a JSON array of GeoJSON features, converting each to a {@link PathObject}. */
-    private static void readFeatureArray(JsonReader reader,
-                                         com.google.gson.TypeAdapter<JsonElement> adapter,
-                                         com.google.gson.Gson gson,
-                                         List<PathObject> out,
-                                         int[] errors) throws IOException {
+    private static void readFeatureArray(
+            JsonReader reader,
+            com.google.gson.TypeAdapter<JsonElement> adapter,
+            com.google.gson.Gson gson,
+            List<PathObject> out,
+            int[] errors)
+            throws IOException {
         reader.beginArray();
         while (reader.hasNext()) {
             JsonElement element = adapter.read(reader);

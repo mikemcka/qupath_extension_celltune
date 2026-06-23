@@ -1,5 +1,11 @@
 package qupath.ext.celltune;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.ResourceBundle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.io.ProjectStateManager;
@@ -10,13 +16,6 @@ import qupath.ext.celltune.ui.ProjectPredictionSummaryView;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.ResourceBundle;
 
 /**
  * The <b>Project Prediction Summary</b> dialog: scans every project image for saved
@@ -31,8 +30,7 @@ import java.util.ResourceBundle;
  */
 final class ProjectPredictionSummary {
 
-    private static final ResourceBundle resources =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle resources = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
     private static final String EXTENSION_NAME = resources.getString("name");
     private static final Logger logger = LoggerFactory.getLogger(ProjectPredictionSummary.class);
 
@@ -94,81 +92,82 @@ final class ProjectPredictionSummary {
         stage.setOnCloseRequest(e -> e.consume());
         stage.show();
 
-        Thread t = new Thread(() -> {
-            int total = imageNames.size();
-            java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger();
-            // Capture avgCounts per image alongside the row (rows themselves are immutable).
-            java.util.Map<String, Map<String, Long>> avgCountsByImage =
-                    new java.util.concurrent.ConcurrentHashMap<>();
+        Thread t = new Thread(
+                () -> {
+                    int total = imageNames.size();
+                    java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger();
+                    // Capture avgCounts per image alongside the row (rows themselves are immutable).
+                    java.util.Map<String, Map<String, Long>> avgCountsByImage =
+                            new java.util.concurrent.ConcurrentHashMap<>();
 
-            // Parallel JSON load — independent files per image, IO+CPU bound.
-            List<SummaryInputRow> sourceRows = imageNames.parallelStream()
-                    .map(imageName -> {
-                        PopulationSet predictions = null;
-                        if (currentImageNameFinal != null && currentImageNameFinal.equals(imageName)
-                                && liveCurrent != null && liveCurrent.size() > 0) {
-                            predictions = liveCurrent;
-                        } else {
-                            try {
-                                predictions = ProjectStateManager.loadImagePredictions(project, imageName);
-                            } catch (IOException ex) {
-                                logger.warn("Failed to load predictions for {} in project summary: {}",
-                                        imageName, ex.getMessage());
-                            }
+                    // Parallel JSON load — independent files per image, IO+CPU bound.
+                    List<SummaryInputRow> sourceRows = imageNames.parallelStream()
+                            .map(imageName -> {
+                                PopulationSet predictions = null;
+                                if (currentImageNameFinal != null
+                                        && currentImageNameFinal.equals(imageName)
+                                        && liveCurrent != null
+                                        && liveCurrent.size() > 0) {
+                                    predictions = liveCurrent;
+                                } else {
+                                    try {
+                                        predictions = ProjectStateManager.loadImagePredictions(project, imageName);
+                                    } catch (IOException ex) {
+                                        logger.warn(
+                                                "Failed to load predictions for {} in project summary: {}",
+                                                imageName,
+                                                ex.getMessage());
+                                    }
+                                }
+                                SummaryInputRow row;
+                                if (predictions == null || predictions.size() == 0) {
+                                    row = new SummaryInputRow(
+                                            imageName, 0L, 0L, "No saved predictions for this image.");
+                                } else {
+                                    long predicted = predictions.size();
+                                    long disagreements = predictions.getDisagreementCount();
+                                    Map<String, Long> avgCounts = predictions.getAvgCounts();
+                                    avgCountsByImage.put(imageName, avgCounts);
+                                    row = new SummaryInputRow(
+                                            imageName, predicted, disagreements, formatClassCounts(avgCounts));
+                                }
+                                int c = done.incrementAndGet();
+                                javafx.application.Platform.runLater(() -> {
+                                    bar.setProgress((double) c / total);
+                                    status.setText(String.format("Loading predictions: %d / %d images…", c, total));
+                                });
+                                return row;
+                            })
+                            .collect(java.util.stream.Collectors.toList());
+
+                    var analyzerInputs = new ArrayList<CohortAnomalyReport.ImageInput>(sourceRows.size());
+                    for (var src : sourceRows) {
+                        Map<String, Long> avg = avgCountsByImage.get(src.imageName());
+                        if (src.predictedCells() > 0 && avg != null) {
+                            analyzerInputs.add(new CohortAnomalyReport.ImageInput(
+                                    src.imageName(), src.predictedCells(), src.disagreements(), avg));
                         }
-                        SummaryInputRow row;
-                        if (predictions == null || predictions.size() == 0) {
-                            row = new SummaryInputRow(imageName, 0L, 0L,
-                                    "No saved predictions for this image.");
-                        } else {
-                            long predicted = predictions.size();
-                            long disagreements = predictions.getDisagreementCount();
-                            Map<String, Long> avgCounts = predictions.getAvgCounts();
-                            avgCountsByImage.put(imageName, avgCounts);
-                            row = new SummaryInputRow(imageName, predicted, disagreements,
-                                    formatClassCounts(avgCounts));
-                        }
-                        int c = done.incrementAndGet();
-                        javafx.application.Platform.runLater(() -> {
-                            bar.setProgress((double) c / total);
-                            status.setText(String.format("Loading predictions: %d / %d images…",
-                                    c, total));
-                        });
-                        return row;
-                    })
-                    .collect(java.util.stream.Collectors.toList());
+                    }
+                    var anomalyReport = CohortAnomalyAnalyzer.analyze(analyzerInputs);
+                    var anomalyByImage = anomalyReport.byImageName();
 
-            var analyzerInputs = new ArrayList<CohortAnomalyReport.ImageInput>(sourceRows.size());
-            for (var src : sourceRows) {
-                Map<String, Long> avg = avgCountsByImage.get(src.imageName());
-                if (src.predictedCells() > 0 && avg != null) {
-                    analyzerInputs.add(new CohortAnomalyReport.ImageInput(
-                            src.imageName(),
-                            src.predictedCells(),
-                            src.disagreements(),
-                            avg));
-                }
-            }
-            var anomalyReport = CohortAnomalyAnalyzer.analyze(analyzerInputs);
-            var anomalyByImage = anomalyReport.byImageName();
+                    var rows = new ArrayList<ProjectPredictionSummaryView.Row>(sourceRows.size());
+                    for (var source : sourceRows) {
+                        rows.add(buildPredictionSummaryRow(source, anomalyByImage.get(source.imageName())));
+                    }
 
-            var rows = new ArrayList<ProjectPredictionSummaryView.Row>(sourceRows.size());
-            for (var source : sourceRows) {
-                rows.add(buildPredictionSummaryRow(source, anomalyByImage.get(source.imageName())));
-            }
-
-            javafx.application.Platform.runLater(() -> {
-                stage.close();
-                new ProjectPredictionSummaryView(qupath, qupath.getStage(), rows).show();
-            });
-        }, "celltune-summary-load");
+                    javafx.application.Platform.runLater(() -> {
+                        stage.close();
+                        new ProjectPredictionSummaryView(qupath, qupath.getStage(), rows).show();
+                    });
+                },
+                "celltune-summary-load");
         t.setDaemon(true);
         t.start();
     }
 
     private static ProjectPredictionSummaryView.Row buildPredictionSummaryRow(
-            SummaryInputRow source,
-            CohortAnomalyReport.ImageAnomaly anomaly) {
+            SummaryInputRow source, CohortAnomalyReport.ImageAnomaly anomaly) {
         if (source.predictedCells() == 0L) {
             return new ProjectPredictionSummaryView.Row(
                     source.imageName(),
@@ -181,14 +180,11 @@ final class ProjectPredictionSummary {
                     "-",
                     "No highlighted rare classes.",
                     List.of(),
-                    source.classCountsText()
-            );
+                    source.classCountsText());
         }
 
         long agreements = Math.max(0L, source.predictedCells() - source.disagreements());
-        double agreementPct = source.predictedCells() > 0
-                ? (100.0 * agreements) / source.predictedCells()
-                : 0.0;
+        double agreementPct = source.predictedCells() > 0 ? (100.0 * agreements) / source.predictedCells() : 0.0;
 
         if (anomaly == null) {
             return new ProjectPredictionSummaryView.Row(
@@ -202,8 +198,7 @@ final class ProjectPredictionSummary {
                     "-",
                     "No highlighted rare classes.",
                     List.of(),
-                    source.classCountsText()
-            );
+                    source.classCountsText());
         }
 
         return new ProjectPredictionSummaryView.Row(
@@ -217,8 +212,7 @@ final class ProjectPredictionSummary {
                 formatFlagReasons(anomaly.flagReasons()),
                 formatHighlightedRareClasses(anomaly.highlightedClasses(), anomaly.enrichmentByClass()),
                 anomaly.highlightedClasses(),
-                source.classCountsText()
-        );
+                source.classCountsText());
     }
 
     private static String formatClassCounts(Map<String, Long> counts) {
@@ -243,8 +237,7 @@ final class ProjectPredictionSummary {
     }
 
     private static String formatHighlightedRareClasses(
-            List<String> highlightedClasses,
-            Map<String, CohortAnomalyReport.ClassEnrichment> enrichmentByClass) {
+            List<String> highlightedClasses, Map<String, CohortAnomalyReport.ClassEnrichment> enrichmentByClass) {
         if (highlightedClasses == null || highlightedClasses.isEmpty()) {
             return "No highlighted rare classes.";
         }
@@ -257,19 +250,10 @@ final class ProjectPredictionSummary {
                 continue;
             }
             parts.add(String.format(
-                    "%s (count=%d, fold=%.2fx)",
-                    className,
-                    enrichment.count(),
-                    enrichment.enrichmentFold()
-            ));
+                    "%s (count=%d, fold=%.2fx)", className, enrichment.count(), enrichment.enrichmentFold()));
         }
         return String.join("; ", parts);
     }
 
-    private record SummaryInputRow(
-            String imageName,
-            long predictedCells,
-            long disagreements,
-            String classCountsText) {
-    }
+    private record SummaryInputRow(String imageName, long predictedCells, long disagreements, String classCountsText) {}
 }

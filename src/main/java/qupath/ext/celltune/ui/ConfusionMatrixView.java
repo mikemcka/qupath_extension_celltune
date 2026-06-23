@@ -1,5 +1,9 @@
 package qupath.ext.celltune.ui;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -8,9 +12,11 @@ import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
@@ -18,20 +24,13 @@ import javafx.scene.text.TextAlignment;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
-
-import javax.imageio.ImageIO;
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
-import javafx.application.Platform;
-import javafx.scene.control.ComboBox;
-import javafx.scene.layout.Priority;
-import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.lib.gui.QuPathGUI;
 
 /**
@@ -82,8 +81,8 @@ public class ConfusionMatrixView {
     private Mode mode = Mode.INTER_MODEL;
     private int[][] matrix;
     private double[] displayF1;
-    private double[] displayRowTpRate;  // per-row TP / row sum
-    private double[] displayColTpRate;  // per-col TP / col sum
+    private double[] displayRowTpRate; // per-row TP / row sum
+    private double[] displayColTpRate; // per-col TP / col sum
     private int totalCells;
     private int totalAgreements;
     private String rowAxisTitle = "Model 1 (XGBoost)";
@@ -93,11 +92,12 @@ public class ConfusionMatrixView {
     private static final int CELL_SIZE = 64;
     private static final int LABEL_MARGIN = 120;
     private static final int RATE_MARGIN = 110;
-    private static final int BOTTOM_MARGIN = 80;  // bottom margin for Model 2 TP% row
+    private static final int BOTTOM_MARGIN = 80; // bottom margin for Model 2 TP% row
     private static final int HEADER_HEIGHT = 40;
     private static final Font CELL_FONT = Font.font("SansSerif", 13);
     private static final Font LABEL_FONT = Font.font("SansSerif", 12);
-    private static final Font HEADER_FONT = Font.font("SansSerif", Font.getDefault().getSize() + 1);
+    private static final Font HEADER_FONT =
+            Font.font("SansSerif", Font.getDefault().getSize() + 1);
 
     /**
      * Build and display the confusion matrix in inter-model mode (no ground-truth toggle).
@@ -114,8 +114,7 @@ public class ConfusionMatrixView {
      * @param classNames ordered class name list
      * @param labelStore optional ground-truth label store
      */
-    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames,
-                               LabelStore labelStore) {
+    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames, LabelStore labelStore) {
         this(owner, predALL, classNames, labelStore, null, null);
     }
 
@@ -132,8 +131,13 @@ public class ConfusionMatrixView {
      * @param qupath           QuPath GUI (for loading other images' predictions)
      * @param currentImageName image name key for the supplied predALL
      */
-    public ConfusionMatrixView(Stage owner, PopulationSet predALL, List<String> classNames,
-                               LabelStore labelStore, QuPathGUI qupath, String currentImageName) {
+    public ConfusionMatrixView(
+            Stage owner,
+            PopulationSet predALL,
+            List<String> classNames,
+            LabelStore labelStore,
+            QuPathGUI qupath,
+            String currentImageName) {
         this.classNames = List.copyOf(classNames);
         this.predALL = predALL;
         this.labelStore = labelStore;
@@ -177,9 +181,8 @@ public class ConfusionMatrixView {
             int fp = colSum - tp;
             int fn = rowSum - tp;
             double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0;
-            double recall    = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0;
-            f1Scores[i] = (precision + recall) > 0
-                    ? 2.0 * precision * recall / (precision + recall) : 0;
+            double recall = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0;
+            f1Scores[i] = (precision + recall) > 0 ? 2.0 * precision * recall / (precision + recall) : 0;
         }
 
         // ── Canvas ──────────────────────────────────────────────────────────
@@ -283,10 +286,14 @@ public class ConfusionMatrixView {
     }
 
     /** @return total cells used to build the matrix. */
-    public int getTotalCells() { return totalCells; }
+    public int getTotalCells() {
+        return totalCells;
+    }
 
     /** @return total cells where both models agreed. */
-    public int getTotalAgreements() { return totalAgreements; }
+    public int getTotalAgreements() {
+        return totalAgreements;
+    }
 
     // ── Drawing ─────────────────────────────────────────────────────────────────
 
@@ -345,9 +352,8 @@ public class ConfusionMatrixView {
             int fp = colSum - tp;
             int fn = rowSum - tp;
             double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0;
-            double recall    = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0;
-            f1[i] = (precision + recall) > 0
-                    ? 2.0 * precision * recall / (precision + recall) : 0;
+            double recall = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0;
+            f1[i] = (precision + recall) > 0 ? 2.0 * precision * recall / (precision + recall) : 0;
         }
 
         this.matrix = mtx;
@@ -364,8 +370,7 @@ public class ConfusionMatrixView {
         macroF1 = n > 0 ? macroF1 / n : 0;
         String summary = String.format(
                 "Total: %,d cells | Agreement: %,d (%.1f%%) | Disagreement: %,d (%.1f%%) | Macro Dice: %.3f",
-                total, agreements, overallRate,
-                total - agreements, 100 - overallRate, macroF1);
+                total, agreements, overallRate, total - agreements, 100 - overallRate, macroF1);
         summaryLabel.setText(summary);
 
         drawMatrix();
@@ -406,8 +411,7 @@ public class ConfusionMatrixView {
         gc.setFill(Color.BLACK);
 
         // X axis title
-        gc.fillText(colAxisTitle,
-                gridLeft + n * CELL_SIZE / 2.0, HEADER_HEIGHT / 2.0 + 4);
+        gc.fillText(colAxisTitle, gridLeft + n * CELL_SIZE / 2.0, HEADER_HEIGHT / 2.0 + 4);
 
         // Y axis title (rotated)
         gc.save();
@@ -456,15 +460,15 @@ public class ConfusionMatrixView {
                     // Diagonal: blue scale (agreement) with separate max
                     double intensity = (double) val / maxDiag;
                     fill = Color.color(
-                            1.0 - 0.7 * intensity,   // R: 1.0 → 0.3
-                            1.0 - 0.5 * intensity,   // G: 1.0 → 0.5
-                            1.0);                     // B: stays 1.0
+                            1.0 - 0.7 * intensity, // R: 1.0 → 0.3
+                            1.0 - 0.5 * intensity, // G: 1.0 → 0.5
+                            1.0); // B: stays 1.0
                 } else {
                     // Off-diagonal: orangered scale (disagreement) with separate max
                     double intensity = (double) val / maxOffDiag;
                     fill = Color.color(
-                            1.0,                      // R: stays 1.0
-                            0.98 - 0.62 * intensity,  // G: ~1.0 → 0.36
+                            1.0, // R: stays 1.0
+                            0.98 - 0.62 * intensity, // G: ~1.0 → 0.36
                             0.96 - 0.76 * intensity); // B: ~1.0 → 0.20
                 }
 
@@ -480,9 +484,7 @@ public class ConfusionMatrixView {
                 if (val > 0) {
                     double threshold = (i == j) ? maxDiag * 0.65 : maxOffDiag * 0.65;
                     gc.setFill(val > threshold ? Color.WHITE : Color.BLACK);
-                    gc.fillText(String.valueOf(val),
-                            x + CELL_SIZE / 2.0,
-                            y + CELL_SIZE / 2.0 + 5);
+                    gc.fillText(String.valueOf(val), x + CELL_SIZE / 2.0, y + CELL_SIZE / 2.0 + 5);
                 }
             }
         }
@@ -537,8 +539,7 @@ public class ConfusionMatrixView {
             gc.strokeRect(x, bottomY - 4, CELL_SIZE, 30);
             // Text
             gc.setFill(bgIntensity > 0.65 ? Color.WHITE : Color.BLACK);
-            gc.fillText(String.format("%.0f%%", model2TpRate[j] * 100),
-                    x + CELL_SIZE / 2.0, bottomY + 14);
+            gc.fillText(String.format("%.0f%%", model2TpRate[j] * 100), x + CELL_SIZE / 2.0, bottomY + 14);
         }
 
         // TP% label (bottom left)
@@ -581,19 +582,23 @@ public class ConfusionMatrixView {
 
         var project = qupath.getProject();
         if (project != null) {
-            new Thread(() -> {
-                try {
-                    List<String> names = ProjectStateManager.listImagesWithPredictions(project);
-                    Platform.runLater(() -> {
-                        for (String name : names) {
-                            if (!combo.getItems().contains(name)) combo.getItems().add(name);
-                        }
-                        combo.setValue(currentImageName != null ? currentImageName : ALL_IMAGES_LABEL);
-                    });
-                } catch (Exception ex) {
-                    logger.warn("Failed to list images with predictions", ex);
-                }
-            }, "CMV-ImageListLoader").start();
+            new Thread(
+                            () -> {
+                                try {
+                                    List<String> names = ProjectStateManager.listImagesWithPredictions(project);
+                                    Platform.runLater(() -> {
+                                        for (String name : names) {
+                                            if (!combo.getItems().contains(name))
+                                                combo.getItems().add(name);
+                                        }
+                                        combo.setValue(currentImageName != null ? currentImageName : ALL_IMAGES_LABEL);
+                                    });
+                                } catch (Exception ex) {
+                                    logger.warn("Failed to list images with predictions", ex);
+                                }
+                            },
+                            "CMV-ImageListLoader")
+                    .start();
         } else {
             combo.setValue(currentImageName != null ? currentImageName : ALL_IMAGES_LABEL);
         }
@@ -616,25 +621,28 @@ public class ConfusionMatrixView {
         if (ALL_IMAGES_LABEL.equals(selected)) {
             var project = qupath.getProject();
             if (project == null) return;
-            new Thread(() -> {
-                try {
-                    List<String> names = ProjectStateManager.listImagesWithPredictions(project);
-                    for (String name : names) {
-                        if (!predCache.containsKey(name)) {
-                            PopulationSet ps = ProjectStateManager.loadImagePredictions(project, name);
-                            if (ps != null) predCache.put(name, ps);
-                        }
-                    }
-                    PopulationSet merged = mergeAllCached();
-                    Platform.runLater(() -> {
-                        currentDisplayPredAll = merged;
-                        applyMode(Mode.INTER_MODEL);
-                        stage.setTitle("CellTune — Agreement Matrix — All Images");
-                    });
-                } catch (Exception ex) {
-                    logger.warn("Failed to merge predictions across images", ex);
-                }
-            }, "CMV-AllImagesLoader").start();
+            new Thread(
+                            () -> {
+                                try {
+                                    List<String> names = ProjectStateManager.listImagesWithPredictions(project);
+                                    for (String name : names) {
+                                        if (!predCache.containsKey(name)) {
+                                            PopulationSet ps = ProjectStateManager.loadImagePredictions(project, name);
+                                            if (ps != null) predCache.put(name, ps);
+                                        }
+                                    }
+                                    PopulationSet merged = mergeAllCached();
+                                    Platform.runLater(() -> {
+                                        currentDisplayPredAll = merged;
+                                        applyMode(Mode.INTER_MODEL);
+                                        stage.setTitle("CellTune — Agreement Matrix — All Images");
+                                    });
+                                } catch (Exception ex) {
+                                    logger.warn("Failed to merge predictions across images", ex);
+                                }
+                            },
+                            "CMV-AllImagesLoader")
+                    .start();
         } else {
             if (predCache.containsKey(selected)) {
                 currentDisplayPredAll = predCache.get(selected);
@@ -643,21 +651,24 @@ public class ConfusionMatrixView {
             } else {
                 var project = qupath.getProject();
                 if (project == null) return;
-                new Thread(() -> {
-                    try {
-                        PopulationSet ps = ProjectStateManager.loadImagePredictions(project, selected);
-                        if (ps != null) {
-                            predCache.put(selected, ps);
-                            Platform.runLater(() -> {
-                                currentDisplayPredAll = ps;
-                                applyMode(Mode.INTER_MODEL);
-                                stage.setTitle("CellTune — Agreement Matrix — " + selected);
-                            });
-                        }
-                    } catch (Exception ex) {
-                        logger.warn("Failed to load predictions for '{}'", selected, ex);
-                    }
-                }, "CMV-ImageLoader").start();
+                new Thread(
+                                () -> {
+                                    try {
+                                        PopulationSet ps = ProjectStateManager.loadImagePredictions(project, selected);
+                                        if (ps != null) {
+                                            predCache.put(selected, ps);
+                                            Platform.runLater(() -> {
+                                                currentDisplayPredAll = ps;
+                                                applyMode(Mode.INTER_MODEL);
+                                                stage.setTitle("CellTune — Agreement Matrix — " + selected);
+                                            });
+                                        }
+                                    } catch (Exception ex) {
+                                        logger.warn("Failed to load predictions for '{}'", selected, ex);
+                                    }
+                                },
+                                "CMV-ImageLoader")
+                        .start();
             }
         }
     }
@@ -681,8 +692,7 @@ public class ConfusionMatrixView {
     private void exportAsPng(Stage owner) {
         FileChooser fc = new FileChooser();
         fc.setTitle("Save Confusion Matrix as PNG");
-        fc.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("PNG Image", "*.png"));
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PNG Image", "*.png"));
         fc.setInitialFileName("confusion_matrix.png");
         File file = fc.showSaveDialog(owner);
         if (file == null) return;

@@ -97,34 +97,29 @@ public class PopulationSet {
     public Map<String, Long> getModel1Counts() {
         return predictions.values().stream()
                 .collect(Collectors.groupingBy(
-                        CellPrediction::getModel1Label,
-                        LinkedHashMap::new,
-                        Collectors.counting()));
+                        CellPrediction::getModel1Label, LinkedHashMap::new, Collectors.counting()));
     }
 
     /** @return count of cells per model 2 predicted class */
     public Map<String, Long> getModel2Counts() {
         return predictions.values().stream()
                 .collect(Collectors.groupingBy(
-                        CellPrediction::getModel2Label,
-                        LinkedHashMap::new,
-                        Collectors.counting()));
+                        CellPrediction::getModel2Label, LinkedHashMap::new, Collectors.counting()));
     }
 
     /** @return count of cells per averaged predicted class */
     public Map<String, Long> getAvgCounts() {
         return predictions.values().stream()
-                .collect(Collectors.groupingBy(
-                        CellPrediction::avgLabel,
-                        LinkedHashMap::new,
-                        Collectors.counting()));
+                .collect(Collectors.groupingBy(CellPrediction::avgLabel, LinkedHashMap::new, Collectors.counting()));
     }
 
-    public String getName() { return name; }
+    public String getName() {
+        return name;
+    }
 
     @Override
     public String toString() {
-        return "PopulationSet[" + name + ", " + predictions.size() + " cells, "
-                + getDisagreementCount() + " disagreements]";
+        return "PopulationSet[" + name + ", " + predictions.size() + " cells, " + getDisagreementCount()
+                + " disagreements]";
     }
 }

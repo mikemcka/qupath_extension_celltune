@@ -1,5 +1,7 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
+import java.util.stream.Collectors;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -8,9 +10,6 @@ import javafx.scene.control.cell.CheckBoxTreeCell;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * A dialog for selecting which cell measurement features to include in ML
@@ -49,8 +48,7 @@ public class FeatureSelectionPane {
     static final String GROUP_OTHER = "Other / Uncategorized";
 
     /** Compartment tokens that mark a measurement as morphology rather than a marker. */
-    private static final Set<String> COMPARTMENTS =
-            Set.of("Cell", "Cytoplasm", "Membrane", "Nucleus");
+    private static final Set<String> COMPARTMENTS = Set.of("Cell", "Cytoplasm", "Membrane", "Nucleus");
 
     /** Tokens (case-insensitive, whole-token match) that mark an embedding feature. */
     private static final Set<String> EMBEDDING_TOKENS =
@@ -112,24 +110,39 @@ public class FeatureSelectionPane {
         Button collapseBtn = new Button("Collapse All");
         collapseBtn.setOnAction(e -> setExpanded(false));
 
-        HBox btnRow = new HBox(6, selectAllBtn, clearAllBtn,
+        HBox btnRow = new HBox(
+                6,
+                selectAllBtn,
+                clearAllBtn,
                 new Separator(javafx.geometry.Orientation.VERTICAL),
-                expandBtn, collapseBtn);
+                expandBtn,
+                collapseBtn);
         btnRow.setAlignment(Pos.CENTER_LEFT);
 
         // OK / Cancel.
         Button okBtn = new Button("OK");
         okBtn.setDefaultButton(true);
         okBtn.setPrefWidth(80);
-        okBtn.setOnAction(e -> { confirmed = true; stage.close(); });
+        okBtn.setOnAction(e -> {
+            confirmed = true;
+            stage.close();
+        });
 
         Button cancelBtn = new Button("Cancel");
         cancelBtn.setCancelButton(true);
         cancelBtn.setPrefWidth(80);
         cancelBtn.setOnAction(e -> stage.close());
 
-        HBox okCancelRow = new HBox(8, countLabel,
-                new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, okBtn, cancelBtn);
+        HBox okCancelRow = new HBox(
+                8,
+                countLabel,
+                new Region() {
+                    {
+                        HBox.setHgrow(this, Priority.ALWAYS);
+                    }
+                },
+                okBtn,
+                cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
         HBox filterRow = new HBox(6, new Label("Filter:"), searchField);
@@ -184,8 +197,7 @@ public class FeatureSelectionPane {
         }
 
         // Markers first (alphabetical), then Morphology, Neighbors, Embeddings, Other.
-        Set<String> special =
-                Set.of(GROUP_MORPHOLOGY, GROUP_NEIGHBORS, GROUP_EMBEDDINGS, GROUP_OTHER);
+        Set<String> special = Set.of(GROUP_MORPHOLOGY, GROUP_NEIGHBORS, GROUP_EMBEDDINGS, GROUP_OTHER);
         List<String> markers = itemsByGroup.keySet().stream()
                 .filter(g -> !special.contains(g))
                 .sorted(String.CASE_INSENSITIVE_ORDER)
@@ -293,7 +305,9 @@ public class FeatureSelectionPane {
     // ── Tree building / filtering ────────────────────────────────────────────────
 
     private void rebuildTree() {
-        String search = searchField.getText() == null ? "" : searchField.getText().toLowerCase(Locale.ROOT).strip();
+        String search = searchField.getText() == null
+                ? ""
+                : searchField.getText().toLowerCase(Locale.ROOT).strip();
         boolean searching = !search.isEmpty();
 
         visibleLeaves.clear();
@@ -304,8 +318,8 @@ public class FeatureSelectionPane {
             List<FeatureItem> matching = search.isEmpty()
                     ? items
                     : items.stream()
-                        .filter(i -> i.getName().toLowerCase(Locale.ROOT).contains(search))
-                        .collect(Collectors.toList());
+                            .filter(i -> i.getName().toLowerCase(Locale.ROOT).contains(search))
+                            .collect(Collectors.toList());
             if (matching.isEmpty()) {
                 continue;
             }
@@ -364,12 +378,22 @@ public class FeatureSelectionPane {
             this.selected = selected;
         }
 
-        String getName()            { return name; }
-        boolean isSelected()        { return selected; }
-        void setSelected(boolean s) { this.selected = s; }
+        String getName() {
+            return name;
+        }
+
+        boolean isSelected() {
+            return selected;
+        }
+
+        void setSelected(boolean s) {
+            this.selected = s;
+        }
 
         @Override
-        public String toString() { return name; }
+        public String toString() {
+            return name;
+        }
     }
 
     /** Tree node value: a group header (item == null) or a leaf feature. */
@@ -384,11 +408,21 @@ public class FeatureSelectionPane {
             this.group = group;
         }
 
-        boolean isGroup() { return item == null; }
-        FeatureItem item() { return item; }
-        String group() { return group; }
+        boolean isGroup() {
+            return item == null;
+        }
+
+        FeatureItem item() {
+            return item;
+        }
+
+        String group() {
+            return group;
+        }
 
         @Override
-        public String toString() { return label; }
+        public String toString() {
+            return label;
+        }
     }
 }

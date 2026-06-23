@@ -1,14 +1,13 @@
 package qupath.ext.celltune.io;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tests the file-parsing side of {@link GroundTruthIO} (no QuPath objects
@@ -34,9 +33,9 @@ class GroundTruthIOTest {
 
         assertEquals(2, rows.size());
         assertEquals("T", rows.get(0).label());
-        assertArrayEquals(new float[]{1.5f, 2.5f}, rows.get(0).features(), 1e-6f);
+        assertArrayEquals(new float[] {1.5f, 2.5f}, rows.get(0).features(), 1e-6f);
         assertEquals("NK", rows.get(1).label());
-        assertArrayEquals(new float[]{3.0f, 4.0f}, rows.get(1).features(), 1e-6f);
+        assertArrayEquals(new float[] {3.0f, 4.0f}, rows.get(1).features(), 1e-6f);
     }
 
     @Test
@@ -47,7 +46,7 @@ class GroundTruthIOTest {
                 """);
         List<GroundTruthIO.TrainingRow> rows = GroundTruthIO.importCSVAsTrainingData(csv);
         assertEquals(1, rows.size());
-        assertArrayEquals(new float[]{0f, 7.0f}, rows.get(0).features(), 1e-6f);
+        assertArrayEquals(new float[] {0f, 7.0f}, rows.get(0).features(), 1e-6f);
     }
 
     @Test

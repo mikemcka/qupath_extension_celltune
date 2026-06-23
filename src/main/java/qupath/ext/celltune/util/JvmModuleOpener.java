@@ -1,13 +1,11 @@
 package qupath.ext.celltune.util;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import sun.misc.Unsafe;
 
 /**
@@ -32,8 +30,7 @@ import sun.misc.Unsafe;
  */
 public final class JvmModuleOpener {
 
-    private static final Logger logger =
-            LoggerFactory.getLogger(JvmModuleOpener.class);
+    private static final Logger logger = LoggerFactory.getLogger(JvmModuleOpener.class);
 
     /** null = not yet attempted; otherwise the cached outcome. */
     private static volatile Boolean javaLangOpen;
@@ -67,8 +64,7 @@ public final class JvmModuleOpener {
         }
         javaLangOpen = ok;
         if (ok) {
-            logger.info("Opened java.base/java.lang at runtime "
-                    + "(enables Smile native PCA/UMAP without JVM flags)");
+            logger.info("Opened java.base/java.lang at runtime " + "(enables Smile native PCA/UMAP without JVM flags)");
         } else {
             logger.warn("Could not open java.base/java.lang at runtime; Smile "
                     + "native PCA/UMAP may be unavailable. If needed, launch "
@@ -83,23 +79,17 @@ public final class JvmModuleOpener {
      * This is the same approach used by Lombok/ByteBuddy and works on Java 9–25.
      */
     @SuppressWarnings("removal") // sun.misc.Unsafe accessors: present through JDK 25
-    private static void openPackageToAllUnnamed(Module base, String pkg)
-            throws Throwable {
+    private static void openPackageToAllUnnamed(Module base, String pkg) throws Throwable {
         Field theUnsafe = Unsafe.class.getDeclaredField("theUnsafe");
         theUnsafe.setAccessible(true);
         Unsafe unsafe = (Unsafe) theUnsafe.get(null);
 
-        Field implLookupField =
-                MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
-        MethodHandles.Lookup implLookup =
-                (MethodHandles.Lookup) unsafe.getObject(
-                        unsafe.staticFieldBase(implLookupField),
-                        unsafe.staticFieldOffset(implLookupField));
+        Field implLookupField = MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
+        MethodHandles.Lookup implLookup = (MethodHandles.Lookup)
+                unsafe.getObject(unsafe.staticFieldBase(implLookupField), unsafe.staticFieldOffset(implLookupField));
 
         MethodHandle addOpens = implLookup.findVirtual(
-                Module.class,
-                "implAddOpensToAllUnnamed",
-                MethodType.methodType(void.class, String.class));
+                Module.class, "implAddOpensToAllUnnamed", MethodType.methodType(void.class, String.class));
         addOpens.invoke(base, pkg);
     }
 }

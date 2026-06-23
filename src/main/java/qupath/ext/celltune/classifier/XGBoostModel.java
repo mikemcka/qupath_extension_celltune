@@ -1,19 +1,16 @@
 package qupath.ext.celltune.classifier;
 
+import java.io.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 import ml.dmlc.xgboost4j.java.Booster;
 import ml.dmlc.xgboost4j.java.DMatrix;
 import ml.dmlc.xgboost4j.java.XGBoost;
 import ml.dmlc.xgboost4j.java.XGBoostError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Consumer;
 
 /**
  * Wraps XGBoost4J training and prediction behind a simple interface.
@@ -49,10 +46,17 @@ public class XGBoostModel {
      * @param subsample    row subsampling ratio per round
      * @throws XGBoostError if training fails
      */
-    public void train(float[] flatData, float[] labels,
-                      int nSamples, int nFeatures,
-                      List<String> classNames, List<String> featureNames,
-                      int numRounds, int maxDepth, float eta, float subsample)
+    public void train(
+            float[] flatData,
+            float[] labels,
+            int nSamples,
+            int nFeatures,
+            List<String> classNames,
+            List<String> featureNames,
+            int numRounds,
+            int maxDepth,
+            float eta,
+            float subsample)
             throws XGBoostError {
 
         this.nClasses = classNames.size();
@@ -76,8 +80,12 @@ public class XGBoostModel {
             params.put("device", "cpu");
             params.put("tree_method", "hist");
             booster = XGBoost.train(trainMat, params, numRounds, watches, null, null);
-            logger.info("XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
-                    nSamples, nFeatures, nClasses, numRounds);
+            logger.info(
+                    "XGBoost training: CPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples,
+                    nFeatures,
+                    nClasses,
+                    numRounds);
 
             this.lastDevice = "CPU";
         } finally {
@@ -86,9 +94,8 @@ public class XGBoostModel {
 
         // Embed metadata for later serialisation
         // XGBoost rejects special chars (µ, ^, :, /, etc.) in feature names
-        String[] safeNames = featureNames.stream()
-                .map(XGBoostModel::sanitiseFeatureName)
-                .toArray(String[]::new);
+        String[] safeNames =
+                featureNames.stream().map(XGBoostModel::sanitiseFeatureName).toArray(String[]::new);
         booster.setFeatureNames(safeNames);
         booster.setAttr("class_names", String.join(",", classNames));
 
@@ -96,7 +103,9 @@ public class XGBoostModel {
     }
 
     /** @return the device used for the last training run */
-    public String getLastDevice() { return lastDevice; }
+    public String getLastDevice() {
+        return lastDevice;
+    }
 
     // ── Early Stopping ──────────────────────────────────────────────────────────
 
@@ -106,11 +115,22 @@ public class XGBoostModel {
      *
      * @return optimal number of rounds (1-indexed)
      */
-    static int findBestRounds(float[] trainData, float[] trainLabels, int trainSize,
-                              float[] valData, float[] valLabels, int valSize,
-                              int nFeatures, int nClasses,
-                              int maxRounds, int maxDepth, float eta, float subsample,
-                              int patience, Consumer<String> log) throws Exception {
+    static int findBestRounds(
+            float[] trainData,
+            float[] trainLabels,
+            int trainSize,
+            float[] valData,
+            float[] valLabels,
+            int valSize,
+            int nFeatures,
+            int nClasses,
+            int maxRounds,
+            int maxDepth,
+            float eta,
+            float subsample,
+            int patience,
+            Consumer<String> log)
+            throws Exception {
 
         DMatrix trainMat = null;
         DMatrix valMat = null;
@@ -126,18 +146,15 @@ public class XGBoostModel {
             params.put("verbosity", 0);
 
             // Train 1 round to create a Booster
-            Booster booster = XGBoost.train(trainMat, params, 1,
-                    new LinkedHashMap<>(), null, null);
+            Booster booster = XGBoost.train(trainMat, params, 1, new LinkedHashMap<>(), null, null);
 
-            String evalStr = booster.evalSet(
-                    new DMatrix[]{valMat}, new String[]{"val"}, 0);
+            String evalStr = booster.evalSet(new DMatrix[] {valMat}, new String[] {"val"}, 0);
             double bestLoss = parseEvalMetric(evalStr);
             int bestRound = 0;
 
             for (int round = 1; round < maxRounds; round++) {
                 booster.update(trainMat, round);
-                evalStr = booster.evalSet(
-                        new DMatrix[]{valMat}, new String[]{"val"}, round);
+                evalStr = booster.evalSet(new DMatrix[] {valMat}, new String[] {"val"}, round);
                 double loss = parseEvalMetric(evalStr);
 
                 if (loss < bestLoss) {
@@ -149,13 +166,18 @@ public class XGBoostModel {
 
             int actualRounds = bestRound + 1;
             log.accept(String.format(
-                    "XGBoost early stopping: best round %d/%d (val loss: %.6f)",
-                    actualRounds, maxRounds, bestLoss));
+                    "XGBoost early stopping: best round %d/%d (val loss: %.6f)", actualRounds, maxRounds, bestLoss));
             return actualRounds;
 
         } finally {
-            try { if (trainMat != null) trainMat.dispose(); } catch (Exception ignore) {}
-            try { if (valMat != null) valMat.dispose(); } catch (Exception ignore) {}
+            try {
+                if (trainMat != null) trainMat.dispose();
+            } catch (Exception ignore) {
+            }
+            try {
+                if (valMat != null) valMat.dispose();
+            } catch (Exception ignore) {
+            }
         }
     }
 
@@ -181,8 +203,7 @@ public class XGBoostModel {
      * @param nFeatures number of features
      * @return probability matrix [nSamples][nClasses]
      */
-    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures)
-            throws XGBoostError {
+    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures) throws XGBoostError {
 
         DMatrix predMat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
         float[][] rawPreds;
@@ -212,8 +233,7 @@ public class XGBoostModel {
      * @param nFeatures number of features
      * @return array of predicted class indices
      */
-    public int[] predict(float[] flatData, int nSamples, int nFeatures)
-            throws XGBoostError {
+    public int[] predict(float[] flatData, int nSamples, int nFeatures) throws XGBoostError {
 
         float[][] probs = predictProba(flatData, nSamples, nFeatures);
         int[] preds = new int[nSamples];
@@ -243,8 +263,7 @@ public class XGBoostModel {
      * @return mean absolute SHAP matrix [nClasses][nFeatures]
      * @throws XGBoostError if prediction fails
      */
-    public double[][] computeMeanAbsShap(float[] flatData, int nSamples, int nFeatures)
-            throws XGBoostError {
+    public double[][] computeMeanAbsShap(float[] flatData, int nSamples, int nFeatures) throws XGBoostError {
         DMatrix dmat = new DMatrix(flatData, nSamples, nFeatures, Float.NaN);
         try {
             // predictContrib → TreeSHAP contributions (public API in XGBoost4J 3.x)
@@ -320,10 +339,21 @@ public class XGBoostModel {
 
     // ── Accessors ───────────────────────────────────────────────────────────────
 
-    public boolean isTrained()            { return booster != null; }
-    public int getNumClasses()            { return nClasses; }
-    public List<String> getClassNames()   { return classNames; }
-    public List<String> getFeatureNames() { return featureNames; }
+    public boolean isTrained() {
+        return booster != null;
+    }
+
+    public int getNumClasses() {
+        return nClasses;
+    }
+
+    public List<String> getClassNames() {
+        return classNames;
+    }
+
+    public List<String> getFeatureNames() {
+        return featureNames;
+    }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
 
@@ -333,9 +363,8 @@ public class XGBoostModel {
      */
     static String sanitiseFeatureName(String name) {
         // Replace known problematic chars with ASCII equivalents
-        String s = name
-                .replace("\u00b5", "u")  // micro sign µ
-                .replace("\u03bc", "u")  // greek mu μ
+        String s = name.replace("\u00b5", "u") // micro sign µ
+                .replace("\u03bc", "u") // greek mu μ
                 .replace("^", "_pow_")
                 .replace(":", "_")
                 .replace("/", "_per_")
@@ -358,8 +387,7 @@ public class XGBoostModel {
         return sb.toString();
     }
 
-    private static Map<String, Object> buildParams(
-            int nClasses, int maxDepth, float eta, float subsample) {
+    private static Map<String, Object> buildParams(int nClasses, int maxDepth, float eta, float subsample) {
 
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("max_depth", maxDepth);

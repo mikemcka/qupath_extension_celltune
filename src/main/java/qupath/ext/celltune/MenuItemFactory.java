@@ -1,12 +1,11 @@
 package qupath.ext.celltune;
 
+import java.util.ResourceBundle;
 import javafx.beans.property.BooleanProperty;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import qupath.lib.gui.QuPathGUI;
-
-import java.util.ResourceBundle;
 
 /**
  * Builds the <b>Extensions &gt; CellTune</b> menu, lifted out of {@code CellTuneExtension}.
@@ -17,8 +16,7 @@ import java.util.ResourceBundle;
  */
 final class MenuItemFactory {
 
-    private static final ResourceBundle resources =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle resources = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
     private static final String EXTENSION_NAME = resources.getString("name");
 
     private MenuItemFactory() {} // utility class
@@ -35,45 +33,93 @@ final class MenuItemFactory {
 
         // Group the export/import actions into two submenus to keep the
         // top-level dropdown compact.
-        Menu exportMenu = group("menu.group.export", enabled,
+        Menu exportMenu = group(
+                "menu.group.export",
+                enabled,
                 item(resources.getString("menu.export.short"), enabled, () -> ext.exportCellTable(qupath)),
-                item(resources.getString("menu.export.groundtruth.short"), enabled, () -> ext.exportGroundTruth(qupath)),
-                item(resources.getString("menu.export.binary.groundtruth.short"), enabled, () -> ext.exportActiveBinaryGroundTruth(qupath)));
+                item(
+                        resources.getString("menu.export.groundtruth.short"),
+                        enabled,
+                        () -> ext.exportGroundTruth(qupath)),
+                item(
+                        resources.getString("menu.export.binary.groundtruth.short"),
+                        enabled,
+                        () -> ext.exportActiveBinaryGroundTruth(qupath)));
 
-        Menu importMenu = group("menu.group.import", enabled,
+        Menu importMenu = group(
+                "menu.group.import",
+                enabled,
                 item(resources.getString("menu.import.markers.short"), enabled, () -> ext.importMarkerTable(qupath)),
-                item(resources.getString("menu.import.groundtruth.short"), enabled, () -> ext.importGroundTruth(qupath)),
-                item(resources.getString("menu.import.binary.groundtruth.short"), enabled, () -> ext.importActiveBinaryGroundTruth(qupath)));
+                item(
+                        resources.getString("menu.import.groundtruth.short"),
+                        enabled,
+                        () -> ext.importGroundTruth(qupath)),
+                item(
+                        resources.getString("menu.import.binary.groundtruth.short"),
+                        enabled,
+                        () -> ext.importActiveBinaryGroundTruth(qupath)));
 
         // Utility scripts: ad-hoc helpers commonly reused across projects.
-        Menu utilityScriptsMenu = group("menu.group.utilities", enabled,
-                item(resources.getString("menu.utility.filter.cells"), enabled, () -> UtilityScripts.filterCellsBySizeAndCircularity(qupath)),
-                item(resources.getString("menu.utility.resolve.hierarchy"), enabled, () -> UtilityScripts.resolveHierarchy(qupath)),
-                item(resources.getString("menu.utility.lock.annotations"), enabled, () -> UtilityScripts.lockAllAnnotations(qupath)),
-                item(resources.getString("menu.utility.import.geojson"), enabled, () -> UtilityScripts.importGeoJsonObjects(qupath)),
-                item(resources.getString("menu.utility.export.regions"), enabled, () -> AnnotationRegionExporter.exportAnnotationRegions(qupath)),
-                item(resources.getString("menu.utility.delete.measurements"), enabled, () -> UtilityScripts.deleteMeasurementsByKeyword(qupath)),
+        Menu utilityScriptsMenu = group(
+                "menu.group.utilities",
+                enabled,
+                item(
+                        resources.getString("menu.utility.filter.cells"),
+                        enabled,
+                        () -> UtilityScripts.filterCellsBySizeAndCircularity(qupath)),
+                item(
+                        resources.getString("menu.utility.resolve.hierarchy"),
+                        enabled,
+                        () -> UtilityScripts.resolveHierarchy(qupath)),
+                item(
+                        resources.getString("menu.utility.lock.annotations"),
+                        enabled,
+                        () -> UtilityScripts.lockAllAnnotations(qupath)),
+                item(
+                        resources.getString("menu.utility.import.geojson"),
+                        enabled,
+                        () -> UtilityScripts.importGeoJsonObjects(qupath)),
+                item(
+                        resources.getString("menu.utility.export.regions"),
+                        enabled,
+                        () -> AnnotationRegionExporter.exportAnnotationRegions(qupath)),
+                item(
+                        resources.getString("menu.utility.delete.measurements"),
+                        enabled,
+                        () -> UtilityScripts.deleteMeasurementsByKeyword(qupath)),
                 new SeparatorMenuItem(),
-                item(resources.getString("menu.utility.reset.project"), enabled, () -> ext.showResetProjectState(qupath)));
+                item(
+                        resources.getString("menu.utility.reset.project"),
+                        enabled,
+                        () -> ext.showResetProjectState(qupath)));
 
-        menu.getItems().addAll(
-                item("Binary Classifiers...", enabled, () -> ext.showBinaryClassifiers(qupath)),
-                item("Composite Classification...", enabled, () -> ext.showCompositeClassification(qupath)),
-                item("Class Control...", enabled, () -> ext.showClassControl(qupath)),
-                item(resources.getString("menu.features"), enabled, () -> ext.showFeatureSelection(qupath)),
-                item("Normalise Features", enabled, () -> ext.showNormalization(qupath)),
-                new SeparatorMenuItem(),
-                item(resources.getString("menu.prediction.summary"), enabled, () -> ext.showProjectPredictionSummary(qupath)),
-                item(resources.getString("menu.intensity.heatmaps"), enabled, () -> ext.showIntensityHeatmaps(qupath)),
-                item(resources.getString("menu.pixel.prescreen"), enabled, () -> ext.showImagePixelPrescreen(qupath)),
-                item("Scatter Plots and Clustering...", enabled, () -> ext.showScatterPlot(qupath)),
-                item("Generate Distance Measurements...", enabled, () -> ext.showDistanceMeasurements(qupath)),
-                new SeparatorMenuItem(),
-                exportMenu,
-                importMenu,
-                new SeparatorMenuItem(),
-                utilityScriptsMenu
-        );
+        menu.getItems()
+                .addAll(
+                        item("Binary Classifiers...", enabled, () -> ext.showBinaryClassifiers(qupath)),
+                        item("Composite Classification...", enabled, () -> ext.showCompositeClassification(qupath)),
+                        item("Class Control...", enabled, () -> ext.showClassControl(qupath)),
+                        item(resources.getString("menu.features"), enabled, () -> ext.showFeatureSelection(qupath)),
+                        item("Normalise Features", enabled, () -> ext.showNormalization(qupath)),
+                        new SeparatorMenuItem(),
+                        item(
+                                resources.getString("menu.prediction.summary"),
+                                enabled,
+                                () -> ext.showProjectPredictionSummary(qupath)),
+                        item(
+                                resources.getString("menu.intensity.heatmaps"),
+                                enabled,
+                                () -> ext.showIntensityHeatmaps(qupath)),
+                        item(
+                                resources.getString("menu.pixel.prescreen"),
+                                enabled,
+                                () -> ext.showImagePixelPrescreen(qupath)),
+                        item("Scatter Plots and Clustering...", enabled, () -> ext.showScatterPlot(qupath)),
+                        item("Generate Distance Measurements...", enabled, () -> ext.showDistanceMeasurements(qupath)),
+                        new SeparatorMenuItem(),
+                        exportMenu,
+                        importMenu,
+                        new SeparatorMenuItem(),
+                        utilityScriptsMenu);
     }
 
     /** A menu item that runs {@code action} and is disabled while the extension is off. */

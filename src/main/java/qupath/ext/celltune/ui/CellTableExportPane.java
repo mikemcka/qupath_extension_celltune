@@ -1,5 +1,7 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
+import java.util.stream.Collectors;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -10,9 +12,6 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * A dialog for choosing which measurement columns to include in a cell table
@@ -59,11 +58,12 @@ public class CellTableExportPane {
      * @param defaultIncludeGeometry whether the polygon export tick-box starts ticked
      * @param defaultMicrons        whether the unit selector starts on microns (vs pixels)
      */
-    public CellTableExportPane(Stage owner,
-                               List<String> featureNames,
-                               List<String> preSelected,
-                               boolean defaultIncludeGeometry,
-                               boolean defaultMicrons) {
+    public CellTableExportPane(
+            Stage owner,
+            List<String> featureNames,
+            List<String> preSelected,
+            boolean defaultIncludeGeometry,
+            boolean defaultMicrons) {
         stage = new Stage();
 
         // Build items
@@ -116,9 +116,13 @@ public class CellTableExportPane {
         Button clearPrefixBtn = new Button("Clear Prefix");
         clearPrefixBtn.setOnAction(e -> clearCurrentPrefix());
 
-        HBox btnRow = new HBox(6, selectAllBtn, clearAllBtn,
+        HBox btnRow = new HBox(
+                6,
+                selectAllBtn,
+                clearAllBtn,
                 new Separator(javafx.geometry.Orientation.VERTICAL),
-                selectPrefixBtn, clearPrefixBtn);
+                selectPrefixBtn,
+                clearPrefixBtn);
         btnRow.setAlignment(Pos.CENTER_LEFT);
 
         // Polygon (geometry) export options
@@ -129,7 +133,9 @@ public class CellTableExportPane {
         geometryUnitCombo.getItems().addAll(UNIT_MICRONS, UNIT_PIXELS);
         geometryUnitCombo.getSelectionModel().select(defaultMicrons ? UNIT_MICRONS : UNIT_PIXELS);
         geometryUnitCombo.setPrefWidth(150);
-        geometryUnitCombo.disableProperty().bind(geometryCheck.selectedProperty().not());
+        geometryUnitCombo
+                .disableProperty()
+                .bind(geometryCheck.selectedProperty().not());
 
         HBox geometryRow = new HBox(8, geometryCheck, new Label("Units:"), geometryUnitCombo);
         geometryRow.setAlignment(Pos.CENTER_LEFT);
@@ -138,14 +144,26 @@ public class CellTableExportPane {
         Button okBtn = new Button("OK");
         okBtn.setDefaultButton(true);
         okBtn.setPrefWidth(80);
-        okBtn.setOnAction(e -> { confirmed = true; stage.close(); });
+        okBtn.setOnAction(e -> {
+            confirmed = true;
+            stage.close();
+        });
 
         Button cancelBtn = new Button("Cancel");
         cancelBtn.setCancelButton(true);
         cancelBtn.setPrefWidth(80);
         cancelBtn.setOnAction(e -> stage.close());
 
-        HBox okCancelRow = new HBox(8, countLabel, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, okBtn, cancelBtn);
+        HBox okCancelRow = new HBox(
+                8,
+                countLabel,
+                new Region() {
+                    {
+                        HBox.setHgrow(this, Priority.ALWAYS);
+                    }
+                },
+                okBtn,
+                cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
         // Filter row
@@ -153,15 +171,14 @@ public class CellTableExportPane {
         filterRow.setAlignment(Pos.CENTER_LEFT);
 
         // Info banner: columns always written regardless of the selection below.
-        Label defaultColsInfo = new Label(
-                "Always included (no need to select): Image, CellID, CentroidX_um, "
+        Label defaultColsInfo = new Label("Always included (no need to select): Image, CellID, CentroidX_um, "
                 + "CentroidY_um, Area_um2, Classification, ParentAnnotations, "
                 + "ContainingAnnotations. The columns below are added on top of these.");
         defaultColsInfo.setWrapText(true);
         defaultColsInfo.setStyle("-fx-font-size: 11px; -fx-text-fill: -fx-accent;");
 
-        VBox root = new VBox(8, defaultColsInfo, filterRow, btnRow, listView,
-                new Separator(), geometryRow, okCancelRow);
+        VBox root =
+                new VBox(8, defaultColsInfo, filterRow, btnRow, listView, new Separator(), geometryRow, okCancelRow);
         root.setPadding(new Insets(10));
 
         stage.initOwner(owner);
@@ -194,12 +211,15 @@ public class CellTableExportPane {
     // ── Filter logic ────────────────────────────────────────────────────────────
 
     private void updateFilter() {
-        String search = searchField.getText() == null ? "" : searchField.getText().toLowerCase().strip();
+        String search = searchField.getText() == null
+                ? ""
+                : searchField.getText().toLowerCase().strip();
         String prefix = prefixCombo.getValue();
         boolean allPrefixes = "All prefixes".equals(prefix);
 
         filteredFeatures.setPredicate(item -> {
-            boolean matchesSearch = search.isEmpty() || item.getName().toLowerCase().contains(search);
+            boolean matchesSearch =
+                    search.isEmpty() || item.getName().toLowerCase().contains(search);
             boolean matchesPrefix = allPrefixes || item.getName().startsWith(prefix);
             return matchesSearch && matchesPrefix;
         });
@@ -260,12 +280,22 @@ public class CellTableExportPane {
             this.selected = selected;
         }
 
-        String getName()           { return name; }
-        boolean isSelected()       { return selected; }
-        void setSelected(boolean s) { this.selected = s; }
+        String getName() {
+            return name;
+        }
+
+        boolean isSelected() {
+            return selected;
+        }
+
+        void setSelected(boolean s) {
+            this.selected = s;
+        }
 
         @Override
-        public String toString() { return name; }
+        public String toString() {
+            return name;
+        }
     }
 
     /** ListView cell with a CheckBox. */

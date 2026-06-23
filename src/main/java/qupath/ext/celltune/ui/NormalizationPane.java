@@ -1,5 +1,6 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -12,9 +13,6 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.model.FeatureNormalizer.Transform;
-
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Checkbox-based dialog for selecting which features to normalise.
@@ -75,17 +73,15 @@ public class NormalizationPane {
 
         // ── Cofactor ──
         cofactorLabel = new Label("Cofactor:");
-        cofactorSpinner = new Spinner<>(0.01, 10000.0,
-                existing != null ? existing.getArcsinhCofactor() : 1.0, 1.0);
+        cofactorSpinner = new Spinner<>(0.01, 10000.0, existing != null ? existing.getArcsinhCofactor() : 1.0, 1.0);
         cofactorSpinner.setEditable(true);
         cofactorSpinner.setPrefWidth(100);
 
         cofactorHint = new Label("(1 for fluorescence, 100 for mass spec)");
         cofactorHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11;");
 
-        HBox transformRow = new HBox(8,
-                new Label("Transform:"), transformCombo,
-                cofactorLabel, cofactorSpinner, cofactorHint);
+        HBox transformRow =
+                new HBox(8, new Label("Transform:"), transformCombo, cofactorLabel, cofactorSpinner, cofactorHint);
         transformRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Search / filter ──
@@ -119,9 +115,13 @@ public class NormalizationPane {
         Button clearPrefixBtn = new Button("Clear Prefix");
         clearPrefixBtn.setOnAction(e -> clearCurrentPrefix());
 
-        HBox btnRow = new HBox(6, selectAllBtn, clearAllBtn,
+        HBox btnRow = new HBox(
+                6,
+                selectAllBtn,
+                clearAllBtn,
                 new Separator(javafx.geometry.Orientation.VERTICAL),
-                selectPrefixBtn, clearPrefixBtn);
+                selectPrefixBtn,
+                clearPrefixBtn);
         btnRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── List view with checkboxes ──
@@ -139,16 +139,26 @@ public class NormalizationPane {
         Button okBtn = new Button("OK");
         okBtn.setDefaultButton(true);
         okBtn.setPrefWidth(80);
-        okBtn.setOnAction(e -> { confirmed = true; stage.close(); });
+        okBtn.setOnAction(e -> {
+            confirmed = true;
+            stage.close();
+        });
 
         Button cancelBtn = new Button("Cancel");
         cancelBtn.setCancelButton(true);
         cancelBtn.setPrefWidth(80);
         cancelBtn.setOnAction(e -> stage.close());
 
-        HBox okCancelRow = new HBox(8, countLabel,
-                new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }},
-                okBtn, cancelBtn);
+        HBox okCancelRow = new HBox(
+                8,
+                countLabel,
+                new Region() {
+                    {
+                        HBox.setHgrow(this, Priority.ALWAYS);
+                    }
+                },
+                okBtn,
+                cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
         VBox root = new VBox(8, transformRow, filterRow, btnRow, listView, okCancelRow);
@@ -202,12 +212,15 @@ public class NormalizationPane {
     }
 
     private void updateFilter() {
-        String search = searchField.getText() == null ? "" : searchField.getText().toLowerCase().strip();
+        String search = searchField.getText() == null
+                ? ""
+                : searchField.getText().toLowerCase().strip();
         String prefix = prefixCombo.getValue();
         boolean allPrefixes = "All prefixes".equals(prefix);
 
         filteredItems.setPredicate(item -> {
-            boolean matchesSearch = search.isEmpty() || item.getName().toLowerCase().contains(search);
+            boolean matchesSearch =
+                    search.isEmpty() || item.getName().toLowerCase().contains(search);
             boolean matchesPrefix = allPrefixes || item.getName().startsWith(prefix);
             return matchesSearch && matchesPrefix;
         });
@@ -223,7 +236,10 @@ public class NormalizationPane {
 
     private void selectCurrentPrefix() {
         String prefix = prefixCombo.getValue();
-        if ("All prefixes".equals(prefix)) { setAllVisible(true); return; }
+        if ("All prefixes".equals(prefix)) {
+            setAllVisible(true);
+            return;
+        }
         for (FeatureItem item : allItems) {
             if (item.getName().startsWith(prefix)) item.setSelected(true);
         }
@@ -233,7 +249,10 @@ public class NormalizationPane {
 
     private void clearCurrentPrefix() {
         String prefix = prefixCombo.getValue();
-        if ("All prefixes".equals(prefix)) { setAllVisible(false); return; }
+        if ("All prefixes".equals(prefix)) {
+            setAllVisible(false);
+            return;
+        }
         for (FeatureItem item : allItems) {
             if (item.getName().startsWith(prefix)) item.setSelected(false);
         }
@@ -257,12 +276,22 @@ public class NormalizationPane {
             this.selected = selected;
         }
 
-        String getName()              { return name; }
-        boolean isSelected()          { return selected; }
-        void setSelected(boolean s)   { this.selected = s; }
+        String getName() {
+            return name;
+        }
+
+        boolean isSelected() {
+            return selected;
+        }
+
+        void setSelected(boolean s) {
+            this.selected = s;
+        }
 
         @Override
-        public String toString() { return name; }
+        public String toString() {
+            return name;
+        }
     }
 
     /** ListView cell with a CheckBox — same pattern as FeatureSelectionPane. */

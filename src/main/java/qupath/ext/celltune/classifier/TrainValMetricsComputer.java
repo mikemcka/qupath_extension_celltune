@@ -37,8 +37,11 @@ final class TrainValMetricsComputer {
     }
 
     /** The four metric sets; fields are null when the split was degenerate. */
-    record Result(TrainingMetrics model1Train, TrainingMetrics model1Val,
-                  TrainingMetrics model2Train, TrainingMetrics model2Val) {
+    record Result(
+            TrainingMetrics model1Train,
+            TrainingMetrics model1Val,
+            TrainingMetrics model2Train,
+            TrainingMetrics model2Val) {
         static Result empty() {
             return new Result(null, null, null, null);
         }
@@ -61,12 +64,22 @@ final class TrainValMetricsComputer {
      * @param out             progress/log sink
      * @return the four metric sets, or {@link Result#empty()} if the split was degenerate
      */
-    static Result compute(List<float[]> realRows, List<Integer> realLabels,
-                          int nRealSamples, int nClasses, int nFeatures,
-                          ResamplingStrategy strategy,
-                          ModelTrainer model1Trainer, ModelPredictor model1Predictor, String model1Name,
-                          ModelTrainer model2Trainer, ModelPredictor model2Predictor, String model2Name,
-                          List<String> classNames, Consumer<String> out) throws Exception {
+    static Result compute(
+            List<float[]> realRows,
+            List<Integer> realLabels,
+            int nRealSamples,
+            int nClasses,
+            int nFeatures,
+            ResamplingStrategy strategy,
+            ModelTrainer model1Trainer,
+            ModelPredictor model1Predictor,
+            String model1Name,
+            ModelTrainer model2Trainer,
+            ModelPredictor model2Predictor,
+            String model2Name,
+            List<String> classNames,
+            Consumer<String> out)
+            throws Exception {
         int[] realIntLabels = new int[nRealSamples];
         for (int i = 0; i < nRealSamples; i++) realIntLabels[i] = realLabels.get(i);
 
@@ -85,8 +98,7 @@ final class TrainValMetricsComputer {
             evTrainLabelsList.add(realLabels.get(idx));
         }
         if (strategy != ResamplingStrategy.NONE) {
-            Resampler.Result res = Resampler.apply(
-                    evTrainRows, evTrainLabelsList, nClasses, strategy, s -> {});
+            Resampler.Result res = Resampler.apply(evTrainRows, evTrainLabelsList, nClasses, strategy, s -> {});
             evTrainRows = res.rows();
             evTrainLabelsList = res.labels();
         }
@@ -108,25 +120,24 @@ final class TrainValMetricsComputer {
         // ── Eval Model 1 ────────────────────────────────────────────────────
         model1Trainer.train(evTrainData, evTrainLabels, evTrainSize);
         float[][] m1TrainProba = model1Predictor.predict(evTrainData, evTrainSize);
-        float[][] m1ValProba   = model1Predictor.predict(evValData, valSize);
-        TrainingMetrics model1Train = TrainingMetrics.compute(
-                model1Name + " — Train (80%)", classNames, evTrainLabels, m1TrainProba);
-        TrainingMetrics model1Val = TrainingMetrics.compute(
-                model1Name + " — Validation (20%)", classNames, evValLabels, m1ValProba);
+        float[][] m1ValProba = model1Predictor.predict(evValData, valSize);
+        TrainingMetrics model1Train =
+                TrainingMetrics.compute(model1Name + " — Train (80%)", classNames, evTrainLabels, m1TrainProba);
+        TrainingMetrics model1Val =
+                TrainingMetrics.compute(model1Name + " — Validation (20%)", classNames, evValLabels, m1ValProba);
 
         // ── Eval Model 2 ────────────────────────────────────────────────────
         model2Trainer.train(evTrainData, evTrainLabels, evTrainSize);
         float[][] m2TrainProba = model2Predictor.predict(evTrainData, evTrainSize);
-        float[][] m2ValProba   = model2Predictor.predict(evValData, valSize);
-        TrainingMetrics model2Train = TrainingMetrics.compute(
-                model2Name + " — Train (80%)", classNames, evTrainLabels, m2TrainProba);
-        TrainingMetrics model2Val = TrainingMetrics.compute(
-                model2Name + " — Validation (20%)", classNames, evValLabels, m2ValProba);
+        float[][] m2ValProba = model2Predictor.predict(evValData, valSize);
+        TrainingMetrics model2Train =
+                TrainingMetrics.compute(model2Name + " — Train (80%)", classNames, evTrainLabels, m2TrainProba);
+        TrainingMetrics model2Val =
+                TrainingMetrics.compute(model2Name + " — Validation (20%)", classNames, evValLabels, m2ValProba);
 
         out.accept(String.format(
                 "Macro F1: M1 train=%.3f val=%.3f | M2 train=%.3f val=%.3f",
-                model1Train.macroF1(), model1Val.macroF1(),
-                model2Train.macroF1(), model2Val.macroF1()));
+                model1Train.macroF1(), model1Val.macroF1(), model2Train.macroF1(), model2Val.macroF1()));
 
         return new Result(model1Train, model1Val, model2Train, model2Val);
     }
@@ -155,8 +166,8 @@ final class TrainValMetricsComputer {
         }
 
         return new int[][] {
-                trainList.stream().mapToInt(Integer::intValue).toArray(),
-                valList.stream().mapToInt(Integer::intValue).toArray()
+            trainList.stream().mapToInt(Integer::intValue).toArray(),
+            valList.stream().mapToInt(Integer::intValue).toArray()
         };
     }
 }

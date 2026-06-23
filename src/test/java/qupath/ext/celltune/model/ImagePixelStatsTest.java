@@ -1,11 +1,10 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
-
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
+import org.junit.jupiter.api.Test;
 
 class ImagePixelStatsTest {
 
@@ -70,17 +69,16 @@ class ImagePixelStatsTest {
         // Tight low cluster around 10, tight high cluster around 200.
         float[] values = new float[200];
         for (int i = 0; i < 100; i++) {
-            values[i] = 10f + (i % 5);          // 10..14  (background)
+            values[i] = 10f + (i % 5); // 10..14  (background)
         }
         for (int i = 100; i < 200; i++) {
-            values[i] = 200f + (i % 5);         // 200..204 (foreground)
+            values[i] = 200f + (i % 5); // 200..204 (foreground)
         }
 
         var cs = ImagePixelStats.computeChannel("bimodal", values, 255.0);
 
         // Threshold must land between the two clusters.
-        assertTrue(cs.otsuThreshold() > 14.0 && cs.otsuThreshold() < 200.0,
-                "otsu=" + cs.otsuThreshold());
+        assertTrue(cs.otsuThreshold() > 14.0 && cs.otsuThreshold() < 200.0, "otsu=" + cs.otsuThreshold());
         // Half background, half foreground.
         assertEquals(0.5, cs.backgroundFraction(), 0.02);
         assertEquals(0.5, cs.foregroundCoverage(), 0.02);
@@ -126,7 +124,8 @@ class ImagePixelStatsTest {
             values[i] = (i % 2 == 0) ? 0f : 100f;
         }
         // Without a shape, focus is NaN; with a 4×4 shape it is finite.
-        assertTrue(Double.isNaN(ImagePixelStats.computeChannel("x", values, 255.0).laplacianVariance()));
+        assertTrue(
+                Double.isNaN(ImagePixelStats.computeChannel("x", values, 255.0).laplacianVariance()));
         var cs = ImagePixelStats.computeChannel("x", values, 255.0, 4, 4);
         assertTrue(cs.laplacianVariance() > 0.0, "focus=" + cs.laplacianVariance());
     }
@@ -139,9 +138,7 @@ class ImagePixelStatsTest {
         float[] chA = {5f, 5f, 200f, 200f};
         float[] chB = {5f, 200f, 5f, 200f};
 
-        var image = ImagePixelStats.compute(
-                "img", 4.0, 2, 2, List.of("A", "B"),
-                new float[][]{chA, chB}, 255.0);
+        var image = ImagePixelStats.compute("img", 4.0, 2, 2, List.of("A", "B"), new float[][] {chA, chB}, 255.0);
 
         // Only pixel 0 (5,5) is background in both channels → 1/4.
         assertEquals(0.25, image.emptyFraction(), 0.001);
@@ -152,9 +149,8 @@ class ImagePixelStatsTest {
     void computeProducesOneStatsPerChannel() {
         float[] chA = {1f, 2f, 3f, 4f};
         float[] chB = {10f, 20f, 30f, 40f};
-        var image = ImagePixelStats.compute(
-                "img", 8.0, 2, 2, List.of("DAPI", "CD8"),
-                new float[][]{chA, chB}, 65535.0);
+        var image =
+                ImagePixelStats.compute("img", 8.0, 2, 2, List.of("DAPI", "CD8"), new float[][] {chA, chB}, 65535.0);
 
         assertEquals("img", image.imageName());
         assertEquals(8.0, image.downsample(), EPS);

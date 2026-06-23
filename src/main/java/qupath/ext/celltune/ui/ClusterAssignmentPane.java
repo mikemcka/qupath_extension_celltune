@@ -1,5 +1,11 @@
 package qupath.ext.celltune.ui;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.IntFunction;
+import java.util.function.Supplier;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -21,14 +27,6 @@ import javafx.stage.Modality;
 import javafx.stage.Window;
 import qupath.lib.objects.classes.PathClass;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.function.IntFunction;
-import java.util.function.Supplier;
-
 /**
  * Shared "assign clusters to classes" dialog used by both single-image and
  * project-wide clustering. Each k-means cluster gets a row showing a colour
@@ -41,8 +39,7 @@ final class ClusterAssignmentPane {
 
     private static final String SKIP_CLASS = "— skip —";
 
-    private ClusterAssignmentPane() {
-    }
+    private ClusterAssignmentPane() {}
 
     /**
      * @param owner        owner window
@@ -59,12 +56,16 @@ final class ClusterAssignmentPane {
      *                          classes without leaving this dialog (nullable → no button)
      * @return cluster → class mapping (clusters left as "skip" are absent), or null
      */
-    static Map<Integer, PathClass> show(Window owner, String title, int k,
-                                        int[] counts, double[][] centroids,
-                                        List<String> markers,
-                                        Supplier<List<String>> classNamesSupplier,
-                                        IntFunction<Color> clusterColor,
-                                        Runnable openClassControl) {
+    static Map<Integer, PathClass> show(
+            Window owner,
+            String title,
+            int k,
+            int[] counts,
+            double[][] centroids,
+            List<String> markers,
+            Supplier<List<String>> classNamesSupplier,
+            IntFunction<Color> clusterColor,
+            Runnable openClassControl) {
         int nMarkers = markers.size();
         boolean heatmap = centroids != null && nMarkers > 0;
         List<String> classNames = classNamesSupplier.get();
@@ -116,12 +117,11 @@ final class ClusterAssignmentPane {
 
             if (heatmap) {
                 for (int j = 0; j < nMarkers; j++) {
-                    Rectangle cell = new Rectangle(
-                            16, 16, heatColor(centroids[c][j], maxAbs));
+                    Rectangle cell = new Rectangle(16, 16, heatColor(centroids[c][j], maxAbs));
                     cell.setStroke(Color.gray(0.85));
-                    Tooltip.install(cell, new Tooltip(String.format(
-                            "Cluster %d · %s: z=%.2f",
-                            c, markers.get(j), centroids[c][j])));
+                    Tooltip.install(
+                            cell,
+                            new Tooltip(String.format("Cluster %d · %s: z=%.2f", c, markers.get(j), centroids[c][j])));
                     grid.add(cell, 2 + j, row);
                 }
             }
@@ -136,11 +136,12 @@ final class ClusterAssignmentPane {
             grid.add(combo, classCol, row);
         }
 
-        Label legend = new Label(heatmap
-                ? "Heatmap = per-cluster mean marker intensity (z-scored): "
-                        + "red = high, blue = low. Name each cluster from its high "
-                        + "markers, or leave “" + SKIP_CLASS + "”."
-                : "Name each cluster, or leave “" + SKIP_CLASS + "” to skip it.");
+        Label legend = new Label(
+                heatmap
+                        ? "Heatmap = per-cluster mean marker intensity (z-scored): "
+                                + "red = high, blue = low. Name each cluster from its high "
+                                + "markers, or leave “" + SKIP_CLASS + "”."
+                        : "Name each cluster, or leave “" + SKIP_CLASS + "” to skip it.");
         legend.setWrapText(true);
         legend.setMaxWidth(880);
 
@@ -153,8 +154,7 @@ final class ClusterAssignmentPane {
         // ── Class-management toolbar: re-queries class names into every dropdown,
         // and links to Class Control so users can add/delete classes in place. ──
         Button refreshBtn = new Button("Refresh classes");
-        refreshBtn.setTooltip(new Tooltip(
-                "Re-read the QuPath class list into every dropdown — click after "
+        refreshBtn.setTooltip(new Tooltip("Re-read the QuPath class list into every dropdown — click after "
                 + "adding or deleting classes in Class Control."));
         refreshBtn.setOnAction(e -> {
             List<String> latest = classNamesSupplier.get();
@@ -170,9 +170,8 @@ final class ClusterAssignmentPane {
         toolbar.setAlignment(Pos.CENTER_LEFT);
         if (openClassControl != null) {
             Button manageBtn = new Button("Manage Classes…");
-            manageBtn.setTooltip(new Tooltip(
-                    "Open Class Control to add or delete classes, then click "
-                    + "“Refresh classes”."));
+            manageBtn.setTooltip(
+                    new Tooltip("Open Class Control to add or delete classes, then click " + "“Refresh classes”."));
             manageBtn.setOnAction(e -> openClassControl.run());
             toolbar.getChildren().add(manageBtn);
         }
@@ -192,8 +191,7 @@ final class ClusterAssignmentPane {
         dlg.setResizable(true);
         dlg.getDialogPane().setPrefWidth(heatmap ? 940 : 480);
         dlg.getDialogPane().setContent(content);
-        dlg.getDialogPane().getButtonTypes().addAll(
-                ButtonType.APPLY, ButtonType.CANCEL);
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.APPLY, ButtonType.CANCEL);
 
         Optional<ButtonType> res = dlg.showAndWait();
         if (res.isEmpty() || res.get() != ButtonType.APPLY) {

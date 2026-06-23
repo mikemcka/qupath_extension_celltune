@@ -1,5 +1,14 @@
 package qupath.ext.celltune;
 
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.ResourceBundle;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,16 +32,6 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.projects.ProjectImageEntry;
 
-import java.awt.image.BufferedImage;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.ResourceBundle;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
  * Read-only analysis/visualisation view launchers lifted out of {@code CellTuneExtension}.
  * <p>
@@ -46,8 +45,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 final class AnalysisViews {
 
-    private static final ResourceBundle resources =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle resources = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
     private static final String EXTENSION_NAME = resources.getString("name");
     private static final Logger logger = LoggerFactory.getLogger(AnalysisViews.class);
 
@@ -75,13 +73,11 @@ final class AnalysisViews {
             return;
         }
 
-        Collection<PathObject> cells = imageData.getHierarchy()
-                .getObjects(null, PathObject.class).stream()
+        Collection<PathObject> cells = imageData.getHierarchy().getObjects(null, PathObject.class).stream()
                 .filter(PathObjectFilter.DETECTIONS_ALL)
                 .toList();
         if (cells.isEmpty()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No detections found. Run cell detection first.");
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No detections found. Run cell detection first.");
             return;
         }
 
@@ -96,16 +92,14 @@ final class AnalysisViews {
         // null/empty pre-selection makes FeatureSelectionPane default to all.
         List<String> markerDefaults = IntensityHeatmap.discoverMarkerFeatures(allFeatures);
         var selectionPane = new FeatureSelectionPane(
-                qupath.getStage(), allFeatures,
-                markerDefaults.isEmpty() ? null : markerDefaults);
+                qupath.getStage(), allFeatures, markerDefaults.isEmpty() ? null : markerDefaults);
         selectionPane.setTitle("Select Measurements for Intensity Heatmap");
         List<String> markerFeatures = selectionPane.showAndWait();
         if (markerFeatures == null) {
             return; // user cancelled
         }
         if (markerFeatures.isEmpty()) {
-            Dialogs.showWarningNotification(EXTENSION_NAME,
-                    "No measurements selected — nothing to plot.");
+            Dialogs.showWarningNotification(EXTENSION_NAME, "No measurements selected — nothing to plot.");
             return;
         }
 
@@ -125,8 +119,7 @@ final class AnalysisViews {
         acc.add(cells);
         IntensityHeatmap.Result result = acc.build();
 
-        new IntensityHeatmapView(qupath.getStage(), qupath, currentImageName,
-                markerFeatures, result).show();
+        new IntensityHeatmapView(qupath.getStage(), qupath, currentImageName, markerFeatures, result).show();
     }
 
     /**
@@ -141,23 +134,22 @@ final class AnalysisViews {
      * @param normalizer             the session feature normalizer (may be null)
      * @param openClassControl       callback to launch the Class Control dialog
      */
-    static void showScatterPlot(QuPathGUI qupath,
-                                PopulationSet liveCurrentPredictions,
-                                FeatureNormalizer normalizer,
-                                Runnable openClassControl) {
+    static void showScatterPlot(
+            QuPathGUI qupath,
+            PopulationSet liveCurrentPredictions,
+            FeatureNormalizer normalizer,
+            Runnable openClassControl) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
             return;
         }
 
-        List<PathObject> cells = imageData.getHierarchy()
-                .getObjects(null, PathObject.class).stream()
+        List<PathObject> cells = imageData.getHierarchy().getObjects(null, PathObject.class).stream()
                 .filter(PathObjectFilter.DETECTIONS_ALL)
                 .toList();
         if (cells.isEmpty()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No detections found. Run cell detection first.");
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No detections found. Run cell detection first.");
             return;
         }
 
@@ -170,16 +162,14 @@ final class AnalysisViews {
         // Default to the whole-cell marker means; let the user adjust.
         List<String> markerDefaults = IntensityHeatmap.discoverMarkerFeatures(allFeatures);
         var selectionPane = new FeatureSelectionPane(
-                qupath.getStage(), allFeatures,
-                markerDefaults.isEmpty() ? null : markerDefaults);
+                qupath.getStage(), allFeatures, markerDefaults.isEmpty() ? null : markerDefaults);
         selectionPane.setTitle("Select Measurements for Scatter Plot");
         List<String> markerFeatures = selectionPane.showAndWait();
         if (markerFeatures == null) {
             return; // user cancelled
         }
         if (markerFeatures.isEmpty()) {
-            Dialogs.showWarningNotification(EXTENSION_NAME,
-                    "No measurements selected — nothing to plot.");
+            Dialogs.showWarningNotification(EXTENSION_NAME, "No measurements selected — nothing to plot.");
             return;
         }
 
@@ -195,9 +185,16 @@ final class AnalysisViews {
             currentImageName = imageData.getServer().getMetadata().getName();
         }
 
-        new ScatterPlotView(qupath.getStage(), qupath, currentImageName,
-                markerFeatures, cells, liveCurrentPredictions,
-                openClassControl, normalizer).show();
+        new ScatterPlotView(
+                        qupath.getStage(),
+                        qupath,
+                        currentImageName,
+                        markerFeatures,
+                        cells,
+                        liveCurrentPredictions,
+                        openClassControl,
+                        normalizer)
+                .show();
     }
 
     /**
@@ -235,75 +232,79 @@ final class AnalysisViews {
         stage.setOnCloseRequest(e -> e.consume());
         stage.show();
 
-        Thread worker = new Thread(() -> {
-            int total = entries.size();
-            AtomicInteger done = new AtomicInteger();
-            AtomicInteger failed = new AtomicInteger();
+        Thread worker = new Thread(
+                () -> {
+                    int total = entries.size();
+                    AtomicInteger done = new AtomicInteger();
+                    AtomicInteger failed = new AtomicInteger();
 
-            // One task per image; reads are independent and I/O+decode bound,
-            // so a small fixed pool gives a near-linear speedup. Capped at 4 to
-            // bound peak memory — each task holds one decoded downsampled region.
-            int nThreads = Math.min(Math.max(total, 1), 4);
-            ExecutorService pool = Executors.newFixedThreadPool(nThreads);
-            List<Callable<ImagePixelStats.ImageStats>> tasks = new ArrayList<>(total);
-            for (var entry : entries) {
-                tasks.add(() -> {
-                    ImagePixelStats.ImageStats result = null;
-                    if (entry != null) {
-                        String imageName = entry.getImageName();
-                        try {
-                            var data = entry.readImageData();
-                            try (var server = data.getServer()) {
-                                result = ImagePixelStatsReader.read(imageName, server);
+                    // One task per image; reads are independent and I/O+decode bound,
+                    // so a small fixed pool gives a near-linear speedup. Capped at 4 to
+                    // bound peak memory — each task holds one decoded downsampled region.
+                    int nThreads = Math.min(Math.max(total, 1), 4);
+                    ExecutorService pool = Executors.newFixedThreadPool(nThreads);
+                    List<Callable<ImagePixelStats.ImageStats>> tasks = new ArrayList<>(total);
+                    for (var entry : entries) {
+                        tasks.add(() -> {
+                            ImagePixelStats.ImageStats result = null;
+                            if (entry != null) {
+                                String imageName = entry.getImageName();
+                                try {
+                                    var data = entry.readImageData();
+                                    try (var server = data.getServer()) {
+                                        result = ImagePixelStatsReader.read(imageName, server);
+                                    }
+                                } catch (Exception ex) {
+                                    failed.incrementAndGet();
+                                    logger.warn(
+                                            "[CellTune] Pixel prescreen failed to read '{}': {}",
+                                            imageName,
+                                            ex.getMessage());
+                                }
                             }
-                        } catch (Exception ex) {
-                            failed.incrementAndGet();
-                            logger.warn("[CellTune] Pixel prescreen failed to read '{}': {}",
-                                    imageName, ex.getMessage());
+                            final int c = done.incrementAndGet();
+                            Platform.runLater(() -> {
+                                bar.setProgress((double) c / total);
+                                status.setText(String.format("Reading images: %d / %d…", c, total));
+                            });
+                            return result;
+                        });
+                    }
+
+                    // Collect in submission order (deterministic cohort input).
+                    var stats = new ArrayList<ImagePixelStats.ImageStats>(total);
+                    try {
+                        for (var future : pool.invokeAll(tasks)) {
+                            var s = future.get();
+                            if (s != null) {
+                                stats.add(s);
+                            }
                         }
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    } catch (java.util.concurrent.ExecutionException ee) {
+                        logger.warn("[CellTune] Pixel prescreen task failed: {}", ee.getMessage());
+                    } finally {
+                        pool.shutdown();
                     }
-                    final int c = done.incrementAndGet();
+
+                    var report = PixelCohortAnalyzer.analyze(stats);
+                    final int failedF = failed.get();
                     Platform.runLater(() -> {
-                        bar.setProgress((double) c / total);
-                        status.setText(String.format("Reading images: %d / %d…", c, total));
+                        stage.close();
+                        if (report.images().isEmpty()) {
+                            Dialogs.showErrorMessage(
+                                    EXTENSION_NAME, "Could not read pixels from any project image (see log).");
+                            return;
+                        }
+                        if (failedF > 0) {
+                            Dialogs.showWarningNotification(
+                                    EXTENSION_NAME, failedF + " image(s) could not be read (see log).");
+                        }
+                        new PixelPrescreenView(qupath, qupath.getStage(), report).show();
                     });
-                    return result;
-                });
-            }
-
-            // Collect in submission order (deterministic cohort input).
-            var stats = new ArrayList<ImagePixelStats.ImageStats>(total);
-            try {
-                for (var future : pool.invokeAll(tasks)) {
-                    var s = future.get();
-                    if (s != null) {
-                        stats.add(s);
-                    }
-                }
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            } catch (java.util.concurrent.ExecutionException ee) {
-                logger.warn("[CellTune] Pixel prescreen task failed: {}", ee.getMessage());
-            } finally {
-                pool.shutdown();
-            }
-
-            var report = PixelCohortAnalyzer.analyze(stats);
-            final int failedF = failed.get();
-            Platform.runLater(() -> {
-                stage.close();
-                if (report.images().isEmpty()) {
-                    Dialogs.showErrorMessage(EXTENSION_NAME,
-                            "Could not read pixels from any project image (see log).");
-                    return;
-                }
-                if (failedF > 0) {
-                    Dialogs.showWarningNotification(EXTENSION_NAME,
-                            failedF + " image(s) could not be read (see log).");
-                }
-                new PixelPrescreenView(qupath, qupath.getStage(), report).show();
-            });
-        }, "celltune-pixel-prescreen");
+                },
+                "celltune-pixel-prescreen");
         worker.setDaemon(true);
         worker.start();
     }
@@ -315,9 +316,7 @@ final class AnalysisViews {
      * @param classifier the session classifier (must be trained)
      * @param normalizer the session feature normalizer (may be null)
      */
-    static void showFeatureImportance(QuPathGUI qupath,
-                                      DualModelClassifier classifier,
-                                      FeatureNormalizer normalizer) {
+    static void showFeatureImportance(QuPathGUI qupath, DualModelClassifier classifier, FeatureNormalizer normalizer) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -327,8 +326,7 @@ final class AnalysisViews {
         // thread uses a stable reference even if retraining is triggered later.
         final DualModelClassifier snap = classifier;
         if (snap == null || !snap.isTrained()) {
-            Dialogs.showErrorMessage(EXTENSION_NAME,
-                    "No trained classifier found. Run CellTune Classification first.");
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No trained classifier found. Run CellTune Classification first.");
             return;
         }
         var detections = imageData.getHierarchy().getDetectionObjects();
@@ -342,18 +340,19 @@ final class AnalysisViews {
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
         extractor.setNormalizer(normalizer);
 
-        Thread worker = new Thread(() -> {
-            try {
-                var result = snap.computeFeatureImportance(detections, extractor);
-                javafx.application.Platform.runLater(() ->
-                        new FeatureImportanceView(qupath.getStage(), result).show());
-            } catch (Throwable ex) {
-                logger.error("Feature importance failed", ex);
-                javafx.application.Platform.runLater(() ->
-                        Dialogs.showErrorMessage(EXTENSION_NAME,
-                                "Feature importance failed: " + ex.getMessage()));
-            }
-        }, "CellTune-FeatureImportance");
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        var result = snap.computeFeatureImportance(detections, extractor);
+                        javafx.application.Platform.runLater(
+                                () -> new FeatureImportanceView(qupath.getStage(), result).show());
+                    } catch (Throwable ex) {
+                        logger.error("Feature importance failed", ex);
+                        javafx.application.Platform.runLater(() -> Dialogs.showErrorMessage(
+                                EXTENSION_NAME, "Feature importance failed: " + ex.getMessage()));
+                    }
+                },
+                "CellTune-FeatureImportance");
         worker.setDaemon(true);
         worker.start();
     }

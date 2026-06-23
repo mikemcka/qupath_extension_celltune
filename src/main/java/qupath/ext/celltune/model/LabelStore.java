@@ -231,7 +231,9 @@ public class LabelStore {
         }
     }
 
-    public String getName() { return name; }
+    public String getName() {
+        return name;
+    }
 
     @Override
     public String toString() {

@@ -1,45 +1,55 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
-
-import java.util.ArrayList;
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+
 class PixelCohortAnalyzerTest {
 
     /** Build a 2-channel image whose channels share the given summary values. */
     private static ImagePixelStats.ImageStats image(
-            String name, double fgCoverage, double dynamicRange,
-            double saturationFraction, double emptyFraction, double median) {
-        return image(name, fgCoverage, dynamicRange, saturationFraction,
-                emptyFraction, median, 100.0);
+            String name,
+            double fgCoverage,
+            double dynamicRange,
+            double saturationFraction,
+            double emptyFraction,
+            double median) {
+        return image(name, fgCoverage, dynamicRange, saturationFraction, emptyFraction, median, 100.0);
     }
 
     /** As {@link #image}, with an explicit focus (Laplacian variance) value. */
     private static ImagePixelStats.ImageStats image(
-            String name, double fgCoverage, double dynamicRange,
-            double saturationFraction, double emptyFraction, double median, double focus) {
+            String name,
+            double fgCoverage,
+            double dynamicRange,
+            double saturationFraction,
+            double emptyFraction,
+            double median,
+            double focus) {
         double bg = 1.0 - fgCoverage;
         double p1 = 10.0;
         double p99 = p1 + dynamicRange;
         var channels = new ArrayList<ImagePixelStats.ChannelStats>();
         for (String ch : List.of("DAPI", "CD8")) {
             channels.add(new ImagePixelStats.ChannelStats(
-                    ch, 1_000_000L,
-                    median,            // mean (≈ median for the test)
-                    dynamicRange / 4,  // std
-                    0.0,               // min
-                    median,            // median
-                    p99 + 1,           // max
-                    p1, p99,
+                    ch,
+                    1_000_000L,
+                    median, // mean (≈ median for the test)
+                    dynamicRange / 4, // std
+                    0.0, // min
+                    median, // median
+                    p99 + 1, // max
+                    p1,
+                    p99,
                     saturationFraction,
-                    50.0,              // otsu threshold
-                    bg, fgCoverage,
+                    50.0, // otsu threshold
+                    bg,
+                    fgCoverage,
                     dynamicRange,
                     focus));
         }
@@ -51,12 +61,13 @@ class PixelCohortAnalyzerTest {
         var list = new ArrayList<ImagePixelStats.ImageStats>();
         for (int i = 0; i < 6; i++) {
             double jitter = i * 0.3;
-            list.add(image("normal-" + i,
-                    0.60 + i * 0.004,   // fg coverage ~0.60
-                    190.0 + jitter,     // dynamic range ~190
-                    0.0,                // no saturation
-                    0.30 + i * 0.004,   // empty fraction ~0.30
-                    100.0 + jitter));   // median ~100
+            list.add(image(
+                    "normal-" + i,
+                    0.60 + i * 0.004, // fg coverage ~0.60
+                    190.0 + jitter, // dynamic range ~190
+                    0.0, // no saturation
+                    0.30 + i * 0.004, // empty fraction ~0.30
+                    100.0 + jitter)); // median ~100
         }
         return list;
     }
@@ -64,19 +75,19 @@ class PixelCohortAnalyzerTest {
     @Test
     void flagsBackgroundHeavyImage() {
         var inputs = normalCohort();
-        inputs.add(image("mostly-background",
-                0.08,    // very low foreground coverage
-                190.0,   // normal dynamic range
+        inputs.add(image(
+                "mostly-background",
+                0.08, // very low foreground coverage
+                190.0, // normal dynamic range
                 0.0,
-                0.90,    // very high empty fraction
+                0.90, // very high empty fraction
                 100.0));
 
         var report = PixelCohortAnalyzer.analyze(inputs);
         var r = report.byImageName().get("mostly-background");
 
         assertNotNull(r);
-        assertTrue(r.flags().contains(PixelCohortReport.BACKGROUND_HEAVY),
-                "flags=" + r.flags());
+        assertTrue(r.flags().contains(PixelCohortReport.BACKGROUND_HEAVY), "flags=" + r.flags());
         assertEquals("Background-heavy", r.verdict());
         assertTrue(r.narrative().toLowerCase().contains("background"));
         // Worst image sorts to the top.
@@ -85,11 +96,14 @@ class PixelCohortAnalyzerTest {
 
     @Test
     void flagsSaturatedImageEvenWhenBaselineIsZero() {
-        var inputs = normalCohort();   // all 0% saturation
-        inputs.add(image("over-exposed",
-                0.60, 190.0,
-                0.25,    // 25% of pixels clipped
-                0.30, 100.0));
+        var inputs = normalCohort(); // all 0% saturation
+        inputs.add(image(
+                "over-exposed",
+                0.60,
+                190.0,
+                0.25, // 25% of pixels clipped
+                0.30,
+                100.0));
 
         var report = PixelCohortAnalyzer.analyze(inputs);
         var r = report.byImageName().get("over-exposed");
@@ -103,10 +117,13 @@ class PixelCohortAnalyzerTest {
     @Test
     void flagsWeakSignalImage() {
         var inputs = normalCohort();
-        inputs.add(image("washed-out",
+        inputs.add(image(
+                "washed-out",
                 0.60,
-                4.0,     // almost no dynamic range
-                0.0, 0.30, 100.0));
+                4.0, // almost no dynamic range
+                0.0,
+                0.30,
+                100.0));
 
         var report = PixelCohortAnalyzer.analyze(inputs);
         var r = report.byImageName().get("washed-out");
@@ -155,18 +172,27 @@ class PixelCohortAnalyzerTest {
     }
 
     /** As above, with an explicit (noise-floor) p99 for the near-dead TCR channel. */
-    private static ImagePixelStats.ImageStats deadChannelImage(
-            String name, double deadMedian, double tcrP99) {
+    private static ImagePixelStats.ImageStats deadChannelImage(String name, double deadMedian, double tcrP99) {
         var channels = new ArrayList<ImagePixelStats.ChannelStats>();
         channels.add(new ImagePixelStats.ChannelStats(
-                "DAPI", 1_000_000L,
-                100.0, 47.5, 0.0, 100.0, 201.0, 10.0, 200.0,
-                0.0, 50.0, 0.40, 0.60, 190.0, 100.0));
+                "DAPI", 1_000_000L, 100.0, 47.5, 0.0, 100.0, 201.0, 10.0, 200.0, 0.0, 50.0, 0.40, 0.60, 190.0, 100.0));
         // TCR foreground 0.02 is below the signal floor → excluded from intensity.
         channels.add(new ImagePixelStats.ChannelStats(
-                "TCR", 1_000_000L,
-                deadMedian, 0.01, 0.0, deadMedian, tcrP99 + 0.1, 0.0, tcrP99,
-                0.0, 0.05, 0.98, 0.02, tcrP99, 1e-7));
+                "TCR",
+                1_000_000L,
+                deadMedian,
+                0.01,
+                0.0,
+                deadMedian,
+                tcrP99 + 0.1,
+                0.0,
+                tcrP99,
+                0.0,
+                0.05,
+                0.98,
+                0.02,
+                tcrP99,
+                1e-7));
         return new ImagePixelStats.ImageStats(name, 4.0, 1024, 1024, channels, 0.30);
     }
 
@@ -203,8 +229,8 @@ class PixelCohortAnalyzerTest {
 
         var report = PixelCohortAnalyzer.analyze(inputs);
         for (var r : report.images()) {
-            assertFalse(r.flags().contains(PixelCohortReport.INTENSITY_OUTLIER),
-                    r.imageName() + " flagged: " + r.flags());
+            assertFalse(
+                    r.flags().contains(PixelCohortReport.INTENSITY_OUTLIER), r.imageName() + " flagged: " + r.flags());
         }
     }
 

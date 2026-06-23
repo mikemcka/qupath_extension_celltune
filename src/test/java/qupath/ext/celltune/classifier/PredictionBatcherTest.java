@@ -1,5 +1,11 @@
 package qupath.ext.celltune.classifier;
 
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellPrediction;
@@ -7,13 +13,6 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.roi.ROIs;
-
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for {@link PredictionBatcher#predict}. The two models are supplied
@@ -30,8 +29,13 @@ class PredictionBatcherTest {
     private static final class SeqPredictor implements PredictionBatcher.ChunkPredictor {
         private final float[][] rows;
         private int pos = 0;
-        SeqPredictor(float[][] rows) { this.rows = rows; }
-        @Override public float[][] predict(float[] chunkData, int chunkSize) {
+
+        SeqPredictor(float[][] rows) {
+            this.rows = rows;
+        }
+
+        @Override
+        public float[][] predict(float[] chunkData, int chunkSize) {
             float[][] out = new float[chunkSize][];
             for (int i = 0; i < chunkSize; i++) out[i] = rows[pos++];
             return out;
@@ -39,8 +43,7 @@ class PredictionBatcherTest {
     }
 
     private static PathObject detection(double x) {
-        return PathObjects.createDetectionObject(
-                ROIs.createRectangleROI(x, 0, 10, 10, ImagePlane.getDefaultPlane()));
+        return PathObjects.createDetectionObject(ROIs.createRectangleROI(x, 0, 10, 10, ImagePlane.getDefaultPlane()));
     }
 
     private static List<PathObject> detections(int n) {
@@ -59,14 +62,12 @@ class PredictionBatcherTest {
     void buildsPredictionsAndCountsDisagreements() throws Exception {
         List<PathObject> cells = detections(3);
         // model1: A, B, A   model2: A, A, B  → disagreements on cells 1 and 2
-        var model1 = new SeqPredictor(new float[][]{{0.9f, 0.1f}, {0.1f, 0.9f}, {0.8f, 0.2f}});
-        var model2 = new SeqPredictor(new float[][]{{0.7f, 0.3f}, {0.6f, 0.4f}, {0.2f, 0.8f}});
+        var model1 = new SeqPredictor(new float[][] {{0.9f, 0.1f}, {0.1f, 0.9f}, {0.8f, 0.2f}});
+        var model2 = new SeqPredictor(new float[][] {{0.7f, 0.3f}, {0.6f, 0.4f}, {0.2f, 0.8f}});
 
         Map<String, CellPrediction> sink = new LinkedHashMap<>();
-        PredictionBatcher.Batch batch = PredictionBatcher.predict(
-                cells, extractor(), 100,
-                model1, model2, CLASSES,
-                sink::put, end -> {});
+        PredictionBatcher.Batch batch =
+                PredictionBatcher.predict(cells, extractor(), 100, model1, model2, CLASSES, sink::put, end -> {});
 
         assertEquals(3, batch.objects().size());
         assertEquals(3, batch.classes().size());
@@ -94,9 +95,14 @@ class PredictionBatcherTest {
 
         List<Integer> progress = new ArrayList<>();
         PredictionBatcher.Batch batch = PredictionBatcher.predict(
-                cells, extractor(), 2,           // chunk size 2 → chunks of 2,2,1
-                model1, model2, CLASSES,
-                (id, p) -> {}, progress::add);
+                cells,
+                extractor(),
+                2, // chunk size 2 → chunks of 2,2,1
+                model1,
+                model2,
+                CLASSES,
+                (id, p) -> {},
+                progress::add);
 
         assertEquals(5, batch.objects().size());
         assertEquals(0, batch.disagreements());
@@ -107,8 +113,12 @@ class PredictionBatcherTest {
     void emptyCellListProducesEmptyBatch() throws Exception {
         List<Integer> progress = new ArrayList<>();
         PredictionBatcher.Batch batch = PredictionBatcher.predict(
-                List.of(), extractor(), 100,
-                (d, s) -> new float[0][], (d, s) -> new float[0][], CLASSES,
+                List.of(),
+                extractor(),
+                100,
+                (d, s) -> new float[0][],
+                (d, s) -> new float[0][],
+                CLASSES,
                 (id, p) -> fail("sink must not be called for empty input"),
                 progress::add);
 

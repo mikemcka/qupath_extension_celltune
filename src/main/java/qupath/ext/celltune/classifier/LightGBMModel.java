@@ -3,9 +3,6 @@ package qupath.ext.celltune.classifier;
 import com.microsoft.ml.lightgbm.PredictionType;
 import io.github.metarank.lightgbm4j.LGBMBooster;
 import io.github.metarank.lightgbm4j.LGBMDataset;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +10,8 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Wraps LightGBM4J training and prediction behind the same style interface
@@ -44,8 +43,8 @@ public class LightGBMModel {
                     : Paths.get(originalTmp == null ? "." : originalTmp, "celltune-native");
             // Use a unique sub-directory per JVM invocation so concurrent QuPath
             // processes never collide on the extracted .so file.
-            Path nativeDir = baseDir.resolve(
-                    String.valueOf(ProcessHandle.current().pid()) + "-" + UUID.randomUUID());
+            Path nativeDir =
+                    baseDir.resolve(String.valueOf(ProcessHandle.current().pid()) + "-" + UUID.randomUUID());
             Files.createDirectories(nativeDir);
             // Best-effort cleanup at JVM exit; ignore failures (file may be in use).
             nativeDir.toFile().deleteOnExit();
@@ -89,10 +88,17 @@ public class LightGBMModel {
      * @param subsample    row subsampling ratio per round
      * @throws Exception if training fails
      */
-    public void train(float[] flatData, float[] labels,
-                      int nSamples, int nFeatures,
-                      List<String> classNames, List<String> featureNames,
-                      int numRounds, int maxDepth, float learningRate, float subsample)
+    public void train(
+            float[] flatData,
+            float[] labels,
+            int nSamples,
+            int nFeatures,
+            List<String> classNames,
+            List<String> featureNames,
+            int numRounds,
+            int maxDepth,
+            float learningRate,
+            float subsample)
             throws Exception {
 
         this.nClasses = classNames.size();
@@ -102,9 +108,8 @@ public class LightGBMModel {
         // Create dataset from matrix
         LGBMDataset dataset = LGBMDataset.createFromMat(flatData, nSamples, nFeatures, true, "", null);
         // LightGBM also rejects special/non-ASCII chars in feature names
-        String[] safeNames = featureNames.stream()
-                .map(XGBoostModel::sanitiseFeatureName)
-                .toArray(String[]::new);
+        String[] safeNames =
+                featureNames.stream().map(XGBoostModel::sanitiseFeatureName).toArray(String[]::new);
         dataset.setFeatureNames(safeNames);
         dataset.setField("label", labels);
 
@@ -121,20 +126,31 @@ public class LightGBMModel {
                 booster.updateOneIter();
             }
             usingGpu = true;
-            logger.info("LightGBM training: GPU — {} samples, {} features, {} classes, {} rounds",
-                    nSamples, nFeatures, nClasses, numRounds);
+            logger.info(
+                    "LightGBM training: GPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples,
+                    nFeatures,
+                    nClasses,
+                    numRounds);
         } catch (Exception gpuEx) {
             logger.info("LightGBM GPU not available ({}), falling back to CPU", gpuEx.getMessage());
             // Re-create booster with CPU params
             if (booster != null) {
-                try { booster.close(); } catch (Exception ignore) {}
+                try {
+                    booster.close();
+                } catch (Exception ignore) {
+                }
             }
             booster = LGBMBooster.create(dataset, params);
             for (int i = 0; i < numRounds; i++) {
                 booster.updateOneIter();
             }
-            logger.info("LightGBM training: CPU — {} samples, {} features, {} classes, {} rounds",
-                    nSamples, nFeatures, nClasses, numRounds);
+            logger.info(
+                    "LightGBM training: CPU — {} samples, {} features, {} classes, {} rounds",
+                    nSamples,
+                    nFeatures,
+                    nClasses,
+                    numRounds);
         }
 
         // Close dataset — booster keeps its own copy
@@ -145,7 +161,9 @@ public class LightGBMModel {
     }
 
     /** @return the device used for the last training run */
-    public String getLastDevice() { return lastDevice; }
+    public String getLastDevice() {
+        return lastDevice;
+    }
 
     // ── Early Stopping ──────────────────────────────────────────────────────────
 
@@ -155,14 +173,24 @@ public class LightGBMModel {
      *
      * @return optimal number of rounds (1-indexed)
      */
-    static int findBestRounds(float[] trainData, float[] trainLabels, int trainSize,
-                              float[] valData, float[] valLabels, int valSize,
-                              int nFeatures, int nClasses,
-                              int maxRounds, int maxDepth, float learningRate, float subsample,
-                              int patience, Consumer<String> log) throws Exception {
+    static int findBestRounds(
+            float[] trainData,
+            float[] trainLabels,
+            int trainSize,
+            float[] valData,
+            float[] valLabels,
+            int valSize,
+            int nFeatures,
+            int nClasses,
+            int maxRounds,
+            int maxDepth,
+            float learningRate,
+            float subsample,
+            int patience,
+            Consumer<String> log)
+            throws Exception {
 
-        LGBMDataset dataset = LGBMDataset.createFromMat(
-                trainData, trainSize, nFeatures, true, "", null);
+        LGBMDataset dataset = LGBMDataset.createFromMat(trainData, trainSize, nFeatures, true, "", null);
         dataset.setField("label", trainLabels);
 
         String params = buildParams(nClasses, maxDepth, learningRate, subsample);
@@ -175,9 +203,8 @@ public class LightGBMModel {
             for (int round = 0; round < maxRounds; round++) {
                 booster.updateOneIter();
 
-                double[] preds = booster.predictForMat(
-                        valData, valSize, nFeatures, true,
-                        PredictionType.C_API_PREDICT_NORMAL);
+                double[] preds =
+                        booster.predictForMat(valData, valSize, nFeatures, true, PredictionType.C_API_PREDICT_NORMAL);
                 double loss = computeLogloss(preds, valLabels, valSize, nClasses);
 
                 if (loss < bestLoss) {
@@ -189,8 +216,7 @@ public class LightGBMModel {
 
             int actualRounds = bestRound + 1;
             log.accept(String.format(
-                    "LightGBM early stopping: best round %d/%d (val loss: %.6f)",
-                    actualRounds, maxRounds, bestLoss));
+                    "LightGBM early stopping: best round %d/%d (val loss: %.6f)", actualRounds, maxRounds, bestLoss));
             return actualRounds;
 
         } finally {
@@ -200,8 +226,7 @@ public class LightGBMModel {
     }
 
     /** Compute mean log-loss from raw LightGBM predictions. */
-    private static double computeLogloss(double[] preds, float[] labels,
-                                         int n, int nClasses) {
+    private static double computeLogloss(double[] preds, float[] labels, int n, int nClasses) {
         double loss = 0;
         if (nClasses == 2 && preds.length == n) {
             for (int i = 0; i < n; i++) {
@@ -230,11 +255,10 @@ public class LightGBMModel {
      * @return probability matrix [nSamples][nClasses]
      * @throws Exception if prediction fails
      */
-    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures)
-            throws Exception {
+    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures) throws Exception {
 
-        double[] rawPreds = booster.predictForMat(flatData, nSamples, nFeatures, true,
-                PredictionType.C_API_PREDICT_NORMAL);
+        double[] rawPreds =
+                booster.predictForMat(flatData, nSamples, nFeatures, true, PredictionType.C_API_PREDICT_NORMAL);
 
         float[][] result = new float[nSamples][nClasses];
 
@@ -264,8 +288,7 @@ public class LightGBMModel {
      * @return array of predicted class indices
      * @throws Exception if prediction fails
      */
-    public int[] predict(float[] flatData, int nSamples, int nFeatures)
-            throws Exception {
+    public int[] predict(float[] flatData, int nSamples, int nFeatures) throws Exception {
 
         float[][] probs = predictProba(flatData, nSamples, nFeatures);
         int[] preds = new int[nSamples];
@@ -294,13 +317,11 @@ public class LightGBMModel {
      * @return mean absolute SHAP matrix [nClasses][nFeatures]
      * @throws Exception if prediction fails
      */
-    public double[][] computeMeanAbsShap(float[] flatData, int nSamples, int nFeatures)
-            throws Exception {
+    public double[][] computeMeanAbsShap(float[] flatData, int nSamples, int nFeatures) throws Exception {
         // C_API_PREDICT_CONTRIB → TreeSHAP contributions
         // Binary:     flat [nSamples * (nFeatures + 1)]
         // Multiclass: flat [nSamples * nClasses * (nFeatures + 1)]  (class-major order)
-        double[] raw = booster.predictForMat(flatData, nSamples, nFeatures, true,
-                PredictionType.C_API_PREDICT_CONTRIB);
+        double[] raw = booster.predictForMat(flatData, nSamples, nFeatures, true, PredictionType.C_API_PREDICT_CONTRIB);
 
         double[][] result = new double[nClasses][nFeatures];
         int stride = nFeatures + 1; // +1 for the bias term
@@ -356,8 +377,7 @@ public class LightGBMModel {
      * @param featureNames ordered feature names
      * @throws Exception if loading fails
      */
-    public void loadFromBytes(byte[] bytes, List<String> classNames, List<String> featureNames)
-            throws Exception {
+    public void loadFromBytes(byte[] bytes, List<String> classNames, List<String> featureNames) throws Exception {
 
         this.classNames = List.copyOf(classNames);
         this.featureNames = List.copyOf(featureNames);
@@ -384,15 +404,25 @@ public class LightGBMModel {
 
     // ── Accessors ───────────────────────────────────────────────────────────────
 
-    public boolean isTrained()            { return booster != null; }
-    public int getNumClasses()            { return nClasses; }
-    public List<String> getClassNames()   { return classNames; }
-    public List<String> getFeatureNames() { return featureNames; }
+    public boolean isTrained() {
+        return booster != null;
+    }
+
+    public int getNumClasses() {
+        return nClasses;
+    }
+
+    public List<String> getClassNames() {
+        return classNames;
+    }
+
+    public List<String> getFeatureNames() {
+        return featureNames;
+    }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
 
-    private static String buildParams(int nClasses, int maxDepth,
-                                      float learningRate, float subsample) {
+    private static String buildParams(int nClasses, int maxDepth, float learningRate, float subsample) {
         StringBuilder sb = new StringBuilder();
         if (nClasses == 2) {
             sb.append("objective=binary metric=binary_logloss");

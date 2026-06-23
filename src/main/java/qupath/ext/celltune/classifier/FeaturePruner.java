@@ -1,9 +1,5 @@
 package qupath.ext.celltune.classifier;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.objects.PathObject;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -14,6 +10,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.objects.PathObject;
 
 /**
  * Unsupervised feature pruner with marker-group guardrails.
@@ -60,8 +59,7 @@ public final class FeaturePruner {
             int minNonZeroCells,
             double withinMarkerCorrThreshold,
             double crossMarkerCorrThreshold,
-            boolean keepAtLeastOnePerGroup
-    ) {
+            boolean keepAtLeastOnePerGroup) {
         /** Defaults tuned for training-time pruning over labelled cells. */
         public static PruneOptions defaults() {
             return new PruneOptions(5, 0.95, 1.0, true);
@@ -90,8 +88,7 @@ public final class FeaturePruner {
             List<String> forceKeptMarkers,
             List<String> markersRetained,
             List<String> markersLost,
-            int cellsScanned
-    ) {}
+            int cellsScanned) {}
 
     /**
      * Run the prune pipeline.
@@ -102,17 +99,25 @@ public final class FeaturePruner {
      * @param progress     optional progress callback (may be {@code null})
      * @return pruning result; never {@code null}
      */
-    public static PruneResult prune(Collection<PathObject> detections,
-                                    List<String> featureNames,
-                                    PruneOptions opts,
-                                    Consumer<String> progress) {
+    public static PruneResult prune(
+            Collection<PathObject> detections,
+            List<String> featureNames,
+            PruneOptions opts,
+            Consumer<String> progress) {
         if (featureNames == null || featureNames.isEmpty()) {
-            return new PruneResult(List.of(), 0, 0, 0, 0,
-                    List.of(), List.of(), List.of(), 0);
+            return new PruneResult(List.of(), 0, 0, 0, 0, List.of(), List.of(), List.of(), 0);
         }
         if (detections == null || detections.isEmpty()) {
-            return new PruneResult(List.copyOf(featureNames), featureNames.size(),
-                    0, 0, 0, List.of(), groupKeys(featureNames), List.of(), 0);
+            return new PruneResult(
+                    List.copyOf(featureNames),
+                    featureNames.size(),
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    groupKeys(featureNames),
+                    List.of(),
+                    0);
         }
 
         final PathObject[] cells = detections.toArray(new PathObject[0]);
@@ -227,9 +232,9 @@ public final class FeaturePruner {
                         }
                     }
                 } else {
-                    redundant = keepSet.parallelStream().anyMatch(keptIdx ->
-                            !groupOf[idxF].equals(groupOf[keptIdx])
-                            && Math.abs(pearson(z[idxF], z[keptIdx])) > thr);
+                    redundant = keepSet.parallelStream()
+                            .anyMatch(keptIdx -> !groupOf[idxF].equals(groupOf[keptIdx])
+                                    && Math.abs(pearson(z[idxF], z[keptIdx])) > thr);
                 }
                 if (redundant) {
                     kept[idxF] = false;
@@ -280,12 +285,25 @@ public final class FeaturePruner {
         }
         List<String> markersRetained = new ArrayList<>(retainedSet);
 
-        logger.info("Pruned {} -> {} features ({} marker groups retained, {} force-kept, {} lost; {} cells)",
-                nFeatures, keptNames.size(), markersRetained.size(),
-                forceKept.size(), markersLost.size(), nCells);
+        logger.info(
+                "Pruned {} -> {} features ({} marker groups retained, {} force-kept, {} lost; {} cells)",
+                nFeatures,
+                keptNames.size(),
+                markersRetained.size(),
+                forceKept.size(),
+                markersLost.size(),
+                nCells);
 
-        return new PruneResult(keptNames, nFeatures, droppedConstant, droppedWithin,
-                droppedCross, forceKept, markersRetained, markersLost, nCells);
+        return new PruneResult(
+                keptNames,
+                nFeatures,
+                droppedConstant,
+                droppedWithin,
+                droppedCross,
+                forceKept,
+                markersRetained,
+                markersLost,
+                nCells);
     }
 
     /**
@@ -319,7 +337,10 @@ public final class FeaturePruner {
 
     private static void report(Consumer<String> progress, String msg) {
         if (progress != null) {
-            try { progress.accept(msg); } catch (Exception ignored) {}
+            try {
+                progress.accept(msg);
+            } catch (Exception ignored) {
+            }
         }
     }
 }

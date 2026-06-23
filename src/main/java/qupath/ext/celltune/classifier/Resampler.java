@@ -1,10 +1,9 @@
 package qupath.ext.celltune.classifier;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.*;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Resampling methods for addressing class imbalance in training data.
@@ -42,9 +41,8 @@ public final class Resampler {
      * @param log      optional progress callback
      * @return a {@link Result} containing the resampled rows and labels
      */
-    public static Result apply(List<float[]> rows, List<Integer> labels,
-                               int nClasses, ResamplingStrategy strategy,
-                               Consumer<String> log) {
+    public static Result apply(
+            List<float[]> rows, List<Integer> labels, int nClasses, ResamplingStrategy strategy, Consumer<String> log) {
         Consumer<String> out = log != null ? log : s -> {};
 
         // Validate label indices up front so a corrupt label (e.g. a class index
@@ -92,7 +90,9 @@ public final class Resampler {
                 int removed = tomekLinks(outRows, outLabels, newCounts, nClasses, out);
                 out.accept("Tomek links removed " + removed + " borderline samples after ADASYN");
             }
-            default -> { /* NONE — handled above */ }
+            default -> {
+                /* NONE — handled above */
+            }
         }
 
         // Log final distribution
@@ -102,7 +102,11 @@ public final class Resampler {
             if (c > 0) sb.append(", ");
             sb.append("class ").append(c).append("=").append(finalCounts[c]);
         }
-        sb.append(" (total ").append(outRows.size()).append(", was ").append(rows.size()).append(")");
+        sb.append(" (total ")
+                .append(outRows.size())
+                .append(", was ")
+                .append(rows.size())
+                .append(")");
         out.accept(sb.toString());
 
         return new Result(outRows, outLabels);
@@ -110,9 +114,13 @@ public final class Resampler {
 
     // ── SMOTE ───────────────────────────────────────────────────────────────────
 
-    private static void smote(List<float[]> rows, List<Integer> labels,
-                              int[] classCounts, int targetCount,
-                              int nClasses, Consumer<String> log) {
+    private static void smote(
+            List<float[]> rows,
+            List<Integer> labels,
+            int[] classCounts,
+            int targetCount,
+            int nClasses,
+            Consumer<String> log) {
         Random rng = new Random(42);
         int nFeatures = rows.get(0).length;
 
@@ -156,9 +164,13 @@ public final class Resampler {
 
     // ── ADASYN ──────────────────────────────────────────────────────────────────
 
-    private static void adasyn(List<float[]> rows, List<Integer> labels,
-                               int[] classCounts, int targetCount,
-                               int nClasses, Consumer<String> log) {
+    private static void adasyn(
+            List<float[]> rows,
+            List<Integer> labels,
+            int[] classCounts,
+            int targetCount,
+            int nClasses,
+            Consumer<String> log) {
         Random rng = new Random(42);
         int nFeatures = rows.get(0).length;
         int totalSamples = rows.size();
@@ -193,8 +205,7 @@ public final class Resampler {
             if (ratioSum < 1e-10) {
                 // All neighbours are same class — fall back to uniform SMOTE
                 smoteSingle(rows, labels, classIndices, needed, nFeatures, rng);
-                log.accept("ADASYN (uniform fallback): generated " + needed
-                        + " synthetic samples for class " + cls);
+                log.accept("ADASYN (uniform fallback): generated " + needed + " synthetic samples for class " + cls);
                 continue;
             }
 
@@ -229,9 +240,13 @@ public final class Resampler {
         }
     }
 
-    private static void smoteSingle(List<float[]> rows, List<Integer> labels,
-                                    List<Integer> classIndices, int needed,
-                                    int nFeatures, Random rng) {
+    private static void smoteSingle(
+            List<float[]> rows,
+            List<Integer> labels,
+            List<Integer> classIndices,
+            int needed,
+            int nFeatures,
+            Random rng) {
         int k = Math.min(DEFAULT_K, classIndices.size() - 1);
         int cls = labels.get(classIndices.get(0));
         int generated = 0;
@@ -262,9 +277,8 @@ public final class Resampler {
      *
      * @return number of samples removed
      */
-    private static int tomekLinks(List<float[]> rows, List<Integer> labels,
-                                  int[] classCounts, int nClasses,
-                                  Consumer<String> log) {
+    private static int tomekLinks(
+            List<float[]> rows, List<Integer> labels, int[] classCounts, int nClasses, Consumer<String> log) {
         int maxCount = 0;
         for (int c : classCounts) if (c > maxCount) maxCount = c;
 
@@ -320,8 +334,7 @@ public final class Resampler {
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
     /** Indices within classIndices of the k nearest same-class neighbours of rows[sampleIdx]. */
-    private static int[] knnSameClass(List<float[]> rows, List<Integer> classIndices,
-                                      int sampleIdx, int k) {
+    private static int[] knnSameClass(List<float[]> rows, List<Integer> classIndices, int sampleIdx, int k) {
         float[] sample = rows.get(sampleIdx);
         float[] dists = new float[classIndices.size()];
         int selfPos = -1;
@@ -411,9 +424,8 @@ public final class Resampler {
         for (int i = 0; i < labels.size(); i++) {
             Integer lbl = labels.get(i);
             if (lbl == null || lbl < 0 || lbl >= nClasses) {
-                throw new IllegalArgumentException(
-                        "Label at index " + i + " is " + lbl + ", outside valid range [0, "
-                                + nClasses + "). Training data is out of sync with the class list.");
+                throw new IllegalArgumentException("Label at index " + i + " is " + lbl + ", outside valid range [0, "
+                        + nClasses + "). Training data is out of sync with the class list.");
             }
         }
     }
@@ -434,7 +446,12 @@ public final class Resampler {
             this.labels = labels;
         }
 
-        public List<float[]> rows() { return rows; }
-        public List<Integer> labels() { return labels; }
+        public List<float[]> rows() {
+            return rows;
+        }
+
+        public List<Integer> labels() {
+            return labels;
+        }
     }
 }

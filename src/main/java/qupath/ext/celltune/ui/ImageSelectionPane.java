@@ -1,5 +1,7 @@
 package qupath.ext.celltune.ui;
 
+import java.util.ArrayList;
+import java.util.List;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -11,9 +13,6 @@ import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * A dual-list image selector dialog, allowing the user to choose which
@@ -49,9 +48,7 @@ public class ImageSelectionPane {
      * @param allImageNames   all image names from the project
      * @param currentImageName name of the currently-open image (always included, non-removable)
      */
-    public ImageSelectionPane(Window owner,
-                              List<String> allImageNames,
-                              String currentImageName) {
+    public ImageSelectionPane(Window owner, List<String> allImageNames, String currentImageName) {
         dialog = new Stage();
         dialog.setTitle("Select Images for Classification");
         dialog.initModality(Modality.APPLICATION_MODAL);
@@ -118,7 +115,8 @@ public class ImageSelectionPane {
         moveRight.setTooltip(new Tooltip("Exclude selected images"));
         moveRight.setPrefWidth(40);
         moveRight.setOnAction(e -> {
-            List<String> selected = new ArrayList<>(includedList.getSelectionModel().getSelectedItems());
+            List<String> selected =
+                    new ArrayList<>(includedList.getSelectionModel().getSelectedItems());
             // Don't allow moving the current image
             if (currentImageName != null) selected.remove(currentImageName);
             includedItems.removeAll(selected);
@@ -130,7 +128,8 @@ public class ImageSelectionPane {
         moveLeft.setTooltip(new Tooltip("Include selected images"));
         moveLeft.setPrefWidth(40);
         moveLeft.setOnAction(e -> {
-            List<String> selected = new ArrayList<>(excludedList.getSelectionModel().getSelectedItems());
+            List<String> selected =
+                    new ArrayList<>(excludedList.getSelectionModel().getSelectedItems());
             excludedItems.removeAll(selected);
             includedItems.addAll(selected);
             FXCollections.sort(includedItems);

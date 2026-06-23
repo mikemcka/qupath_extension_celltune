@@ -3,14 +3,6 @@ package qupath.ext.celltune.io;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import javafx.application.Platform;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.objects.classes.PathClass;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +16,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javafx.application.Platform;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.projects.Project;
 
 /**
  * Backend logic for the Class Control dialog.
@@ -47,6 +46,7 @@ public final class ClassManager {
 
     private static final Logger logger = LoggerFactory.getLogger(ClassManager.class);
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
     @SuppressWarnings("unchecked")
     private static final Type MAP_TYPE = new TypeToken<Map<String, String>>() {}.getType();
 
@@ -74,8 +74,7 @@ public final class ClassManager {
         if (name == null || name.isBlank()) return;
         runOnFx(() -> {
             var available = qupath.getAvailablePathClasses();
-            boolean exists = available.stream()
-                    .anyMatch(pc -> pc != null && name.equals(pc.getName()));
+            boolean exists = available.stream().anyMatch(pc -> pc != null && name.equals(pc.getName()));
             if (!exists) {
                 available.add(PathClass.fromString(name));
                 syncProjectClasses(qupath);
@@ -103,8 +102,7 @@ public final class ClassManager {
      * @return number of label entries purged across all files (0 if purgeLabels is false)
      * @throws IOException if a label file cannot be read or written
      */
-    public static int deletePathClass(QuPathGUI qupath, String name, boolean purgeLabels)
-            throws IOException {
+    public static int deletePathClass(QuPathGUI qupath, String name, boolean purgeLabels) throws IOException {
         if (name == null || name.isBlank()) return 0;
 
         // Remove from QuPath available classes (must be on FX thread)
@@ -153,18 +151,16 @@ public final class ClassManager {
      * @return number of label entries rewritten across all image files
      * @throws IOException if a label file cannot be read or written
      */
-    public static int mergeClasses(QuPathGUI qupath,
-                                   List<String> sourceClasses,
-                                   String targetClass,
-                                   LabelStore inMemoryLabelStore) throws IOException {
+    public static int mergeClasses(
+            QuPathGUI qupath, List<String> sourceClasses, String targetClass, LabelStore inMemoryLabelStore)
+            throws IOException {
         if (sourceClasses == null || sourceClasses.isEmpty()) return 0;
         if (targetClass == null || targetClass.isBlank()) return 0;
 
         // Update QuPath available classes: add target, remove sources (must be on FX thread)
         runOnFx(() -> {
             var available = qupath.getAvailablePathClasses();
-            boolean targetExists = available.stream()
-                    .anyMatch(pc -> pc != null && targetClass.equals(pc.getName()));
+            boolean targetExists = available.stream().anyMatch(pc -> pc != null && targetClass.equals(pc.getName()));
             if (!targetExists) {
                 available.add(PathClass.fromString(targetClass));
             }
@@ -195,8 +191,8 @@ public final class ClassManager {
             }
         }
 
-        logger.info("Merged {} source class(es) into '{}': {} labels rewritten",
-                sourceClasses.size(), targetClass, total);
+        logger.info(
+                "Merged {} source class(es) into '{}': {} labels rewritten", sourceClasses.size(), targetClass, total);
         return total;
     }
 
@@ -222,9 +218,8 @@ public final class ClassManager {
      * @return number of label entries restored
      * @throws IOException if a label file cannot be read or written
      */
-    public static int undoMerge(QuPathGUI qupath,
-                                String targetClass,
-                                LabelStore inMemoryLabelStore) throws IOException {
+    public static int undoMerge(QuPathGUI qupath, String targetClass, LabelStore inMemoryLabelStore)
+            throws IOException {
         if (targetClass == null || targetClass.isBlank()) return 0;
 
         int total = 0;
@@ -256,8 +251,7 @@ public final class ClassManager {
         Path dir = ProjectStateManager.getCellTuneDir(project).resolve("image-labels");
         if (!Files.isDirectory(dir)) return List.of();
         try (Stream<Path> s = Files.list(dir)) {
-            return s.filter(p -> p.toString().endsWith(".json"))
-                    .collect(Collectors.toList());
+            return s.filter(p -> p.toString().endsWith(".json")).collect(Collectors.toList());
         }
     }
 
@@ -282,9 +276,7 @@ public final class ClassManager {
     }
 
     /** Rewrite entries matching any source class into the merge-encoded form. */
-    static int mergeClassesInFile(Path path,
-                                  List<String> sourceClasses,
-                                  String targetClass) throws IOException {
+    static int mergeClassesInFile(Path path, List<String> sourceClasses, String targetClass) throws IOException {
         Map<String, String> labels = readLabelFile(path);
         int count = 0;
         for (var entry : labels.entrySet()) {
@@ -315,8 +307,7 @@ public final class ClassManager {
      * Restore labels whose value ends with {@code "-mergedInto(<targetClass>)"}
      * to their innermost original class.
      */
-    private static int undoMergeInFile(Path path, String targetClass, QuPathGUI qupath)
-            throws IOException {
+    private static int undoMergeInFile(Path path, String targetClass, QuPathGUI qupath) throws IOException {
         Map<String, String> labels = readLabelFile(path);
         List<String> restoredOriginals = restoreMergedInMap(labels, targetClass);
         for (String original : restoredOriginals) {

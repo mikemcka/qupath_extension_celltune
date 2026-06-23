@@ -2,20 +2,17 @@ package qupath.ext.celltune.io;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.reflect.TypeToken;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.model.CellFeatureExtractor;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.lib.objects.PathObject;
-
 import java.io.*;
-import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.IntStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.CellFeatureExtractor;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.lib.objects.PathObject;
 
 /**
  * Portable import/export of ground-truth labelled cell populations.
@@ -57,7 +54,8 @@ public class GroundTruthIO {
         }
 
         // Fast-path known schemas
-        if (cols.length >= 4 && cols[0].strip().equalsIgnoreCase("Image")
+        if (cols.length >= 4
+                && cols[0].strip().equalsIgnoreCase("Image")
                 && cols[1].strip().equalsIgnoreCase("Label")) {
             return new CsvLayout(1, 2, 3, 4);
         }
@@ -92,11 +90,13 @@ public class GroundTruthIO {
      * @param imageName    source image name (written as a header comment)
      * @throws IOException if writing fails
      */
-    public static void exportCSV(Path outputPath,
-                                 Collection<PathObject> cells,
-                                 LabelStore labelStore,
-                                 CellFeatureExtractor extractor,
-                                 String imageName) throws IOException {
+    public static void exportCSV(
+            Path outputPath,
+            Collection<PathObject> cells,
+            LabelStore labelStore,
+            CellFeatureExtractor extractor,
+            String imageName)
+            throws IOException {
         exportCSV(outputPath, cells, labelStore, extractor, imageName, true, true);
     }
 
@@ -106,13 +106,15 @@ public class GroundTruthIO {
      * @param includeRaw   include raw feature columns
      * @param includeNorm  include normalised feature columns (suffixed __norm)
      */
-    public static void exportCSV(Path outputPath,
-                                 Collection<PathObject> cells,
-                                 LabelStore labelStore,
-                                 CellFeatureExtractor extractor,
-                                 String imageName,
-                                 boolean includeRaw,
-                                 boolean includeNorm) throws IOException {
+    public static void exportCSV(
+            Path outputPath,
+            Collection<PathObject> cells,
+            LabelStore labelStore,
+            CellFeatureExtractor extractor,
+            String imageName,
+            boolean includeRaw,
+            boolean includeNorm)
+            throws IOException {
 
         List<String> featureNames = extractor.getFeatureNames();
         boolean hasNorm = includeNorm && extractor.getNormalizer() != null;
@@ -167,14 +169,16 @@ public class GroundTruthIO {
             if (includeRaw) {
                 rawRows = new float[nLabelled][];
                 float[][] rr = rawRows;
-                IntStream.range(0, nLabelled).parallel().forEach(i ->
-                        rr[i] = extractor.extractRowRaw(labelledCells.get(i)));
+                IntStream.range(0, nLabelled)
+                        .parallel()
+                        .forEach(i -> rr[i] = extractor.extractRowRaw(labelledCells.get(i)));
             }
             if (hasNorm) {
                 normRows = new float[nLabelled][];
                 float[][] nr = normRows;
-                IntStream.range(0, nLabelled).parallel().forEach(i ->
-                        nr[i] = extractor.extractRow(labelledCells.get(i)));
+                IntStream.range(0, nLabelled)
+                        .parallel()
+                        .forEach(i -> nr[i] = extractor.extractRow(labelledCells.get(i)));
             }
 
             int exported = 0;
@@ -230,9 +234,8 @@ public class GroundTruthIO {
      * @return a new LabelStore with matched labels
      * @throws IOException if reading fails
      */
-    public static LabelStore importCSVSpatial(Path csvPath,
-                                              Collection<PathObject> cells,
-                                              double maxDistPixels) throws IOException {
+    public static LabelStore importCSVSpatial(Path csvPath, Collection<PathObject> cells, double maxDistPixels)
+            throws IOException {
 
         LabelStore store = new LabelStore("Imported");
 

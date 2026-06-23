@@ -1,5 +1,8 @@
 package qupath.ext.celltune.model;
 
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
@@ -8,10 +11,6 @@ import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
-
-import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Regression tests for {@link AnnotationLabelCollector}, the unified
@@ -68,8 +67,7 @@ class AnnotationLabelCollectorTest {
         AnnotationLabelCollector.collect(h, store, null);
 
         // The merge-encoded value must survive — NOT be clobbered back to "Tumor".
-        assertEquals("Tumor-mergedInto(Immune)", store.getLabel(id),
-                "merge history must be preserved");
+        assertEquals("Tumor-mergedInto(Immune)", store.getLabel(id), "merge history must be preserved");
     }
 
     @Test
@@ -108,8 +106,7 @@ class AnnotationLabelCollectorTest {
 
         AnnotationLabelCollector.collect(h, store, Set.of("Immune")); // Tumor not allowed
 
-        assertNull(store.getLabel(det.getID().toString()),
-                "annotation outside the allowed-class set must be ignored");
+        assertNull(store.getLabel(det.getID().toString()), "annotation outside the allowed-class set must be ignored");
     }
 
     @Test
@@ -122,7 +119,6 @@ class AnnotationLabelCollectorTest {
 
         AnnotationLabelCollector.collect(h, store, null);
 
-        assertNull(store.getLabel(det.getID().toString()),
-                "only point annotations count as ground truth");
+        assertNull(store.getLabel(det.getID().toString()), "only point annotations count as ground truth");
     }
 }

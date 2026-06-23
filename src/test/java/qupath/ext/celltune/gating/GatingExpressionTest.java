@@ -1,11 +1,10 @@
 package qupath.ext.celltune.gating;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Map;
 import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class GatingExpressionTest {
 
@@ -13,13 +12,13 @@ class GatingExpressionTest {
 
     /** Build a single-length boolean mask for one marker. */
     private static boolean[] mask(boolean value) {
-        return new boolean[]{value};
+        return new boolean[] {value};
     }
 
     private static Map<String, boolean[]> masks(Object... pairs) {
         var map = new java.util.LinkedHashMap<String, boolean[]>();
         for (int i = 0; i < pairs.length; i += 2) {
-            map.put((String) pairs[i], new boolean[]{(Boolean) pairs[i + 1]});
+            map.put((String) pairs[i], new boolean[] {(Boolean) pairs[i + 1]});
         }
         return map;
     }
@@ -80,7 +79,7 @@ class GatingExpressionTest {
     @Test
     void evaluateReturnsNullForMissingMarker() {
         var expr = new GatingExpression("CD3");
-        assertNull(expr.evaluate(Map.of()));  // no CD3 mask provided
+        assertNull(expr.evaluate(Map.of())); // no CD3 mask provided
     }
 
     // ── categorize ──────────────────────────────────────────────────────────
@@ -139,26 +138,22 @@ class GatingExpressionTest {
 
     @Test
     void unknownMarkerThrowsWhenValidMarkersProvided() {
-        assertThrows(IllegalArgumentException.class, () ->
-                new GatingExpression("CD3", Set.of("CD4")));
+        assertThrows(IllegalArgumentException.class, () -> new GatingExpression("CD3", Set.of("CD4")));
     }
 
     @Test
     void knownMarkerDoesNotThrowWithValidMarkerSet() {
-        assertDoesNotThrow(() ->
-                new GatingExpression("CD4&CD8", Set.of("CD4", "CD8")));
+        assertDoesNotThrow(() -> new GatingExpression("CD4&CD8", Set.of("CD4", "CD8")));
     }
 
     @Test
     void unclosedParenthesisThrows() {
-        assertThrows(IllegalArgumentException.class, () ->
-                new GatingExpression("CD4&(CD3"));
+        assertThrows(IllegalArgumentException.class, () -> new GatingExpression("CD4&(CD3"));
     }
 
     @Test
     void unexpectedTokenAfterExpressionThrows() {
-        assertThrows(IllegalArgumentException.class, () ->
-                new GatingExpression("CD4 CD3"));
+        assertThrows(IllegalArgumentException.class, () -> new GatingExpression("CD4 CD3"));
     }
 
     // ── multi-cell evaluation ─────────────────────────────────────────────────
@@ -167,25 +162,25 @@ class GatingExpressionTest {
     void andEvaluatesCorrectlyAcrossMultipleCells() {
         // 3 cells: [T,T], [T,F], [F,T]
         var expr = new GatingExpression("CD4&CD3");
-        boolean[] cd4 = {true,  true,  false};
-        boolean[] cd3 = {true,  false, true};
+        boolean[] cd4 = {true, true, false};
+        boolean[] cd3 = {true, false, true};
         boolean[] result = expr.evaluate(Map.of("CD4", cd4, "CD3", cd3));
         assertNotNull(result);
         assertEquals(3, result.length);
-        assertTrue(result[0]);   // T&T → true
-        assertFalse(result[1]);  // T&F → false
-        assertFalse(result[2]);  // F&T → false
+        assertTrue(result[0]); // T&T → true
+        assertFalse(result[1]); // T&F → false
+        assertFalse(result[2]); // F&T → false
     }
 
     @Test
     void orEvaluatesCorrectlyAcrossMultipleCells() {
         var expr = new GatingExpression("CD68|CD163");
-        boolean[] cd68  = {true,  false, false};
-        boolean[] cd163 = {false, true,  false};
+        boolean[] cd68 = {true, false, false};
+        boolean[] cd163 = {false, true, false};
         boolean[] result = expr.evaluate(Map.of("CD68", cd68, "CD163", cd163));
-        assertTrue(result[0]);   // T|F → true
-        assertTrue(result[1]);   // F|T → true
-        assertFalse(result[2]);  // F|F → false
+        assertTrue(result[0]); // T|F → true
+        assertTrue(result[1]); // F|T → true
+        assertFalse(result[2]); // F|F → false
     }
 
     // ── nested NOT ───────────────────────────────────────────────────────────

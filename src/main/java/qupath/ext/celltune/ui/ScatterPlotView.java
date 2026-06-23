@@ -1,5 +1,12 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
@@ -10,8 +17,8 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.MenuButton;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuButton;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
@@ -28,6 +35,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellFeatureExtractor;
@@ -43,22 +51,11 @@ import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.hierarchy.PathObjectHierarchy;
+import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.roi.interfaces.ROI;
-import qupath.lib.objects.hierarchy.PathObjectHierarchy;
-import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
-
-import java.awt.image.BufferedImage;
-
-import javax.imageio.ImageIO;
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
-
 import smile.clustering.KMeans;
 
 /**
@@ -86,32 +83,38 @@ public class ScatterPlotView {
      */
     private static final int MAX_UMAP_CELLS = 20_000;
 
-    private enum Embedding { PCA, UMAP }
+    private enum Embedding {
+        PCA,
+        UMAP
+    }
 
     /** Where the plotted rows come from: the open image, or a project sample. */
-    private enum Scope { CURRENT_IMAGE, PROJECT }
+    private enum Scope {
+        CURRENT_IMAGE,
+        PROJECT
+    }
 
     // ── Per-row state (all arrays aligned by index 0..nRows-1; rebuilt on toggle)
     private Scope scope = Scope.CURRENT_IMAGE;
-    private int nRows;                    // number of plotted rows
-    private PathObject[] cells;           // live cells (null in PROJECT scope)
-    private String[] rowClass;            // class name per row (PROJECT scope)
-    private String[] rowImage;            // source image per row (PROJECT scope)
+    private int nRows; // number of plotted rows
+    private PathObject[] cells; // live cells (null in PROJECT scope)
+    private String[] rowClass; // class name per row (PROJECT scope)
+    private String[] rowImage; // source image per row (PROJECT scope)
     private final List<String> markerFeatures;
-    private double[][] raw;               // [nRows][nFeatures] raw marker values
-    private double[][] std;               // [nRows][nFeatures] z-scored columns
-    private double[] ex;                  // embedding x (NaN = not embedded)
-    private double[] ey;                  // embedding y
-    private int[] cluster;               // k-means label per row (-1 = none)
-    private boolean[] selected;          // mirrors the viewer selection / plot highlight
+    private double[][] raw; // [nRows][nFeatures] raw marker values
+    private double[][] std; // [nRows][nFeatures] z-scored columns
+    private double[] ex; // embedding x (NaN = not embedded)
+    private double[] ey; // embedding y
+    private int[] cluster; // k-means label per row (-1 = none)
+    private boolean[] selected; // mirrors the viewer selection / plot highlight
     private IdentityHashMap<PathObject, Integer> indexOf; // null in PROJECT scope
 
     // ── Latest fit, retained for the cohort assign + the centroid heatmap ──────
-    private double[] fitMean;            // per-marker mean over the active rows
-    private double[] fitSd;             // per-marker sd over the active rows
-    private double[][] fitCentroids;    // [k][selMarkers] z-scored centroids
-    private List<String> fitMarkers;    // selected markers the fit used (column order)
-    private String fitClassFilter;      // within-class filter active at fit time
+    private double[] fitMean; // per-marker mean over the active rows
+    private double[] fitSd; // per-marker sd over the active rows
+    private double[][] fitCentroids; // [k][selMarkers] z-scored centroids
+    private List<String> fitMarkers; // selected markers the fit used (column order)
+    private String fitClassFilter; // within-class filter active at fit time
 
     // ── Project scope ──────────────────────────────────────────────────────────
     private List<String> projectImages = new ArrayList<>();
@@ -177,18 +180,22 @@ public class ScatterPlotView {
      * @param normalizer       feature normalizer applied during extraction so
      *                         clustering matches the classifier (nullable)
      */
-    public ScatterPlotView(Stage owner, QuPathGUI qupath, String imageName,
-                           List<String> markerFeatures, List<PathObject> cellList,
-                           PopulationSet predictions, Runnable openClassControl,
-                           FeatureNormalizer normalizer) {
+    public ScatterPlotView(
+            Stage owner,
+            QuPathGUI qupath,
+            String imageName,
+            List<String> markerFeatures,
+            List<PathObject> cellList,
+            PopulationSet predictions,
+            Runnable openClassControl,
+            FeatureNormalizer normalizer) {
         this.qupath = qupath;
         this.imageName = imageName != null ? imageName : "Current Image";
         this.markerFeatures = List.copyOf(markerFeatures);
         this.predictions = predictions;
         this.openClassControl = openClassControl;
         this.normalizer = normalizer;
-        this.hierarchy = qupath.getImageData() != null
-                ? qupath.getImageData().getHierarchy() : null;
+        this.hierarchy = qupath.getImageData() != null ? qupath.getImageData().getHierarchy() : null;
 
         // Per-row data arrays are filled by loadCurrentImageData(...) below, once
         // the controls exist (so the initial recompute can read them).
@@ -203,14 +210,13 @@ public class ScatterPlotView {
         embeddingCombo = new ComboBox<>();
         embeddingCombo.getItems().addAll(Embedding.PCA, Embedding.UMAP);
         embeddingCombo.setValue(Embedding.PCA);
-        embeddingCombo.setTooltip(new javafx.scene.control.Tooltip(
-                "PCA is fast and linear. UMAP often separates phenotypes better "
-                + "but is MUCH slower — expect a noticeable wait on large cell "
-                + "counts (and longer still with “Full UMAP”)."));
+        embeddingCombo.setTooltip(
+                new javafx.scene.control.Tooltip("PCA is fast and linear. UMAP often separates phenotypes better "
+                        + "but is MUCH slower — expect a noticeable wait on large cell "
+                        + "counts (and longer still with “Full UMAP”)."));
 
         fullUmapCheck = new CheckBox("Full UMAP");
-        fullUmapCheck.setTooltip(new javafx.scene.control.Tooltip(
-                "Embed ALL cells in UMAP instead of a "
+        fullUmapCheck.setTooltip(new javafx.scene.control.Tooltip("Embed ALL cells in UMAP instead of a "
                 + String.format("%,d", MAX_UMAP_CELLS)
                 + "-cell sample. Much slower and more memory-hungry on large "
                 + "images, but plots every cell. Only affects UMAP — k-means "
@@ -219,8 +225,8 @@ public class ScatterPlotView {
         embeddingCombo.valueProperty().addListener((o, a, b) -> {
             fullUmapCheck.setDisable(b != Embedding.UMAP);
             if (b == Embedding.UMAP) {
-                statusLabel.setText("UMAP is much slower than PCA on large cell "
-                        + "counts — click “Recompute” when ready.");
+                statusLabel.setText(
+                        "UMAP is much slower than PCA on large cell " + "counts — click “Recompute” when ready.");
             }
         });
 
@@ -231,10 +237,10 @@ public class ScatterPlotView {
         annotationField = new TextField();
         annotationField.setPromptText("name (blank = all cells)");
         annotationField.setPrefWidth(150);
-        annotationField.setTooltip(new javafx.scene.control.Tooltip(
-                "Only cluster cells whose centroid falls inside an annotation "
-                + "whose name (or classification) contains this text. "
-                + "Leave blank to use all cells."));
+        annotationField.setTooltip(
+                new javafx.scene.control.Tooltip("Only cluster cells whose centroid falls inside an annotation "
+                        + "whose name (or classification) contains this text. "
+                        + "Leave blank to use all cells."));
         annotationField.setOnAction(e -> recompute()); // Enter re-runs
 
         classField = new ComboBox<>();
@@ -248,18 +254,18 @@ public class ScatterPlotView {
             }
         }
         classField.setValue("");
-        classField.setTooltip(new javafx.scene.control.Tooltip(
-                "Only cluster cells whose current QuPath classification contains "
-                + "this text — e.g. assign Immune/Tumour/Other via Apply Clusters, "
-                + "then drill in with \"Immune\". Combines with the annotation "
-                + "filter. Leave blank for all classes."));
+        classField.setTooltip(
+                new javafx.scene.control.Tooltip("Only cluster cells whose current QuPath classification contains "
+                        + "this text — e.g. assign Immune/Tumour/Other via Apply Clusters, "
+                        + "then drill in with \"Immune\". Combines with the annotation "
+                        + "filter. Leave blank for all classes."));
         classField.setOnAction(e -> recompute());
 
         clusterMarkersBtn = new MenuButton("Cluster markers (all)");
-        clusterMarkersBtn.setTooltip(new javafx.scene.control.Tooltip(
-                "Markers used for k-means and the embedding. Uncheck markers to "
-                + "sub-cluster on a focused panel (e.g. immune markers only). "
-                + "Values are re-standardized over the active cells each run."));
+        clusterMarkersBtn.setTooltip(
+                new javafx.scene.control.Tooltip("Markers used for k-means and the embedding. Uncheck markers to "
+                        + "sub-cluster on a focused panel (e.g. immune markers only). "
+                        + "Values are re-standardized over the active cells each run."));
         for (String marker : this.markerFeatures) {
             CheckMenuItem item = new CheckMenuItem(marker);
             item.setSelected(true);
@@ -269,10 +275,10 @@ public class ScatterPlotView {
         }
 
         Button recomputeBtn = new Button("Recompute");
-        recomputeBtn.setTooltip(new javafx.scene.control.Tooltip(
-                "Re-fit k-means + the embedding on the current rows (the open image, "
-                + "or the project sample). Does not re-sample — use “Images…” for "
-                + "that in project scope."));
+        recomputeBtn.setTooltip(
+                new javafx.scene.control.Tooltip("Re-fit k-means + the embedding on the current rows (the open image, "
+                        + "or the project sample). Does not re-sample — use “Images…” for "
+                        + "that in project scope."));
         recomputeBtn.setOnAction(e -> recompute());
 
         // ── Scope toggle: cluster the open image, or a project-wide sample ───────
@@ -282,13 +288,13 @@ public class ScatterPlotView {
         imageScopeToggle.setToggleGroup(scopeGroup);
         projectScopeToggle.setToggleGroup(scopeGroup);
         imageScopeToggle.setSelected(true);
-        imageScopeToggle.setTooltip(new javafx.scene.control.Tooltip(
-                "Cluster every cell of the open image, with full viewer "
-                + "interaction (box/lasso select, click-to-select)."));
-        projectScopeToggle.setTooltip(new javafx.scene.control.Tooltip(
-                "Fit one k-means on a bounded sample pooled across selected images, "
-                + "then assign it consistently across the whole cohort. Viewer "
-                + "selection is plot-only here (sampled cells aren't all open)."));
+        imageScopeToggle.setTooltip(
+                new javafx.scene.control.Tooltip("Cluster every cell of the open image, with full viewer "
+                        + "interaction (box/lasso select, click-to-select)."));
+        projectScopeToggle.setTooltip(
+                new javafx.scene.control.Tooltip("Fit one k-means on a bounded sample pooled across selected images, "
+                        + "then assign it consistently across the whole cohort. Viewer "
+                        + "selection is plot-only here (sampled cells aren't all open)."));
         scopeGroup.selectedToggleProperty().addListener((obs, old, sel) -> {
             if (sel == null && old != null) {
                 old.setSelected(true); // keep exactly one selected
@@ -308,12 +314,12 @@ public class ScatterPlotView {
         sampleSpinner = new Spinner<>(1000, 5_000_000, 50_000, 10_000);
         sampleSpinner.setEditable(true);
         sampleSpinner.setPrefWidth(110);
-        sampleSpinner.setTooltip(new javafx.scene.control.Tooltip(
-                "Max cells to sample. Project scope: cells pooled to FIT k-means "
-                + "(every cell is still classified by Assign — 50k is plenty for "
-                + "stable centroids). Current-image scope: a random subsample of "
-                + "the open image to plot + cluster. Press Enter or click "
-                + "“Re-sample” to apply."));
+        sampleSpinner.setTooltip(
+                new javafx.scene.control.Tooltip("Max cells to sample. Project scope: cells pooled to FIT k-means "
+                        + "(every cell is still classified by Assign — 50k is plenty for "
+                        + "stable centroids). Current-image scope: a random subsample of "
+                        + "the open image to plot + cluster. Press Enter or click "
+                        + "“Re-sample” to apply."));
         // Editable spinners don't commit typed text to the value unless focus
         // leaves the editor — commit on focus loss so getValue() is current.
         sampleSpinner.focusedProperty().addListener((o, was, isNow) -> {
@@ -328,17 +334,17 @@ public class ScatterPlotView {
         });
 
         imagesBtn = new Button("Images…");
-        imagesBtn.setTooltip(new javafx.scene.control.Tooltip(
-                "Choose which project images to draw the sample from. Picking "
-                + "images does NOT sample — click “Re-sample” afterwards."));
+        imagesBtn.setTooltip(
+                new javafx.scene.control.Tooltip("Choose which project images to draw the sample from. Picking "
+                        + "images does NOT sample — click “Re-sample” afterwards."));
         imagesBtn.setOnAction(e -> chooseProjectImages());
 
         reSampleBtn = new Button("Re-sample");
-        reSampleBtn.setTooltip(new javafx.scene.control.Tooltip(
-                "Draw a fresh sample using the “Sample” cap: in Project scope a "
-                + "pooled sample across the chosen images; in Current-image scope "
-                + "a random subsample of the open image. Does not cluster — click "
-                + "“Recompute” to cluster."));
+        reSampleBtn.setTooltip(
+                new javafx.scene.control.Tooltip("Draw a fresh sample using the “Sample” cap: in Project scope a "
+                        + "pooled sample across the chosen images; in Current-image scope "
+                        + "a random subsample of the open image. Does not cluster — click "
+                        + "“Recompute” to cluster."));
         reSampleBtn.setOnAction(e -> reSample());
 
         // Images… is project-only; the Sample cap + Re-sample apply to both scopes.
@@ -371,12 +377,15 @@ public class ScatterPlotView {
         markerCombo.setDisable(true);
 
         colorCombo = new ComboBox<>();
-        colorCombo.getItems().addAll(ScatterPlotCanvas.ColorMode.CLUSTER,
-                ScatterPlotCanvas.ColorMode.CLASS, ScatterPlotCanvas.ColorMode.MARKER);
+        colorCombo
+                .getItems()
+                .addAll(
+                        ScatterPlotCanvas.ColorMode.CLUSTER,
+                        ScatterPlotCanvas.ColorMode.CLASS,
+                        ScatterPlotCanvas.ColorMode.MARKER);
         colorCombo.setValue(ScatterPlotCanvas.ColorMode.CLUSTER);
         colorCombo.setOnAction(e -> {
-            markerCombo.setDisable(
-                    colorCombo.getValue() != ScatterPlotCanvas.ColorMode.MARKER);
+            markerCombo.setDisable(colorCombo.getValue() != ScatterPlotCanvas.ColorMode.MARKER);
             plot.redraw();
         });
 
@@ -408,28 +417,47 @@ public class ScatterPlotView {
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> stage.close());
 
-        HBox row1 = new HBox(8,
-                new Label("Embedding:"), embeddingCombo, fullUmapCheck,
-                new Label("Clusters (k):"), kSpinner, recomputeBtn,
+        HBox row1 = new HBox(
+                8,
+                new Label("Embedding:"),
+                embeddingCombo,
+                fullUmapCheck,
+                new Label("Clusters (k):"),
+                kSpinner,
+                recomputeBtn,
                 new Separator(Orientation.VERTICAL),
-                new Label("Scope:"), imageScopeToggle, projectScopeToggle,
-                projectControls, sampleControls, progress);
+                new Label("Scope:"),
+                imageScopeToggle,
+                projectScopeToggle,
+                projectControls,
+                sampleControls,
+                progress);
         row1.setAlignment(Pos.CENTER_LEFT);
 
-        HBox rowFilter = new HBox(8,
-                new Label("Annotation:"), annotationField,
-                new Label("Within class:"), classField,
+        HBox rowFilter = new HBox(
+                8,
+                new Label("Annotation:"),
+                annotationField,
+                new Label("Within class:"),
+                classField,
                 clusterMarkersBtn);
         rowFilter.setAlignment(Pos.CENTER_LEFT);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox row2 = new HBox(8,
-                new Label("Colour by:"), colorCombo,
-                new Label("Marker:"), markerCombo,
+        HBox row2 = new HBox(
+                8,
+                new Label("Colour by:"),
+                colorCombo,
+                new Label("Marker:"),
+                markerCombo,
                 spacer,
-                new Label("Select:"), boxToggle, lassoToggle,
-                applyClustersBtn, exportBtn, closeBtn);
+                new Label("Select:"),
+                boxToggle,
+                lassoToggle,
+                applyClustersBtn,
+                exportBtn,
+                closeBtn);
         row2.setAlignment(Pos.CENTER_LEFT);
 
         VBox top = new VBox(6, row1, rowFilter, row2);
@@ -439,9 +467,12 @@ public class ScatterPlotView {
         // it reads plotted-row state via the PlotModel (this view) and reports
         // gestures back through the callbacks. Built here, after every control its
         // lambdas read (lassoToggle, the combos, kSpinner) already exists.
-        plot = new ScatterPlotCanvas(asPlotModel(),
+        plot = new ScatterPlotCanvas(
+                asPlotModel(),
                 () -> lassoToggle.isSelected(),
-                this::onRegionGesture, this::selectCluster, this::updateStatus);
+                this::onRegionGesture,
+                this::selectCluster,
+                this::updateStatus);
 
         // The canvas component fills the centre and resizes with the window.
         statusLabel.setMaxWidth(Double.MAX_VALUE);
@@ -474,12 +505,9 @@ public class ScatterPlotView {
     /** Status text after loading the open image, noting any subsample. */
     private String currentImageLoadedMessage(int total) {
         if (nRows < total) {
-            return String.format(
-                    "Subsampled %,d of %,d cell(s) — click “Recompute” to cluster.",
-                    nRows, total);
+            return String.format("Subsampled %,d of %,d cell(s) — click “Recompute” to cluster.", nRows, total);
         }
-        return String.format(
-                "%,d cell(s) loaded — click “Recompute” to cluster.", nRows);
+        return String.format("%,d cell(s) loaded — click “Recompute” to cluster.", nRows);
     }
 
     // ── Data loading (rebuilds the per-row arrays on a scope switch) ────────────
@@ -576,8 +604,7 @@ public class ScatterPlotView {
         // cluster once it's in (sampling is async, so it re-enters recompute()).
         if (scope == Scope.PROJECT && nRows == 0) {
             if (projectImages == null || projectImages.isEmpty()) {
-                statusLabel.setText(
-                        "Click “Images…” to choose project images first.");
+                statusLabel.setText("Click “Images…” to choose project images first.");
             } else {
                 runProjectSample(true);
             }
@@ -589,15 +616,13 @@ public class ScatterPlotView {
         final String keyword = annotationField.getText();
         final String classKeyword = classField.getValue();
         final int[] selCols = selectedMarkerColumns();
-        final int umapCap = fullUmapCheck.isSelected()
-                ? Integer.MAX_VALUE : MAX_UMAP_CELLS;
+        final int umapCap = fullUmapCheck.isSelected() ? Integer.MAX_VALUE : MAX_UMAP_CELLS;
         if (n == 0) {
             statusLabel.setText("No cells to plot.");
             return;
         }
         if (selCols.length < 2) {
-            statusLabel.setText(
-                    "Select at least 2 cluster markers (see “Cluster markers”).");
+            statusLabel.setText("Select at least 2 cluster markers (see “Cluster markers”).");
             return;
         }
 
@@ -605,178 +630,178 @@ public class ScatterPlotView {
         statusLabel.setText("Computing " + embedding + " embedding…");
         setControlsDisabled(true);
 
-        new Thread(() -> {
-            String notice = "";
-            try {
-                // Smile's PCA/UMAP load native libs via JavaCPP, which needs
-                // java.base/java.lang opened. The extension opens it at startup;
-                // this is a defensive no-op if already done.
-                JvmModuleOpener.ensureJavaLangOpen();
+        new Thread(
+                        () -> {
+                            String notice = "";
+                            try {
+                                // Smile's PCA/UMAP load native libs via JavaCPP, which needs
+                                // java.base/java.lang opened. The extension opens it at startup;
+                                // this is a defensive no-op if already done.
+                                JvmModuleOpener.ensureJavaLangOpen();
 
-                // Restrict clustering/embedding to cells inside matching
-                // annotation(s) AND of the matching class (all cells when blank).
-                int[] activeIdx = computeActiveIndices(keyword, classKeyword);
-                final int m = activeIdx.length;
+                                // Restrict clustering/embedding to cells inside matching
+                                // annotation(s) AND of the matching class (all cells when blank).
+                                int[] activeIdx = computeActiveIndices(keyword, classKeyword);
+                                final int m = activeIdx.length;
 
-                // Full-length outputs; non-active cells stay unclustered/unplotted.
-                int[] newCluster = new int[n];
-                java.util.Arrays.fill(newCluster, -1);
-                double[] nx = new double[n];
-                double[] ny = new double[n];
-                java.util.Arrays.fill(nx, Double.NaN);
-                java.util.Arrays.fill(ny, Double.NaN);
+                                // Full-length outputs; non-active cells stay unclustered/unplotted.
+                                int[] newCluster = new int[n];
+                                java.util.Arrays.fill(newCluster, -1);
+                                double[] nx = new double[n];
+                                double[] ny = new double[n];
+                                java.util.Arrays.fill(nx, Double.NaN);
+                                java.util.Arrays.fill(ny, Double.NaN);
 
-                boolean annoFilter = keyword != null && !keyword.isBlank();
-                boolean classFilter = classKeyword != null && !classKeyword.isBlank();
-                boolean filtered = annoFilter || classFilter;
-                String scopeDesc = describeScope(keyword, classKeyword);
-                if (m == 0) {
-                    final String fNotice = filtered
-                            ? " (no cells matching " + scopeDesc + ")"
-                            : "";
-                    Platform.runLater(() -> {
-                        System.arraycopy(nx, 0, ex, 0, n);
-                        System.arraycopy(ny, 0, ey, 0, n);
-                        cluster = newCluster;
-                        clearFit();
-                        progress.setVisible(false);
-                        setControlsDisabled(false);
-                        plot.redraw();
-                        appendStatusNotice(fNotice);
-                    });
-                    return;
-                }
+                                boolean annoFilter = keyword != null && !keyword.isBlank();
+                                boolean classFilter = classKeyword != null && !classKeyword.isBlank();
+                                boolean filtered = annoFilter || classFilter;
+                                String scopeDesc = describeScope(keyword, classKeyword);
+                                if (m == 0) {
+                                    final String fNotice = filtered ? " (no cells matching " + scopeDesc + ")" : "";
+                                    Platform.runLater(() -> {
+                                        System.arraycopy(nx, 0, ex, 0, n);
+                                        System.arraycopy(ny, 0, ey, 0, n);
+                                        cluster = newCluster;
+                                        clearFit();
+                                        progress.setVisible(false);
+                                        setControlsDisabled(false);
+                                        plot.redraw();
+                                        appendStatusNotice(fNotice);
+                                    });
+                                    return;
+                                }
 
-                // Active feature matrix: the selected marker columns of the active
-                // cells, re-standardized over that subset so sub-clustering scales
-                // to the subpopulation (not the whole image).
-                double[][] activeRaw = new double[m][selCols.length];
-                for (int j = 0; j < m; j++) {
-                    double[] src = raw[activeIdx[j]];
-                    for (int c = 0; c < selCols.length; c++) {
-                        activeRaw[j][c] = src[selCols[c]];
-                    }
-                }
-                double[] mean = new double[selCols.length];
-                double[] sd = new double[selCols.length];
-                double[][] active = ScatterMath.standardizeColumns(activeRaw, mean, sd);
+                                // Active feature matrix: the selected marker columns of the active
+                                // cells, re-standardized over that subset so sub-clustering scales
+                                // to the subpopulation (not the whole image).
+                                double[][] activeRaw = new double[m][selCols.length];
+                                for (int j = 0; j < m; j++) {
+                                    double[] src = raw[activeIdx[j]];
+                                    for (int c = 0; c < selCols.length; c++) {
+                                        activeRaw[j][c] = src[selCols[c]];
+                                    }
+                                }
+                                double[] mean = new double[selCols.length];
+                                double[] sd = new double[selCols.length];
+                                double[][] active = ScatterMath.standardizeColumns(activeRaw, mean, sd);
 
-                // ── k-means on the active subset ─────────────────────────────────
-                int kEff = Math.min(k, m);
-                int[] subCluster = new int[m];
-                if (kEff >= 2) {
-                    KMeans km = KMeans.fit(active, kEff);
-                    System.arraycopy(km.y, 0, subCluster, 0, m);
-                }
-                for (int j = 0; j < m; j++) {
-                    newCluster[activeIdx[j]] = subCluster[j];
-                }
+                                // ── k-means on the active subset ─────────────────────────────────
+                                int kEff = Math.min(k, m);
+                                int[] subCluster = new int[m];
+                                if (kEff >= 2) {
+                                    KMeans km = KMeans.fit(active, kEff);
+                                    System.arraycopy(km.y, 0, subCluster, 0, m);
+                                }
+                                for (int j = 0; j < m; j++) {
+                                    newCluster[activeIdx[j]] = subCluster[j];
+                                }
 
-                // Per-cluster z-scored centroids (k rows; empty clusters stay 0).
-                // Retained for the cohort assign and the assignment heatmap.
-                double[][] cents = new double[k][selCols.length];
-                int[] centCount = new int[k];
-                for (int j = 0; j < m; j++) {
-                    int lab = subCluster[j];
-                    centCount[lab]++;
-                    for (int c = 0; c < selCols.length; c++) {
-                        cents[lab][c] += active[j][c];
-                    }
-                }
-                for (int lab = 0; lab < k; lab++) {
-                    if (centCount[lab] > 0) {
-                        for (int c = 0; c < selCols.length; c++) {
-                            cents[lab][c] /= centCount[lab];
-                        }
-                    }
-                }
-                final double[] fMean = mean;
-                final double[] fSd = sd;
-                final double[][] fCents = cents;
-                final List<String> fMarkers = markerNamesFor(selCols);
+                                // Per-cluster z-scored centroids (k rows; empty clusters stay 0).
+                                // Retained for the cohort assign and the assignment heatmap.
+                                double[][] cents = new double[k][selCols.length];
+                                int[] centCount = new int[k];
+                                for (int j = 0; j < m; j++) {
+                                    int lab = subCluster[j];
+                                    centCount[lab]++;
+                                    for (int c = 0; c < selCols.length; c++) {
+                                        cents[lab][c] += active[j][c];
+                                    }
+                                }
+                                for (int lab = 0; lab < k; lab++) {
+                                    if (centCount[lab] > 0) {
+                                        for (int c = 0; c < selCols.length; c++) {
+                                            cents[lab][c] /= centCount[lab];
+                                        }
+                                    }
+                                }
+                                final double[] fMean = mean;
+                                final double[] fSd = sd;
+                                final double[][] fCents = cents;
+                                final List<String> fMarkers = markerNamesFor(selCols);
 
-                // ── Embedding on the active subset ───────────────────────────────
-                double[] subX = new double[m];
-                double[] subY = new double[m];
-                java.util.Arrays.fill(subX, Double.NaN);
-                java.util.Arrays.fill(subY, Double.NaN);
+                                // ── Embedding on the active subset ───────────────────────────────
+                                double[] subX = new double[m];
+                                double[] subY = new double[m];
+                                java.util.Arrays.fill(subX, Double.NaN);
+                                java.util.Arrays.fill(subY, Double.NaN);
 
-                if (embedding == Embedding.PCA) {
-                    ScatterMath.fillPca(active, m, subX, subY);
-                } else {
-                    try {
-                        notice = ScatterMath.fillUmap(active, m, subX, subY, umapCap);
-                    } catch (LinkageError err) {
-                        // UMAP's spectral layout loads the native ARPACK library
-                        // through JavaCPP, which uses reflection into java.base.
-                        // On JVMs started without
-                        // --add-opens=java.base/java.lang=ALL-UNNAMED that load
-                        // fails with an Error (ExceptionInInitializerError, then
-                        // NoClassDefFoundError on retries, or UnsatisfiedLinkError)
-                        // — all LinkageError, not Exception. Fall back to PCA so the
-                        // plot still renders on any system.
-                        logger.warn(
-                                "UMAP unavailable ({}); falling back to PCA. Launch "
-                                + "QuPath with "
-                                + "--add-opens=java.base/java.lang=ALL-UNNAMED to "
-                                + "enable UMAP.",
-                                err.toString());
-                        logger.debug("UMAP native load failure detail", err);
-                        java.util.Arrays.fill(subX, Double.NaN);
-                        java.util.Arrays.fill(subY, Double.NaN);
-                        ScatterMath.fillPca(active, m, subX, subY);
-                        notice = " (UMAP unavailable — showing PCA)";
-                    }
-                }
-                for (int j = 0; j < m; j++) {
-                    nx[activeIdx[j]] = subX[j];
-                    ny[activeIdx[j]] = subY[j];
-                }
+                                if (embedding == Embedding.PCA) {
+                                    ScatterMath.fillPca(active, m, subX, subY);
+                                } else {
+                                    try {
+                                        notice = ScatterMath.fillUmap(active, m, subX, subY, umapCap);
+                                    } catch (LinkageError err) {
+                                        // UMAP's spectral layout loads the native ARPACK library
+                                        // through JavaCPP, which uses reflection into java.base.
+                                        // On JVMs started without
+                                        // --add-opens=java.base/java.lang=ALL-UNNAMED that load
+                                        // fails with an Error (ExceptionInInitializerError, then
+                                        // NoClassDefFoundError on retries, or UnsatisfiedLinkError)
+                                        // — all LinkageError, not Exception. Fall back to PCA so the
+                                        // plot still renders on any system.
+                                        logger.warn(
+                                                "UMAP unavailable ({}); falling back to PCA. Launch "
+                                                        + "QuPath with "
+                                                        + "--add-opens=java.base/java.lang=ALL-UNNAMED to "
+                                                        + "enable UMAP.",
+                                                err.toString());
+                                        logger.debug("UMAP native load failure detail", err);
+                                        java.util.Arrays.fill(subX, Double.NaN);
+                                        java.util.Arrays.fill(subY, Double.NaN);
+                                        ScatterMath.fillPca(active, m, subX, subY);
+                                        notice = " (UMAP unavailable — showing PCA)";
+                                    }
+                                }
+                                for (int j = 0; j < m; j++) {
+                                    nx[activeIdx[j]] = subX[j];
+                                    ny[activeIdx[j]] = subY[j];
+                                }
 
-                if (filtered) {
-                    notice = notice + String.format(
-                            " (%,d cells in %s)", m, scopeDesc);
-                }
-                if (selCols.length < markerFeatures.size()) {
-                    notice = notice + String.format(
-                            " · %d/%d markers", selCols.length, markerFeatures.size());
-                }
+                                if (filtered) {
+                                    notice = notice + String.format(" (%,d cells in %s)", m, scopeDesc);
+                                }
+                                if (selCols.length < markerFeatures.size()) {
+                                    notice = notice
+                                            + String.format(" · %d/%d markers", selCols.length, markerFeatures.size());
+                                }
 
-                final String fNotice = notice;
-                final String fClassFilter = classKeyword;
-                Platform.runLater(() -> {
-                    System.arraycopy(nx, 0, ex, 0, n);
-                    System.arraycopy(ny, 0, ey, 0, n);
-                    cluster = newCluster;
-                    fitMean = fMean;
-                    fitSd = fSd;
-                    fitCentroids = fCents;
-                    fitMarkers = fMarkers;
-                    fitClassFilter = fClassFilter;
-                    progress.setVisible(false);
-                    setControlsDisabled(false);
-                    plot.redraw();
-                    appendStatusNotice(fNotice);
-                });
-            } catch (Throwable ex) {
-                // Throwable, not Exception: Smile's native loaders fail with
-                // Errors (e.g. ExceptionInInitializerError) when java.lang is not
-                // open. Catch them here so they never reach the uncaught-exception
-                // dialog, and give the user an actionable message.
-                logger.error("Failed to compute scatter embedding", ex);
-                boolean nativeIssue = ex instanceof LinkageError;
-                final String msg = nativeIssue
-                        ? "Embedding failed: native math libraries unavailable. "
-                                + "Launch QuPath with "
-                                + "--add-opens=java.base/java.lang=ALL-UNNAMED."
-                        : "Embedding failed: " + ex.getMessage();
-                Platform.runLater(() -> {
-                    progress.setVisible(false);
-                    setControlsDisabled(false);
-                    statusLabel.setText(msg);
-                });
-            }
-        }, "CellTune-ScatterEmbedding").start();
+                                final String fNotice = notice;
+                                final String fClassFilter = classKeyword;
+                                Platform.runLater(() -> {
+                                    System.arraycopy(nx, 0, ex, 0, n);
+                                    System.arraycopy(ny, 0, ey, 0, n);
+                                    cluster = newCluster;
+                                    fitMean = fMean;
+                                    fitSd = fSd;
+                                    fitCentroids = fCents;
+                                    fitMarkers = fMarkers;
+                                    fitClassFilter = fClassFilter;
+                                    progress.setVisible(false);
+                                    setControlsDisabled(false);
+                                    plot.redraw();
+                                    appendStatusNotice(fNotice);
+                                });
+                            } catch (Throwable ex) {
+                                // Throwable, not Exception: Smile's native loaders fail with
+                                // Errors (e.g. ExceptionInInitializerError) when java.lang is not
+                                // open. Catch them here so they never reach the uncaught-exception
+                                // dialog, and give the user an actionable message.
+                                logger.error("Failed to compute scatter embedding", ex);
+                                boolean nativeIssue = ex instanceof LinkageError;
+                                final String msg = nativeIssue
+                                        ? "Embedding failed: native math libraries unavailable. "
+                                                + "Launch QuPath with "
+                                                + "--add-opens=java.base/java.lang=ALL-UNNAMED."
+                                        : "Embedding failed: " + ex.getMessage();
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    setControlsDisabled(false);
+                                    statusLabel.setText(msg);
+                                });
+                            }
+                        },
+                        "CellTune-ScatterEmbedding")
+                .start();
     }
 
     /**
@@ -873,8 +898,7 @@ public class ScatterPlotView {
         boolean anno = annoKeyword != null && !annoKeyword.isBlank();
         boolean cls = classKeyword != null && !classKeyword.isBlank();
         if (anno && cls) {
-            return String.format("class “%s” inside “%s”",
-                    classKeyword.trim(), annoKeyword.trim());
+            return String.format("class “%s” inside “%s”", classKeyword.trim(), annoKeyword.trim());
         }
         if (cls) {
             return "class “" + classKeyword.trim() + "”";
@@ -901,7 +925,6 @@ public class ScatterPlotView {
         return null;
     }
 
-
     // ── Apply clusters → QuPath classifications ─────────────────────────────────
 
     /**
@@ -917,29 +940,29 @@ public class ScatterPlotView {
         final int k = kSpinner.getValue();
         int[] counts = clusterCounts(k);
         if (counts == null) {
-            Dialogs.showWarningNotification(
-                    "CellTune", "No clusters available yet — run Recompute first.");
+            Dialogs.showWarningNotification("CellTune", "No clusters available yet — run Recompute first.");
             return;
         }
         if (scope == Scope.CURRENT_IMAGE && hierarchy == null) {
-            Dialogs.showWarningNotification(
-                    "CellTune", "No image is open to classify.");
+            Dialogs.showWarningNotification("CellTune", "No image is open to classify.");
             return;
         }
         if (scope == Scope.PROJECT && fitCentroids == null) {
-            Dialogs.showWarningNotification(
-                    "CellTune", "No fit available yet — run Recompute first.");
+            Dialogs.showWarningNotification("CellTune", "No fit available yet — run Recompute first.");
             return;
         }
 
         List<String> heatMarkers = (fitMarkers != null) ? fitMarkers : markerFeatures;
         Map<Integer, PathClass> mapping = ClusterAssignmentPane.show(
                 stage,
-                scope == Scope.PROJECT
-                        ? "Assign Cohort Clusters to Classes"
-                        : "Assign Clusters to Classes",
-                k, counts, fitCentroids, heatMarkers,
-                this::availableClassNames, plot::clusterColor, openClassControl);
+                scope == Scope.PROJECT ? "Assign Cohort Clusters to Classes" : "Assign Clusters to Classes",
+                k,
+                counts,
+                fitCentroids,
+                heatMarkers,
+                this::availableClassNames,
+                plot::clusterColor,
+                openClassControl);
         if (mapping == null) {
             return; // cancelled
         }
@@ -963,8 +986,8 @@ public class ScatterPlotView {
                 "Replace classifications",
                 String.format(
                         "Set the QuPath classification of %,d cell(s) across "
-                        + "%d cluster(s)? This replaces any existing class on "
-                        + "those cells.",
+                                + "%d cluster(s)? This replaces any existing class on "
+                                + "those cells.",
                         affected, mapping.size()));
         if (!confirmed) {
             return;
@@ -984,10 +1007,12 @@ public class ScatterPlotView {
             Dialogs.showErrorMessage("CellTune", "No project is open.");
             return;
         }
-        boolean ok = Dialogs.showConfirmDialog("Assign across project",
-                String.format("Assign %d cluster(s) as classifications to every "
-                        + "matching cell across %d image(s)? Each image is saved. "
-                        + "This replaces existing classes on the assigned cells.",
+        boolean ok = Dialogs.showConfirmDialog(
+                "Assign across project",
+                String.format(
+                        "Assign %d cluster(s) as classifications to every "
+                                + "matching cell across %d image(s)? Each image is saved. "
+                                + "This replaces existing classes on the assigned cells.",
                         mapping.size(), projectImages.size()));
         if (!ok) {
             return;
@@ -1011,50 +1036,57 @@ public class ScatterPlotView {
         setControlsDisabled(true);
         progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
         progress.setVisible(true);
-        statusLabel.setText("Assigning classifications across "
-                + images.size() + " image(s)…");
+        statusLabel.setText("Assigning classifications across " + images.size() + " image(s)…");
 
-        new Thread(() -> {
-            try {
-                ImageData<BufferedImage> openData = qupath.getImageData();
-                String openName = null;
-                if (openData != null) {
-                    ProjectImageEntry<BufferedImage> openEntry =
-                            project.getEntry(openData);
-                    if (openEntry != null) {
-                        openName = openEntry.getImageName();
-                    }
-                }
-                long total = CohortClusterModel.assignAcrossProject(
-                        project, images, markers, mean, sd, cents, mapping,
-                        classFilter, normalizer, openData, openName,
-                        msg -> Platform.runLater(() -> statusLabel.setText(msg)),
-                        frac -> Platform.runLater(() -> progress.setProgress(frac)));
-                final long fTotal = total;
-                Platform.runLater(() -> {
-                    QuPathViewer viewer = qupath.getViewer();
-                    if (viewer != null) {
-                        viewer.repaint();
-                    }
-                    statusLabel.setText(String.format(
-                            "Done — assigned %,d cell(s) across %d image(s).",
-                            fTotal, images.size()));
-                });
-                logger.info("Cohort assign wrote {} cells across {} images",
-                        fTotal, images.size());
-            } catch (Throwable t) {
-                logger.error("Project assignment failed", t);
-                Platform.runLater(() ->
-                        statusLabel.setText("Assign failed: " + t.getMessage()));
-            } finally {
-                Platform.runLater(() -> {
-                    progress.setVisible(false);
-                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
-                    setControlsDisabled(false);
-                    applying = false;
-                });
-            }
-        }, "CellTune-CohortAssign").start();
+        new Thread(
+                        () -> {
+                            try {
+                                ImageData<BufferedImage> openData = qupath.getImageData();
+                                String openName = null;
+                                if (openData != null) {
+                                    ProjectImageEntry<BufferedImage> openEntry = project.getEntry(openData);
+                                    if (openEntry != null) {
+                                        openName = openEntry.getImageName();
+                                    }
+                                }
+                                long total = CohortClusterModel.assignAcrossProject(
+                                        project,
+                                        images,
+                                        markers,
+                                        mean,
+                                        sd,
+                                        cents,
+                                        mapping,
+                                        classFilter,
+                                        normalizer,
+                                        openData,
+                                        openName,
+                                        msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                        frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                final long fTotal = total;
+                                Platform.runLater(() -> {
+                                    QuPathViewer viewer = qupath.getViewer();
+                                    if (viewer != null) {
+                                        viewer.repaint();
+                                    }
+                                    statusLabel.setText(String.format(
+                                            "Done — assigned %,d cell(s) across %d image(s).", fTotal, images.size()));
+                                });
+                                logger.info("Cohort assign wrote {} cells across {} images", fTotal, images.size());
+                            } catch (Throwable t) {
+                                logger.error("Project assignment failed", t);
+                                Platform.runLater(() -> statusLabel.setText("Assign failed: " + t.getMessage()));
+                            } finally {
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                                    setControlsDisabled(false);
+                                    applying = false;
+                                });
+                            }
+                        },
+                        "CellTune-CohortAssign")
+                .start();
     }
 
     /**
@@ -1078,78 +1110,80 @@ public class ScatterPlotView {
         progress.setVisible(true);
         statusLabel.setText("Applying cluster classifications…");
 
-        new Thread(() -> {
-            final int n = nRows;
-            final int chunk = 5000;
-            final List<PathObject> changed = new ArrayList<>();
-            try {
-                for (int start = 0; start < n; start += chunk) {
-                    final int end = Math.min(n, start + chunk);
-                    final List<PathObject> objs = new ArrayList<>();
-                    final List<PathClass> classes = new ArrayList<>();
-                    for (int i = start; i < end; i++) {
-                        PathClass pc = mapping.get(cluster[i]);
-                        if (pc != null) {
-                            objs.add(cells[i]);
-                            classes.add(pc);
-                        }
-                    }
+        new Thread(
+                        () -> {
+                            final int n = nRows;
+                            final int chunk = 5000;
+                            final List<PathObject> changed = new ArrayList<>();
+                            try {
+                                for (int start = 0; start < n; start += chunk) {
+                                    final int end = Math.min(n, start + chunk);
+                                    final List<PathObject> objs = new ArrayList<>();
+                                    final List<PathClass> classes = new ArrayList<>();
+                                    for (int i = start; i < end; i++) {
+                                        PathClass pc = mapping.get(cluster[i]);
+                                        if (pc != null) {
+                                            objs.add(cells[i]);
+                                            classes.add(pc);
+                                        }
+                                    }
 
-                    final java.util.concurrent.CountDownLatch latch =
-                            new java.util.concurrent.CountDownLatch(1);
-                    Platform.runLater(() -> {
-                        try {
-                            for (int j = 0; j < objs.size(); j++) {
-                                objs.get(j).setPathClass(classes.get(j));
+                                    final java.util.concurrent.CountDownLatch latch =
+                                            new java.util.concurrent.CountDownLatch(1);
+                                    Platform.runLater(() -> {
+                                        try {
+                                            for (int j = 0; j < objs.size(); j++) {
+                                                objs.get(j).setPathClass(classes.get(j));
+                                            }
+                                        } finally {
+                                            latch.countDown();
+                                        }
+                                    });
+                                    latch.await();
+
+                                    changed.addAll(objs);
+                                    final double frac = end / (double) n;
+                                    final int done = changed.size();
+                                    Platform.runLater(() -> {
+                                        progress.setProgress(frac);
+                                        statusLabel.setText(String.format("Applying classifications… %,d cells", done));
+                                    });
+                                }
+
+                                Platform.runLater(() -> {
+                                    hierarchy.fireObjectClassificationsChangedEvent(this, changed);
+                                    QuPathViewer viewer = qupath.getViewer();
+                                    if (viewer != null) {
+                                        viewer.repaint();
+                                    }
+                                    plot.redraw(); // refresh CLASS colouring on the plot
+                                    statusLabel.setText(String.format(
+                                            "Applied %d cluster→class mapping(s) to %,d cell(s).",
+                                            mapping.size(), changed.size()));
+                                });
+                                logger.info(
+                                        "Applied cluster→class mapping to {} cells ({} clusters)",
+                                        changed.size(),
+                                        mapping.size());
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                Platform.runLater(() -> statusLabel.setText("Apply cancelled."));
+                            } finally {
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                                    setControlsDisabled(false);
+                                    applying = false;
+                                });
                             }
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
-                    latch.await();
-
-                    changed.addAll(objs);
-                    final double frac = end / (double) n;
-                    final int done = changed.size();
-                    Platform.runLater(() -> {
-                        progress.setProgress(frac);
-                        statusLabel.setText(
-                                String.format("Applying classifications… %,d cells", done));
-                    });
-                }
-
-                Platform.runLater(() -> {
-                    hierarchy.fireObjectClassificationsChangedEvent(this, changed);
-                    QuPathViewer viewer = qupath.getViewer();
-                    if (viewer != null) {
-                        viewer.repaint();
-                    }
-                    plot.redraw(); // refresh CLASS colouring on the plot
-                    statusLabel.setText(String.format(
-                            "Applied %d cluster→class mapping(s) to %,d cell(s).",
-                            mapping.size(), changed.size()));
-                });
-                logger.info("Applied cluster→class mapping to {} cells ({} clusters)",
-                        changed.size(), mapping.size());
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                Platform.runLater(() ->
-                        statusLabel.setText("Apply cancelled."));
-            } finally {
-                Platform.runLater(() -> {
-                    progress.setVisible(false);
-                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
-                    setControlsDisabled(false);
-                    applying = false;
-                });
-            }
-        }, "CellTune-ApplyClusters").start();
+                        },
+                        "CellTune-ApplyClusters")
+                .start();
     }
 
     private void setControlsDisabled(boolean disabled) {
         embeddingCombo.setDisable(disabled);
-        fullUmapCheck.setDisable(
-                disabled || embeddingCombo.getValue() != Embedding.UMAP);
+        fullUmapCheck.setDisable(disabled || embeddingCombo.getValue() != Embedding.UMAP);
         kSpinner.setDisable(disabled);
         annotationField.setDisable(disabled);
         classField.setDisable(disabled);
@@ -1211,8 +1245,7 @@ public class ScatterPlotView {
     private void switchToProjectScope() {
         var project = qupath.getProject();
         if (project == null) {
-            Dialogs.showErrorMessage("CellTune",
-                    "Open a project to cluster across multiple images.");
+            Dialogs.showErrorMessage("CellTune", "Open a project to cluster across multiple images.");
             imageScopeToggle.setSelected(true);
             return;
         }
@@ -1260,8 +1293,8 @@ public class ScatterPlotView {
         clearFit();
         applyScopeOverrides();
         statusLabel.setText(String.format(
-                "Picked %d image(s) — click “Re-sample” to draw a sample, then "
-                + "“Recompute” to cluster.", projectImages.size()));
+                "Picked %d image(s) — click “Re-sample” to draw a sample, then " + "“Recompute” to cluster.",
+                projectImages.size()));
         plot.redraw();
     }
 
@@ -1286,8 +1319,9 @@ public class ScatterPlotView {
                 statusLabel.setText("No image is open.");
                 return;
             }
-            List<PathObject> live = hierarchy.getObjects(null, PathObject.class)
-                    .stream().filter(PathObjectFilter.DETECTIONS_ALL).toList();
+            List<PathObject> live = hierarchy.getObjects(null, PathObject.class).stream()
+                    .filter(PathObjectFilter.DETECTIONS_ALL)
+                    .toList();
             java.util.Arrays.fill(selected, false);
             loadCurrentImageData(live);
             applyScopeOverrides();
@@ -1309,15 +1343,14 @@ public class ScatterPlotView {
             return;
         }
         try {
-            Integer parsed = factory.getConverter().fromString(
-                    spinner.getEditor().getText());
+            Integer parsed =
+                    factory.getConverter().fromString(spinner.getEditor().getText());
             if (parsed != null) {
                 factory.setValue(parsed);
             }
         } catch (RuntimeException ex) {
             // Unparseable text: restore the editor to the last valid value.
-            spinner.getEditor().setText(
-                    factory.getConverter().toString(factory.getValue()));
+            spinner.getEditor().setText(factory.getConverter().toString(factory.getValue()));
         }
     }
 
@@ -1346,49 +1379,54 @@ public class ScatterPlotView {
         progress.setVisible(true);
         progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
         setControlsDisabled(true);
-        statusLabel.setText(String.format(
-                "Sampling up to %,d cells across %d image(s)…", cap, images.size()));
+        statusLabel.setText(String.format("Sampling up to %,d cells across %d image(s)…", cap, images.size()));
 
-        new Thread(() -> {
-            try {
-                CohortClusterModel.SampleData sd = CohortClusterModel.sample(
-                        project, images, markerFeatures, cap, normalizer,
-                        msg -> Platform.runLater(() -> statusLabel.setText(msg)));
-                if (sd.sampledCells() < 2) {
-                    Platform.runLater(() -> {
-                        progress.setVisible(false);
-                        setControlsDisabled(false);
-                        statusLabel.setText(
-                                "Not enough cells sampled — staying on current image.");
-                        switchToImageScope();
-                    });
-                    return;
-                }
-                Platform.runLater(() -> {
-                    loadProjectData(sd);
-                    progress.setVisible(false);
-                    setControlsDisabled(false);
-                    applyScopeOverrides();
-                    if (clusterAfter) {
-                        recompute();
-                    } else {
-                        statusLabel.setText(String.format(
-                                "Sampled %,d cell(s) across %d image(s) — click "
-                                + "“Recompute” to cluster.",
-                                sd.sampledCells(), sd.imageCount()));
-                        plot.redraw();
-                    }
-                });
-            } catch (Throwable t) {
-                logger.error("Project sampling failed", t);
-                Platform.runLater(() -> {
-                    progress.setVisible(false);
-                    setControlsDisabled(false);
-                    statusLabel.setText("Sampling failed: " + t.getMessage());
-                    switchToImageScope();
-                });
-            }
-        }, "CellTune-CohortSample").start();
+        new Thread(
+                        () -> {
+                            try {
+                                CohortClusterModel.SampleData sd = CohortClusterModel.sample(
+                                        project,
+                                        images,
+                                        markerFeatures,
+                                        cap,
+                                        normalizer,
+                                        msg -> Platform.runLater(() -> statusLabel.setText(msg)));
+                                if (sd.sampledCells() < 2) {
+                                    Platform.runLater(() -> {
+                                        progress.setVisible(false);
+                                        setControlsDisabled(false);
+                                        statusLabel.setText("Not enough cells sampled — staying on current image.");
+                                        switchToImageScope();
+                                    });
+                                    return;
+                                }
+                                Platform.runLater(() -> {
+                                    loadProjectData(sd);
+                                    progress.setVisible(false);
+                                    setControlsDisabled(false);
+                                    applyScopeOverrides();
+                                    if (clusterAfter) {
+                                        recompute();
+                                    } else {
+                                        statusLabel.setText(String.format(
+                                                "Sampled %,d cell(s) across %d image(s) — click "
+                                                        + "“Recompute” to cluster.",
+                                                sd.sampledCells(), sd.imageCount()));
+                                        plot.redraw();
+                                    }
+                                });
+                            } catch (Throwable t) {
+                                logger.error("Project sampling failed", t);
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    setControlsDisabled(false);
+                                    statusLabel.setText("Sampling failed: " + t.getMessage());
+                                    switchToImageScope();
+                                });
+                            }
+                        },
+                        "CellTune-CohortSample")
+                .start();
     }
 
     // ── Small shared helpers ─────────────────────────────────────────────────────
@@ -1449,9 +1487,8 @@ public class ScatterPlotView {
                 sel++;
             }
         }
-        clusterMarkersBtn.setText(sel == total
-                ? "Cluster markers (all)"
-                : String.format("Cluster markers (%d/%d)", sel, total));
+        clusterMarkersBtn.setText(
+                sel == total ? "Cluster markers (all)" : String.format("Cluster markers (%d/%d)", sel, total));
     }
 
     /** Indices into {@link #markerFeatures} of the checked cluster markers. */
@@ -1535,8 +1572,7 @@ public class ScatterPlotView {
         pushOrHighlight(hit);
         plot.redraw();
         statusLabel.setText(String.format(
-                "Selected cluster %d — %,d cell(s)%s.", c, count,
-                scope == Scope.PROJECT ? " (plot highlight)" : ""));
+                "Selected cluster %d — %,d cell(s)%s.", c, count, scope == Scope.PROJECT ? " (plot highlight)" : ""));
     }
 
     // ── Viewer → plot selection sync ─────────────────────────────────────────────
@@ -1545,24 +1581,23 @@ public class ScatterPlotView {
         if (hierarchy == null) {
             return;
         }
-        selectionListener = (pathObjectSelected, previousObject, allSelected) ->
-                Platform.runLater(() -> {
-                    if (updatingSelection || scope == Scope.PROJECT) {
-                        // PROJECT scope: rows aren't the open image's live cells, so
-                        // there's nothing to mirror (and indexOf is null).
-                        return;
+        selectionListener = (pathObjectSelected, previousObject, allSelected) -> Platform.runLater(() -> {
+            if (updatingSelection || scope == Scope.PROJECT) {
+                // PROJECT scope: rows aren't the open image's live cells, so
+                // there's nothing to mirror (and indexOf is null).
+                return;
+            }
+            java.util.Arrays.fill(selected, false);
+            if (allSelected != null) {
+                for (PathObject o : allSelected) {
+                    Integer idx = indexOf.get(o);
+                    if (idx != null) {
+                        selected[idx] = true;
                     }
-                    java.util.Arrays.fill(selected, false);
-                    if (allSelected != null) {
-                        for (PathObject o : allSelected) {
-                            Integer idx = indexOf.get(o);
-                            if (idx != null) {
-                                selected[idx] = true;
-                            }
-                        }
-                    }
-                    plot.redraw();
-                });
+                }
+            }
+            plot.redraw();
+        });
         hierarchy.getSelectionModel().addPathObjectSelectionListener(selectionListener);
     }
 
@@ -1583,25 +1618,80 @@ public class ScatterPlotView {
      */
     private ScatterPlotCanvas.PlotModel asPlotModel() {
         return new ScatterPlotCanvas.PlotModel() {
-            @Override public int nRows() { return nRows; }
-            @Override public double[] ex() { return ex; }
-            @Override public double[] ey() { return ey; }
-            @Override public int[] cluster() { return cluster; }
-            @Override public boolean[] selected() { return selected; }
-            @Override public double[][] raw() { return raw; }
-            @Override public PathObject[] cells() { return cells; }
-            @Override public String[] rowClass() { return rowClass; }
-            @Override public PopulationSet predictions() { return predictions; }
-            @Override public List<String> markerFeatures() { return markerFeatures; }
-            @Override public boolean projectScope() { return scope == Scope.PROJECT; }
-            @Override public ScatterPlotCanvas.ColorMode colorMode() {
+            @Override
+            public int nRows() {
+                return nRows;
+            }
+
+            @Override
+            public double[] ex() {
+                return ex;
+            }
+
+            @Override
+            public double[] ey() {
+                return ey;
+            }
+
+            @Override
+            public int[] cluster() {
+                return cluster;
+            }
+
+            @Override
+            public boolean[] selected() {
+                return selected;
+            }
+
+            @Override
+            public double[][] raw() {
+                return raw;
+            }
+
+            @Override
+            public PathObject[] cells() {
+                return cells;
+            }
+
+            @Override
+            public String[] rowClass() {
+                return rowClass;
+            }
+
+            @Override
+            public PopulationSet predictions() {
+                return predictions;
+            }
+
+            @Override
+            public List<String> markerFeatures() {
+                return markerFeatures;
+            }
+
+            @Override
+            public boolean projectScope() {
+                return scope == Scope.PROJECT;
+            }
+
+            @Override
+            public ScatterPlotCanvas.ColorMode colorMode() {
                 return colorCombo.getValue();
             }
-            @Override public String embeddingName() {
+
+            @Override
+            public String embeddingName() {
                 return embeddingCombo.getValue().name();
             }
-            @Override public int clusterCount() { return kSpinner.getValue(); }
-            @Override public String markerName() { return markerCombo.getValue(); }
+
+            @Override
+            public int clusterCount() {
+                return kSpinner.getValue();
+            }
+
+            @Override
+            public String markerName() {
+                return markerCombo.getValue();
+            }
         };
     }
 
@@ -1629,13 +1719,12 @@ public class ScatterPlotView {
                 ? String.format("%,d cells", clustered)
                 : String.format("%,d clustered · %,d plotted", clustered, plotted);
         String scopeDesc = (scope == Scope.PROJECT)
-                ? String.format("Project sample (%d image%s)", projectImages.size(),
-                        projectImages.size() == 1 ? "" : "s")
+                ? String.format(
+                        "Project sample (%d image%s)", projectImages.size(), projectImages.size() == 1 ? "" : "s")
                 : imageName;
         statusLabel.setText(String.format(
                 "%s  ·  %s  ·  %s  ·  k=%d  ·  %,d selected%s",
-                scopeDesc, embeddingCombo.getValue(), counts,
-                kSpinner.getValue(), sel, statusNotice));
+                scopeDesc, embeddingCombo.getValue(), counts, kSpinner.getValue(), sel, statusNotice));
     }
 
     private void appendStatusNotice(String notice) {

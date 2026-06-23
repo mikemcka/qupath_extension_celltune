@@ -125,9 +125,7 @@ public final class RobustStats {
 
         if (!Double.isNaN(mad) && mad >= EPS) {
             for (int i = 0; i < values.length; i++) {
-                out[i] = Double.isNaN(values[i])
-                        ? Double.NaN
-                        : MAD_TO_SIGMA * (values[i] - median) / mad;
+                out[i] = Double.isNaN(values[i]) ? Double.NaN : MAD_TO_SIGMA * (values[i] - median) / mad;
             }
             return out;
         }

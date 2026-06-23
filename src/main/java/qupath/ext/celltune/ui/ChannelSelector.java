@@ -1,14 +1,13 @@
 package qupath.ext.celltune.ui;
 
+import java.util.List;
+import java.util.ResourceBundle;
 import javafx.scene.control.CheckBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.CellTypeTable;
 import qupath.lib.gui.QuPathGUI;
-
-import java.util.List;
-import java.util.ResourceBundle;
 
 /**
  * Optional auto-channel switching during review.
@@ -25,8 +24,7 @@ public class ChannelSelector {
 
     private static final Logger logger = LoggerFactory.getLogger(ChannelSelector.class);
 
-    private static final ResourceBundle STRINGS =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle STRINGS = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
 
     private final QuPathGUI qupath;
     private final CellTypeTable cellTypeTable;
@@ -44,7 +42,9 @@ public class ChannelSelector {
     }
 
     /** @return the checkbox that gates auto-switching; add it to your UI */
-    public CheckBox getCheckBox() { return autoSwitchCheckBox; }
+    public CheckBox getCheckBox() {
+        return autoSwitchCheckBox;
+    }
 
     /**
      * Apply channel switching for the current cell in the given review controller.
@@ -88,15 +88,12 @@ public class ChannelSelector {
                     .filter(m -> !m.isEmpty())
                     .toList();
 
-            logger.info("Auto-switch: looking for markers {} in {} channels",
-                    markerNames, channels.size());
+            logger.info("Auto-switch: looking for markers {} in {} channels", markerNames, channels.size());
 
             for (var ch : channels) {
                 String normCh = alphanumericNormalize(ch.getName());
                 boolean shouldShow = normMarkers.stream()
-                        .anyMatch(m -> normCh.equals(m)
-                                || normCh.contains(m)
-                                || m.contains(normCh));
+                        .anyMatch(m -> normCh.equals(m) || normCh.contains(m) || m.contains(normCh));
                 if (shouldShow) {
                     logger.info("  Showing channel: {}", ch.getName());
                 }

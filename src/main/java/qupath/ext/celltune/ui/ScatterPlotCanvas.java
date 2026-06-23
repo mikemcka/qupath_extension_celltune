@@ -1,5 +1,12 @@
 package qupath.ext.celltune.ui;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import javafx.scene.Cursor;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
@@ -17,14 +24,6 @@ import qupath.ext.celltune.model.ScatterMath;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
-import java.util.function.IntConsumer;
-
 /**
  * The visual layer of the cell scatter plot: owns the {@link Canvas}, renders the
  * embedding (axis frame, coloured dots, selection outlines, legend), and handles
@@ -37,7 +36,11 @@ import java.util.function.IntConsumer;
 final class ScatterPlotCanvas {
 
     /** How dots are coloured. */
-    enum ColorMode { CLUSTER, CLASS, MARKER }
+    enum ColorMode {
+        CLUSTER,
+        CLASS,
+        MARKER
+    }
 
     /**
      * Read-only view of the plotted rows the canvas draws. All index-aligned
@@ -46,25 +49,39 @@ final class ScatterPlotCanvas {
      */
     interface PlotModel {
         int nRows();
-        double[] ex();              // embedding x (NaN = not plotted)
-        double[] ey();              // embedding y
-        int[] cluster();            // k-means label per row (-1 = none)
-        boolean[] selected();       // plot highlight / viewer selection mirror
-        double[][] raw();           // [nRows][nMarkers] raw marker values
-        PathObject[] cells();       // live cells (null in project scope)
-        String[] rowClass();        // class name per row (project scope; else null)
+
+        double[] ex(); // embedding x (NaN = not plotted)
+
+        double[] ey(); // embedding y
+
+        int[] cluster(); // k-means label per row (-1 = none)
+
+        boolean[] selected(); // plot highlight / viewer selection mirror
+
+        double[][] raw(); // [nRows][nMarkers] raw marker values
+
+        PathObject[] cells(); // live cells (null in project scope)
+
+        String[] rowClass(); // class name per row (project scope; else null)
+
         PopulationSet predictions(); // colour-by-predicted-class source (nullable)
+
         List<String> markerFeatures();
+
         boolean projectScope();
+
         ColorMode colorMode();
-        String embeddingName();     // axis label, e.g. "PCA" / "UMAP"
-        int clusterCount();         // k
-        String markerName();        // selected marker for MARKER mode (nullable)
+
+        String embeddingName(); // axis label, e.g. "PCA" / "UMAP"
+
+        int clusterCount(); // k
+
+        String markerName(); // selected marker for MARKER mode (nullable)
     }
 
     private static final int DOT_RADIUS = 3;
     private static final double PLOT_MARGIN_LEFT = 56;
-    private static final double PLOT_MARGIN_RIGHT = 150;  // room for legend
+    private static final double PLOT_MARGIN_RIGHT = 150; // room for legend
     private static final double PLOT_MARGIN_TOP = 30;
     private static final double PLOT_MARGIN_BOTTOM = 48;
     private static final Font AXIS_FONT = Font.font("SansSerif", 12);
@@ -102,9 +119,12 @@ final class ScatterPlotCanvas {
      * @param onLegendClusterClicked invoked with the cluster index of a legend click
      * @param afterRedraw            invoked after each successful redraw (status refresh)
      */
-    ScatterPlotCanvas(PlotModel model, BooleanSupplier lassoMode,
-                      Consumer<boolean[]> onRegionGesture,
-                      IntConsumer onLegendClusterClicked, Runnable afterRedraw) {
+    ScatterPlotCanvas(
+            PlotModel model,
+            BooleanSupplier lassoMode,
+            Consumer<boolean[]> onRegionGesture,
+            IntConsumer onLegendClusterClicked,
+            Runnable afterRedraw) {
         this.model = model;
         this.lassoMode = lassoMode;
         this.onRegionGesture = onRegionGesture;
@@ -206,8 +226,7 @@ final class ScatterPlotCanvas {
             }
             double px = sx(ex[i], left, right);
             double py = sy(ey[i], top, bottom);
-            gc.strokeOval(px - DOT_RADIUS - 1, py - DOT_RADIUS - 1,
-                    (DOT_RADIUS + 1) * 2, (DOT_RADIUS + 1) * 2);
+            gc.strokeOval(px - DOT_RADIUS - 1, py - DOT_RADIUS - 1, (DOT_RADIUS + 1) * 2, (DOT_RADIUS + 1) * 2);
         }
 
         drawLegend(gc, right + 12, top, mode);
@@ -328,8 +347,7 @@ final class ScatterPlotCanvas {
             return Color.gray(0.6);
         }
         double[][] raw = model.raw();
-        double t = (markerHi - markerLo < 1e-9)
-                ? 0.5 : (raw[i][markerColIdx] - markerLo) / (markerHi - markerLo);
+        double t = (markerHi - markerLo < 1e-9) ? 0.5 : (raw[i][markerColIdx] - markerLo) / (markerHi - markerLo);
         return gradient(t);
     }
 
@@ -428,8 +446,7 @@ final class ScatterPlotCanvas {
                 return pred.avgLabel();
             }
         }
-        return cells[i].getPathClass() != null
-                ? cells[i].getPathClass().getName() : "unlabelled";
+        return cells[i].getPathClass() != null ? cells[i].getPathClass().getName() : "unlabelled";
     }
 
     private Color classColorForLabel(String label) {
@@ -462,7 +479,7 @@ final class ScatterPlotCanvas {
         dragCurX = e.getX();
         dragCurY = e.getY();
         lassoPoints.clear();
-        lassoPoints.add(new double[]{e.getX(), e.getY()});
+        lassoPoints.add(new double[] {e.getX(), e.getY()});
         // Cache the rendered scene so drag frames are cheap.
         SnapshotParameters params = new SnapshotParameters();
         params.setFill(Color.WHITE);
@@ -483,7 +500,7 @@ final class ScatterPlotCanvas {
         gc.setLineWidth(1.5);
         gc.setFill(Color.web("#1565c0", 0.12));
         if (lassoMode.getAsBoolean()) {
-            lassoPoints.add(new double[]{e.getX(), e.getY()});
+            lassoPoints.add(new double[] {e.getX(), e.getY()});
             gc.beginPath();
             gc.moveTo(lassoPoints.get(0)[0], lassoPoints.get(0)[1]);
             for (int p = 1; p < lassoPoints.size(); p++) {

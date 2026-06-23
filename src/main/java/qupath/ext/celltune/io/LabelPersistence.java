@@ -1,11 +1,6 @@
 package qupath.ext.celltune.io;
 
 import com.google.gson.JsonSyntaxException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +10,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.lib.projects.Project;
 
 /**
  * Per-image ground-truth label persistence (multi-class and binary-scoped) plus
@@ -44,9 +43,7 @@ final class LabelPersistence {
      * image's in-memory labels are merged with any per-image label files on disk
      * so the backup captures every labelled cell with its originating image.
      */
-    static Path backupLabels(Project<?> project,
-                             String currentImageName,
-                             LabelStore currentLabels) throws IOException {
+    static Path backupLabels(Project<?> project, String currentImageName, LabelStore currentLabels) throws IOException {
         Path dir = ProjectStateManager.getCellTuneDir(project);
         String filename = "labels_backup_" + LocalDateTime.now().format(ProjectStateManager.TIMESTAMP_FMT) + ".json";
         Path outPath = dir.resolve(filename);
@@ -96,16 +93,13 @@ final class LabelPersistence {
         }
 
         Files.writeString(outPath, ProjectStateManager.GSON.toJson(records), StandardCharsets.UTF_8);
-        logger.info("Backed up {} labels across {} image(s) to {}",
-                records.size(), byImage.size(), outPath);
+        logger.info("Backed up {} labels across {} image(s) to {}", records.size(), byImage.size(), outPath);
         return outPath;
     }
 
     // ── Multi-class per-image labels (no scope) ──────────────────────────────────
 
-    static Path saveImageLabels(Project<?> project,
-                                String imageName,
-                                LabelStore labelStore) throws IOException {
+    static Path saveImageLabels(Project<?> project, String imageName, LabelStore labelStore) throws IOException {
         Path dir = ProjectStateManager.getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
         Files.createDirectories(dir);
 
@@ -118,8 +112,7 @@ final class LabelPersistence {
         return outPath;
     }
 
-    static LabelStore loadImageLabels(Project<?> project,
-                                      String imageName) throws IOException {
+    static LabelStore loadImageLabels(Project<?> project, String imageName) throws IOException {
         Path dir = ProjectStateManager.getCellTuneDir(project).resolve(IMAGE_LABELS_DIR);
         String safeFileName = ProjectStateManager.sanitiseFileName(imageName) + ".json";
         Path filePath = dir.resolve(safeFileName);
@@ -168,24 +161,24 @@ final class LabelPersistence {
         return ctDir.resolve(BINARY_IMAGE_LABELS_DIR).resolve(safeScope);
     }
 
-    static Path saveImageLabels(Project<?> project,
-                                String scope,
-                                String imageName,
-                                LabelStore labelStore) throws IOException {
+    static Path saveImageLabels(Project<?> project, String scope, String imageName, LabelStore labelStore)
+            throws IOException {
         Path dir = resolveImageLabelsDir(project, scope);
         Files.createDirectories(dir);
         String safeFileName = ProjectStateManager.sanitiseFileName(imageName) + ".json";
         Path outPath = dir.resolve(safeFileName);
         String json = ProjectStateManager.GSON.toJson(labelStore.getAllLabels());
         Files.writeString(outPath, json, StandardCharsets.UTF_8);
-        logger.info("Saved {} labels for image '{}' (scope='{}') to {}",
-                labelStore.size(), imageName, scope == null ? "" : scope, outPath);
+        logger.info(
+                "Saved {} labels for image '{}' (scope='{}') to {}",
+                labelStore.size(),
+                imageName,
+                scope == null ? "" : scope,
+                outPath);
         return outPath;
     }
 
-    static LabelStore loadImageLabels(Project<?> project,
-                                      String scope,
-                                      String imageName) throws IOException {
+    static LabelStore loadImageLabels(Project<?> project, String scope, String imageName) throws IOException {
         Path dir = resolveImageLabelsDir(project, scope);
         Path filePath = dir.resolve(ProjectStateManager.sanitiseFileName(imageName) + ".json");
         if (!Files.exists(filePath)) return null;
@@ -202,8 +195,11 @@ final class LabelPersistence {
             Path filePath = dir.resolve(ProjectStateManager.sanitiseFileName(imageName) + ".json");
             return Files.exists(filePath);
         } catch (IOException e) {
-            logger.debug("hasImageLabels: cannot resolve label path for '{}' (scope '{}'): {}",
-                    imageName, scope, e.getMessage());
+            logger.debug(
+                    "hasImageLabels: cannot resolve label path for '{}' (scope '{}'): {}",
+                    imageName,
+                    scope,
+                    e.getMessage());
             return false;
         }
     }
@@ -212,8 +208,7 @@ final class LabelPersistence {
         Path dir = resolveImageLabelsDir(project, scope);
         if (!Files.isDirectory(dir)) return List.of();
         try (var stream = Files.list(dir)) {
-            return stream
-                    .filter(p -> p.getFileName().toString().endsWith(".json"))
+            return stream.filter(p -> p.getFileName().toString().endsWith(".json"))
                     .filter(Files::isRegularFile)
                     .sorted()
                     .toList();

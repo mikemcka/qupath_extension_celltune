@@ -1,11 +1,5 @@
 package qupath.ext.celltune.io;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.objects.classes.PathClass;
-import qupath.lib.objects.PathObject;
-import qupath.lib.roi.interfaces.ROI;
-
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +9,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.IntStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.roi.interfaces.ROI;
 
 /**
  * Exports cell spatial data and marker intensities to CSV.
@@ -62,15 +61,17 @@ public class CellTableExporter {
      *                           written in pixel coordinates ({@code Geometry_px})
      * @throws IOException if writing fails
      */
-    public static void export(Path outputPath,
-                              Collection<PathObject> cells,
-                              Collection<PathObject> annotations,
-                              String imageName,
-                              List<String> featureNames,
-                              double pixelWidthMicrons,
-                              double pixelHeightMicrons,
-                              boolean includeGeometry,
-                              boolean geometryInMicrons) throws IOException {
+    public static void export(
+            Path outputPath,
+            Collection<PathObject> cells,
+            Collection<PathObject> annotations,
+            String imageName,
+            List<String> featureNames,
+            double pixelWidthMicrons,
+            double pixelHeightMicrons,
+            boolean includeGeometry,
+            boolean geometryInMicrons)
+            throws IOException {
         logger.info("Exporting cell table ({} features) to {}", featureNames.size(), outputPath);
 
         String resolvedImageName = (imageName != null && !imageName.isBlank()) ? imageName : "image";
@@ -79,7 +80,8 @@ public class CellTableExporter {
 
             // ── Header ──────────────────────────────────────────────────
             StringBuilder hdr = new StringBuilder();
-            hdr.append(String.join(DELIMITER,
+            hdr.append(String.join(
+                    DELIMITER,
                     "Image",
                     "CellID",
                     "CentroidX_um",
@@ -98,23 +100,21 @@ public class CellTableExporter {
             writer.newLine();
 
             // ── Pre-extract features in parallel ────────────────────────
-            List<PathObject> cellList = (cells instanceof List<PathObject> l)
-                    ? l : new ArrayList<>(cells);
+            List<PathObject> cellList = (cells instanceof List<PathObject> l) ? l : new ArrayList<>(cells);
             int nCells = cellList.size();
 
             float[][] featureRows = new float[nCells][];
             if (!featureNames.isEmpty()) {
-                IntStream.range(0, nCells).parallel().forEach(i ->
-                        featureRows[i] = extractFeatures(cellList.get(i), featureNames));
+                IntStream.range(0, nCells)
+                        .parallel()
+                        .forEach(i -> featureRows[i] = extractFeatures(cellList.get(i), featureNames));
             }
 
             // ── Pre-compute geometric containment in parallel ───────────
             // Test each cell's pixel centroid against every annotation ROI so
             // that membership in overlapping annotations (e.g. Ignore regions)
             // is captured, unlike the single-parent hierarchy.
-            List<PathObject> annoList = annotations == null
-                    ? List.of()
-                    : new ArrayList<>(annotations);
+            List<PathObject> annoList = annotations == null ? List.of() : new ArrayList<>(annotations);
             int nAnnos = annoList.size();
             ROI[] annoRois = new ROI[nAnnos];
             String[] annoLabels = new String[nAnnos];
@@ -124,9 +124,9 @@ public class CellTableExporter {
             }
             String[] containingRows = new String[nCells];
             if (nAnnos > 0) {
-                IntStream.range(0, nCells).parallel().forEach(i ->
-                        containingRows[i] = containingAnnotations(
-                                cellList.get(i), annoRois, annoLabels));
+                IntStream.range(0, nCells)
+                        .parallel()
+                        .forEach(i -> containingRows[i] = containingAnnotations(cellList.get(i), annoRois, annoLabels));
             }
 
             // ── Rows ────────────────────────────────────────────────────
@@ -150,24 +150,29 @@ public class CellTableExporter {
                 // converting the pixel area with the supplied pixel calibration.
                 double area = ml.get("Cell: Area µm^2");
                 if (Double.isNaN(area)) {
-                    area = roi != null
-                            ? roi.getArea() * pixelWidthMicrons * pixelHeightMicrons
-                            : Double.NaN;
+                    area = roi != null ? roi.getArea() * pixelWidthMicrons * pixelHeightMicrons : Double.NaN;
                 }
 
                 String classification = classificationName(cell);
-                String parents        = parentAnnotations(cell);
-                String containing     = (containingRows[idx] != null) ? containingRows[idx] : "";
+                String parents = parentAnnotations(cell);
+                String containing = (containingRows[idx] != null) ? containingRows[idx] : "";
 
                 StringBuilder row = new StringBuilder();
-                row.append(resolvedImageName).append(DELIMITER)
-                   .append(cell.getID()).append(DELIMITER)
-                   .append(fmt(cx)).append(DELIMITER)
-                   .append(fmt(cy)).append(DELIMITER)
-                   .append(fmt(area)).append(DELIMITER)
-                   .append(csvQuote(classification)).append(DELIMITER)
-                   .append(csvQuote(parents)).append(DELIMITER)
-                   .append(csvQuote(containing));
+                row.append(resolvedImageName)
+                        .append(DELIMITER)
+                        .append(cell.getID())
+                        .append(DELIMITER)
+                        .append(fmt(cx))
+                        .append(DELIMITER)
+                        .append(fmt(cy))
+                        .append(DELIMITER)
+                        .append(fmt(area))
+                        .append(DELIMITER)
+                        .append(csvQuote(classification))
+                        .append(DELIMITER)
+                        .append(csvQuote(parents))
+                        .append(DELIMITER)
+                        .append(csvQuote(containing));
 
                 if (includeGeometry) {
                     double scaleX = geometryInMicrons ? pixelWidthMicrons : 1.0;
@@ -249,8 +254,8 @@ public class CellTableExporter {
      * "Annotation" when neither a name nor a class is present.
      */
     private static String annotationLabel(PathObject annotation) {
-        String name    = annotation.getName();
-        PathClass cls  = annotation.getPathClass();
+        String name = annotation.getName();
+        PathClass cls = annotation.getPathClass();
         String clsName = cls != null ? cls.getName() : null;
         if (name != null && !name.isBlank() && clsName != null) {
             return name + " [" + clsName + "]";
@@ -283,14 +288,14 @@ public class CellTableExporter {
         for (int i = 0; i < points.size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append(String.format("%.2f", points.get(i).getX() * pixelWidthMicrons))
-              .append(" ")
-              .append(String.format("%.2f", points.get(i).getY() * pixelHeightMicrons));
+                    .append(" ")
+                    .append(String.format("%.2f", points.get(i).getY() * pixelHeightMicrons));
         }
         // Close the ring (WKT requires first == last point)
         sb.append(", ")
-          .append(String.format("%.2f", points.get(0).getX() * pixelWidthMicrons))
-          .append(" ")
-          .append(String.format("%.2f", points.get(0).getY() * pixelHeightMicrons));
+                .append(String.format("%.2f", points.get(0).getX() * pixelWidthMicrons))
+                .append(" ")
+                .append(String.format("%.2f", points.get(0).getY() * pixelHeightMicrons));
         sb.append("))");
         return sb.toString();
     }

@@ -1,5 +1,11 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -14,6 +20,7 @@ import org.locationtech.jts.index.strtree.ItemDistance;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.util.BackgroundExecutors;
 import qupath.lib.analysis.DistanceTools;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
@@ -23,14 +30,6 @@ import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassTools;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.util.*;
-import java.util.concurrent.ExecutorService;
-import qupath.ext.celltune.util.BackgroundExecutors;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * Project-wide batch dialog that runs distance-measurement computations on the
@@ -58,17 +57,14 @@ public class DistanceMeasurementsDialog {
     private final Stage stage;
 
     private final Map<String, CheckBox> imageCheckBoxes = new LinkedHashMap<>();
-    private final CheckBox annotationDistCheck = new CheckBox(
-            "Detection-to-annotation signed distances");
-    private final CheckBox crossClassCheck = new CheckBox(
-            "Cross-class centroid distances");
-    private final CheckBox sameClassCheck = new CheckBox(
-            "Same-class nearest-neighbour distances (excludes self)");
+    private final CheckBox annotationDistCheck = new CheckBox("Detection-to-annotation signed distances");
+    private final CheckBox crossClassCheck = new CheckBox("Cross-class centroid distances");
+    private final CheckBox sameClassCheck = new CheckBox("Same-class nearest-neighbour distances (excludes self)");
     private final TextField pixelSizeField = new TextField();
-    private final CheckBox updateCalibrationCheck = new CheckBox(
-            "Persist this pixel size to each image's calibration on save");
-    private final CheckBox skipCompletedCheck = new CheckBox(
-            "Skip images where all selected measurements already exist");
+    private final CheckBox updateCalibrationCheck =
+            new CheckBox("Persist this pixel size to each image's calibration on save");
+    private final CheckBox skipCompletedCheck =
+            new CheckBox("Skip images where all selected measurements already exist");
     private final Spinner<Integer> workerSpinner = new Spinner<>();
 
     private final TextArea logArea = new TextArea();
@@ -105,7 +101,8 @@ public class DistanceMeasurementsDialog {
                 if (cal.hasPixelSizeMicrons()) {
                     defaultPixelSize = cal.getPixelWidthMicrons();
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         final String currentImageNameFinal = currentImageName;
 
@@ -138,8 +135,8 @@ public class DistanceMeasurementsDialog {
         Button selectCurrentImg = new Button("Current only");
         selectAllImgs.setOnAction(e -> imageCheckBoxes.values().forEach(cb -> cb.setSelected(true)));
         selectNoneImgs.setOnAction(e -> imageCheckBoxes.values().forEach(cb -> cb.setSelected(false)));
-        selectCurrentImg.setOnAction(e -> imageCheckBoxes.forEach((n, cb) ->
-                cb.setSelected(n.equals(currentImageNameFinal))));
+        selectCurrentImg.setOnAction(
+                e -> imageCheckBoxes.forEach((n, cb) -> cb.setSelected(n.equals(currentImageNameFinal))));
         HBox imgButtons = new HBox(6, new Label("Images:"), selectAllImgs, selectNoneImgs, selectCurrentImg);
         imgButtons.setAlignment(Pos.CENTER_LEFT);
 
@@ -147,15 +144,14 @@ public class DistanceMeasurementsDialog {
         annotationDistCheck.setSelected(true);
         crossClassCheck.setSelected(true);
         sameClassCheck.setSelected(true);
-        annotationDistCheck.setTooltip(new Tooltip(
-                "Calls QuPath's DistanceTools.detectionToAnnotationDistancesSigned.\n"
-              + "Negative when the detection centroid lies inside the annotation, positive when outside."));
-        crossClassCheck.setTooltip(new Tooltip(
-                "Calls QuPath's DistanceTools.detectionCentroidDistances.\n"
-              + "For each cell, writes the nearest centroid-to-centroid distance to a cell of every OTHER class."));
+        annotationDistCheck.setTooltip(
+                new Tooltip("Calls QuPath's DistanceTools.detectionToAnnotationDistancesSigned.\n"
+                        + "Negative when the detection centroid lies inside the annotation, positive when outside."));
+        crossClassCheck.setTooltip(new Tooltip("Calls QuPath's DistanceTools.detectionCentroidDistances.\n"
+                + "For each cell, writes the nearest centroid-to-centroid distance to a cell of every OTHER class."));
         sameClassCheck.setTooltip(new Tooltip(
                 "For each cell, finds the nearest cell of the SAME class (excluding itself) and writes the distance under\n"
-              + "'Distance to other <class> <unit>'. Parallelised across CPU cores per class."));
+                        + "'Distance to other <class> <unit>'. Parallelised across CPU cores per class."));
 
         // ── Pixel size override ──
         pixelSizeField.setPromptText("e.g. 0.5");
@@ -172,25 +168,29 @@ public class DistanceMeasurementsDialog {
             pxSourceMsg = "Pre-filled from " + srcName + " (" + formatPixelSize(defaultPixelSize)
                     + " µm/pixel) — edit if incorrect. ";
         } else if (liveImageData != null) {
-            pxSourceMsg = "No pixel size found in the current image's metadata — enter one manually if you want µm units. ";
+            pxSourceMsg =
+                    "No pixel size found in the current image's metadata — enter one manually if you want µm units. ";
         } else {
             pxSourceMsg = "";
         }
-        Label pxHint = new Label(pxSourceMsg
-                + "Leave blank to use each image's existing calibration. If supplied, the override applies to every selected image.");
+        Label pxHint = new Label(
+                pxSourceMsg
+                        + "Leave blank to use each image's existing calibration. If supplied, the override applies to every selected image.");
         pxHint.setWrapText(true);
         pxHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
 
         updateCalibrationCheck.setSelected(false);
-        updateCalibrationCheck.setTooltip(new Tooltip(
-                "When checked, the pixel size above is saved into each image's calibration metadata,\n"
-              + "so future measurements also use this scale. When unchecked, the override is reverted after the run."));
+        updateCalibrationCheck.setTooltip(
+                new Tooltip(
+                        "When checked, the pixel size above is saved into each image's calibration metadata,\n"
+                                + "so future measurements also use this scale. When unchecked, the override is reverted after the run."));
 
         skipCompletedCheck.setSelected(true);
-        skipCompletedCheck.setTooltip(new Tooltip(
-                "Before computing, scans every cell in the image. If all cells already carry every\n"
-              + "measurement the selected computations would produce, the image is skipped entirely —\n"
-              + "no recompute and no re-save. Uncheck to force recomputation (e.g. after changing classes)."));
+        skipCompletedCheck.setTooltip(
+                new Tooltip(
+                        "Before computing, scans every cell in the image. If all cells already carry every\n"
+                                + "measurement the selected computations would produce, the image is skipped entirely —\n"
+                                + "no recompute and no re-save. Uncheck to force recomputation (e.g. after changing classes)."));
 
         // ── Parallel image workers ──
         int cores = Runtime.getRuntime().availableProcessors();
@@ -199,16 +199,15 @@ public class DistanceMeasurementsDialog {
                 new SpinnerValueFactory.IntegerSpinnerValueFactory(1, Math.max(1, cores), defaultWorkers));
         workerSpinner.setEditable(true);
         workerSpinner.setPrefWidth(80);
-        workerSpinner.setTooltip(new Tooltip(
-                "How many images are processed at the same time.\n"
-              + "Each image's heavy distance maths already spreads across all CPU cores, so more\n"
-              + "workers mainly overlaps image loading/saving (I/O) with computation."));
-        HBox workerRow = new HBox(6, new Label("Parallel image workers:"), workerSpinner,
-                new Label("(of " + cores + " cores)"));
+        workerSpinner.setTooltip(new Tooltip("How many images are processed at the same time.\n"
+                + "Each image's heavy distance maths already spreads across all CPU cores, so more\n"
+                + "workers mainly overlaps image loading/saving (I/O) with computation."));
+        HBox workerRow =
+                new HBox(6, new Label("Parallel image workers:"), workerSpinner, new Label("(of " + cores + " cores)"));
         workerRow.setAlignment(Pos.CENTER_LEFT);
         Label workerHint = new Label(
                 "1–2 workers is often fastest for large images, ie 500k+ cells, use more workers for smaller images. "
-              + "Default: " + defaultWorkers + ".");
+                        + "Default: " + defaultWorkers + ".");
         workerHint.setWrapText(true);
         workerHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
 
@@ -229,7 +228,8 @@ public class DistanceMeasurementsDialog {
         buttons.setPadding(new Insets(4, 0, 0, 0));
 
         // ── Root layout ──
-        VBox root = new VBox(10,
+        VBox root = new VBox(
+                10,
                 imgButtons,
                 imageScroll,
                 new Separator(),
@@ -288,16 +288,15 @@ public class DistanceMeasurementsDialog {
             return;
         }
 
-        if (!annotationDistCheck.isSelected()
-                && !crossClassCheck.isSelected()
-                && !sameClassCheck.isSelected()) {
+        if (!annotationDistCheck.isSelected() && !crossClassCheck.isSelected() && !sameClassCheck.isSelected()) {
             log("Select at least one measurement type.");
             return;
         }
 
         // Pixel size override (optional)
         Double pixelSizeOverride = null;
-        String pxText = pixelSizeField.getText() == null ? "" : pixelSizeField.getText().trim();
+        String pxText =
+                pixelSizeField.getText() == null ? "" : pixelSizeField.getText().trim();
         if (!pxText.isEmpty()) {
             try {
                 pixelSizeOverride = Double.parseDouble(pxText);
@@ -329,50 +328,69 @@ public class DistanceMeasurementsDialog {
         @SuppressWarnings("unchecked")
         var typedProject = (Project<BufferedImage>) (Object) project;
 
-        Thread worker = new Thread(() -> {
-            int cores = Runtime.getRuntime().availableProcessors();
-            int nThreads = Math.min(selectedImages.size(), workers);
-            log("Using " + nThreads + " parallel image worker(s) (cores=" + cores + ").");
-            ExecutorService pool = BackgroundExecutors.newFixedPool(nThreads, "CellTune-Distances");
-            AtomicInteger done = new AtomicInteger();
-            int total = selectedImages.size();
+        Thread worker = new Thread(
+                () -> {
+                    int cores = Runtime.getRuntime().availableProcessors();
+                    int nThreads = Math.min(selectedImages.size(), workers);
+                    log("Using " + nThreads + " parallel image worker(s) (cores=" + cores + ").");
+                    ExecutorService pool = BackgroundExecutors.newFixedPool(nThreads, "CellTune-Distances");
+                    AtomicInteger done = new AtomicInteger();
+                    int total = selectedImages.size();
 
-            List<Future<?>> futures = new ArrayList<>();
-            for (String imgName : selectedImages) {
-                futures.add(pool.submit(() -> {
-                    try {
-                        processOne(typedProject, imgName, doAnn, doCross, doSame, pxSize, persistCal, skipCompleted);
-                    } catch (Exception ex) {
-                        log("[" + imgName + "] ERROR: " + ex.getMessage());
-                        logger.warn("Distance computation failed for {}", imgName, ex);
-                    } finally {
-                        int d = done.incrementAndGet();
-                        Platform.runLater(() -> {
-                            progressBar.setProgress((double) d / total);
-                            statusLabel.setText("Processed " + d + " / " + total);
-                        });
+                    List<Future<?>> futures = new ArrayList<>();
+                    for (String imgName : selectedImages) {
+                        futures.add(pool.submit(() -> {
+                            try {
+                                processOne(
+                                        typedProject,
+                                        imgName,
+                                        doAnn,
+                                        doCross,
+                                        doSame,
+                                        pxSize,
+                                        persistCal,
+                                        skipCompleted);
+                            } catch (Exception ex) {
+                                log("[" + imgName + "] ERROR: " + ex.getMessage());
+                                logger.warn("Distance computation failed for {}", imgName, ex);
+                            } finally {
+                                int d = done.incrementAndGet();
+                                Platform.runLater(() -> {
+                                    progressBar.setProgress((double) d / total);
+                                    statusLabel.setText("Processed " + d + " / " + total);
+                                });
+                            }
+                        }));
                     }
-                }));
-            }
 
-            pool.shutdown();
-            for (var f : futures) {
-                try { f.get(); } catch (Exception ignored) {}
-            }
+                    pool.shutdown();
+                    for (var f : futures) {
+                        try {
+                            f.get();
+                        } catch (Exception ignored) {
+                        }
+                    }
 
-            Platform.runLater(() -> {
-                log("Done.");
-                applyBtn.setDisable(false);
-            });
-        }, "CellTune-Distances-Coordinator");
+                    Platform.runLater(() -> {
+                        log("Done.");
+                        applyBtn.setDisable(false);
+                    });
+                },
+                "CellTune-Distances-Coordinator");
         worker.setDaemon(true);
         worker.start();
     }
 
-    private void processOne(Project<BufferedImage> project,
-                            String imgName,
-                            boolean doAnn, boolean doCross, boolean doSame,
-                            Double pxSize, boolean persistCal, boolean skipCompleted) throws Exception {
+    private void processOne(
+            Project<BufferedImage> project,
+            String imgName,
+            boolean doAnn,
+            boolean doCross,
+            boolean doSame,
+            Double pxSize,
+            boolean persistCal,
+            boolean skipCompleted)
+            throws Exception {
         var entryOpt = project.getImageList().stream()
                 .filter(e -> imgName.equals(e.getImageName()))
                 .findFirst();
@@ -415,7 +433,8 @@ public class DistanceMeasurementsDialog {
                     log("[" + imgName + "] pixel size set to " + pxSize + " µm/pixel");
                 }
             } catch (Exception ex) {
-                log("[" + imgName + "] WARN: could not override pixel calibration (" + ex.getMessage() + "); using existing");
+                log("[" + imgName + "] WARN: could not override pixel calibration (" + ex.getMessage()
+                        + "); using existing");
             }
         }
 
@@ -430,8 +449,7 @@ public class DistanceMeasurementsDialog {
             }
             if (doSame) {
                 log("[" + imgName + "] Same-class nearest-neighbour distances…");
-                computeSameClassDistances(imageData,
-                        msg -> log("[" + imgName + "] " + msg));
+                computeSameClassDistances(imageData, msg -> log("[" + imgName + "] " + msg));
             }
         } finally {
             if (originalMeta != null && !persistCal) {
@@ -471,14 +489,12 @@ public class DistanceMeasurementsDialog {
      * image's existing calibration is used. Returns {@code false} when there is
      * nothing to compute (so the caller takes the normal, cheap path).
      */
-    private static boolean alreadyComplete(ImageData<?> imageData,
-                                           boolean doAnn, boolean doCross, boolean doSame,
-                                           Double pxSize) {
+    private static boolean alreadyComplete(
+            ImageData<?> imageData, boolean doAnn, boolean doCross, boolean doSame, Double pxSize) {
         var hierarchy = imageData.getHierarchy();
         var cells = hierarchy.getCellObjects();
         var detections = cells.isEmpty() ? hierarchy.getDetectionObjects() : cells;
-        if (detections.isEmpty())
-            return false;
+        if (detections.isEmpty()) return false;
 
         var cal = imageData.getServer().getPixelCalibration();
         boolean willBeMicrons = pxSize != null || cal.hasPixelSizeMicrons();
@@ -503,27 +519,23 @@ public class DistanceMeasurementsDialog {
         if (doSame) {
             for (var cell : cells) {
                 var pc = cell.getPathClass();
-                if (pc != null)
-                    sameClassCounts.merge(pc.toString(), 1, Integer::sum);
+                if (pc != null) sameClassCounts.merge(pc.toString(), 1, Integer::sum);
             }
         }
         boolean anySameClass = sameClassCounts.values().stream().anyMatch(c -> c >= 2);
 
-        if (globalExpected.isEmpty() && !anySameClass)
-            return false;
+        if (globalExpected.isEmpty() && !anySameClass) return false;
 
         for (var cell : detections) {
             var ml = cell.getMeasurementList();
             for (var name : globalExpected) {
-                if (!ml.containsKey(name))
-                    return false;
+                if (!ml.containsKey(name)) return false;
             }
             if (anySameClass) {
                 var pc = cell.getPathClass();
                 if (pc != null) {
                     Integer cnt = sameClassCounts.get(pc.toString());
-                    if (cnt != null && cnt >= 2
-                            && !ml.containsKey("Distance to other " + pc + " " + unitSame))
+                    if (cnt != null && cnt >= 2 && !ml.containsKey("Distance to other " + pc + " " + unitSame))
                         return false;
                 }
             }
@@ -536,8 +548,7 @@ public class DistanceMeasurementsDialog {
         Set<PathClass> set = new LinkedHashSet<>();
         for (var o : objects) {
             var pc = o.getPathClass();
-            if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc))
-                set.add(pc);
+            if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) set.add(pc);
         }
         return set;
     }
@@ -553,8 +564,7 @@ public class DistanceMeasurementsDialog {
      * so the result is guaranteed to be a different cell of the same class.
      * Comfortably handles classes with hundreds of thousands of cells.
      */
-    private static void computeSameClassDistances(ImageData<?> imageData,
-                                                  java.util.function.Consumer<String> log) {
+    private static void computeSameClassDistances(ImageData<?> imageData, java.util.function.Consumer<String> log) {
         var hierarchy = imageData.getHierarchy();
         var cal = imageData.getServer().getPixelCalibration();
         boolean calibrated = cal.hasPixelSizeMicrons();
@@ -599,8 +609,7 @@ public class DistanceMeasurementsDialog {
             for (int i = 0; i < n; i++) {
                 cells.get(i).getMeasurementList().put(mname, distances[i]);
             }
-            log.accept(String.format(Locale.US, "  %s: %d cells in %d ms → %s",
-                    className, n, elapsed, mname));
+            log.accept(String.format(Locale.US, "  %s: %d cells in %d ms → %s", className, n, elapsed, mname));
         }
     }
 

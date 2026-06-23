@@ -1,5 +1,23 @@
 package qupath.ext.celltune;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.ResourceBundle;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
@@ -34,25 +52,6 @@ import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.ResourceBundle;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
  * Cell-table / ground-truth / marker-table import &amp; export, lifted out of
  * {@code CellTuneExtension} (mirroring the {@code UtilityScripts}/{@code AnalysisViews} moves).
@@ -65,8 +64,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 final class ImportExport {
 
-    private static final ResourceBundle resources =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle resources = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
     private static final String EXTENSION_NAME = resources.getString("name");
     private static final Logger logger = LoggerFactory.getLogger(ImportExport.class);
 
@@ -76,9 +74,8 @@ final class ImportExport {
     private record ExportFeatureOptions(boolean includeRaw, boolean includeNorm) {}
 
     /** New session state produced by a ground-truth import, applied back by the caller. */
-    record GroundTruthImportResult(LabelStore labelStore,
-                                   List<GroundTruthIO.TrainingRow> importedRows,
-                                   List<String> importedFeatureNames) {}
+    record GroundTruthImportResult(
+            LabelStore labelStore, List<GroundTruthIO.TrainingRow> importedRows, List<String> importedFeatureNames) {}
 
     /**
      * Show a dialog letting the user choose which feature columns to include.
@@ -161,8 +158,7 @@ final class ImportExport {
         // Column + polygon options — discover features from the current image so
         // the user can choose which measurement columns to export (mirrors the
         // Select Features dialog) and whether to include cell polygons.
-        Collection<PathObject> currentCells = imageData.getHierarchy()
-                .getObjects(null, PathObject.class).stream()
+        Collection<PathObject> currentCells = imageData.getHierarchy().getObjects(null, PathObject.class).stream()
                 .filter(PathObjectFilter.DETECTIONS_ALL)
                 .toList();
         List<String> allCurrentFeatures = CellFeatureExtractor.discoverFeatureNames(currentCells);
@@ -179,8 +175,7 @@ final class ImportExport {
                 .collect(java.util.stream.Collectors.toList());
         if (defaultFeatures.isEmpty()) defaultFeatures = allCurrentFeatures;
 
-        var exportPane = new CellTableExportPane(
-                qupath.getStage(), allCurrentFeatures, defaultFeatures, true, true);
+        var exportPane = new CellTableExportPane(qupath.getStage(), allCurrentFeatures, defaultFeatures, true, true);
         CellTableExportPane.Result exportResult = exportPane.showAndWait();
         if (exportResult == null) return;
 
@@ -199,9 +194,9 @@ final class ImportExport {
         if (outDir == null) return;
 
         final var finalImageData = imageData;
-        final var finalProject   = project;
-        final var finalSelected  = selectedImages;
-        final int total          = selectedImages.size();
+        final var finalProject = project;
+        final var finalSelected = selectedImages;
+        final int total = selectedImages.size();
 
         // Progress dialog — built and shown on the FX thread before the worker starts
         Stage progressStage = new Stage();
@@ -226,123 +221,135 @@ final class ImportExport {
         progressStage.setScene(new Scene(progressRoot, 440, 270));
         progressStage.show();
 
-        Thread worker = new Thread(() -> {
-            AtomicInteger exported = new AtomicInteger();
-            AtomicInteger done     = new AtomicInteger();
-            List<String> errors = Collections.synchronizedList(new ArrayList<>());
+        Thread worker = new Thread(
+                () -> {
+                    AtomicInteger exported = new AtomicInteger();
+                    AtomicInteger done = new AtomicInteger();
+                    List<String> errors = Collections.synchronizedList(new ArrayList<>());
 
-            // One task per image; cap at 4 threads (I/O-bound work)
-            int nThreads = Math.min(total, 4);
-            ExecutorService pool = Executors.newFixedThreadPool(nThreads);
+                    // One task per image; cap at 4 threads (I/O-bound work)
+                    int nThreads = Math.min(total, 4);
+                    ExecutorService pool = Executors.newFixedThreadPool(nThreads);
 
-            List<Callable<Void>> tasks = new ArrayList<>();
-            for (String imgName : finalSelected) {
-                tasks.add(() -> {
-                    try {
-                        qupath.lib.images.ImageData<BufferedImage> data;
-                        if (imgName.equals(currentImageNameFinal)) {
-                            // Use the already-open image data directly (read-only)
-                            data = finalImageData;
-                        } else {
-                            // Load from disk — independent per thread
-                            @SuppressWarnings("unchecked")
-                            var typedProject = (Project<BufferedImage>) (Object) finalProject;
-                            var entryOpt = typedProject.getImageList().stream()
-                                    .filter(e -> imgName.equals(e.getImageName()))
-                                    .findFirst();
-                            if (entryOpt.isEmpty()) {
-                                errors.add(imgName + ": not found in project");
+                    List<Callable<Void>> tasks = new ArrayList<>();
+                    for (String imgName : finalSelected) {
+                        tasks.add(() -> {
+                            try {
+                                qupath.lib.images.ImageData<BufferedImage> data;
+                                if (imgName.equals(currentImageNameFinal)) {
+                                    // Use the already-open image data directly (read-only)
+                                    data = finalImageData;
+                                } else {
+                                    // Load from disk — independent per thread
+                                    @SuppressWarnings("unchecked")
+                                    var typedProject = (Project<BufferedImage>) (Object) finalProject;
+                                    var entryOpt = typedProject.getImageList().stream()
+                                            .filter(e -> imgName.equals(e.getImageName()))
+                                            .findFirst();
+                                    if (entryOpt.isEmpty()) {
+                                        errors.add(imgName + ": not found in project");
+                                        int d = done.incrementAndGet();
+                                        Platform.runLater(() -> {
+                                            progressBar.setProgress((double) d / total);
+                                            statusLabel.setText("Processing " + d + " / " + total);
+                                            logArea.appendText("✗ " + imgName + ": not found in project\n");
+                                        });
+                                        return null;
+                                    }
+                                    data = entryOpt.get().readImageData();
+                                    if (data == null) {
+                                        errors.add(imgName + ": could not read image data");
+                                        int d = done.incrementAndGet();
+                                        Platform.runLater(() -> {
+                                            progressBar.setProgress((double) d / total);
+                                            statusLabel.setText("Processing " + d + " / " + total);
+                                            logArea.appendText("✗ " + imgName + ": could not read image data\n");
+                                        });
+                                        return null;
+                                    }
+                                }
+
+                                Collection<PathObject> cells =
+                                        data.getHierarchy().getObjects(null, PathObject.class).stream()
+                                                .filter(PathObjectFilter.DETECTIONS_ALL)
+                                                .toList();
+
+                                // All annotations for geometric containment testing
+                                // (captures overlapping regions the hierarchy discards).
+                                Collection<PathObject> annotations =
+                                        data.getHierarchy().getAnnotationObjects();
+
+                                // Use the user-selected measurement columns. Missing
+                                // measurements are written as NA by the exporter.
+                                List<String> feats = selectedFeats;
+
+                                // Pixel calibration for centroid conversion to microns
+                                var cal = data.getServer().getPixelCalibration();
+                                double pixelWidthUm = cal.getPixelWidthMicrons();
+                                double pixelHeightUm = cal.getPixelHeightMicrons();
+                                if (Double.isNaN(pixelWidthUm)) pixelWidthUm = 1.0;
+                                if (Double.isNaN(pixelHeightUm)) pixelHeightUm = 1.0;
+
+                                // Sanitise the image name to produce a safe file name
+                                String safeFileName = imgName.replaceAll("[\\\\/:*?\"<>|]", "_") + ".csv";
+                                Path outputPath = outDir.toPath().resolve(safeFileName);
+
+                                CellTableExporter.export(
+                                        outputPath,
+                                        cells,
+                                        annotations,
+                                        imgName,
+                                        feats,
+                                        pixelWidthUm,
+                                        pixelHeightUm,
+                                        includeGeometry,
+                                        geometryInMicrons);
+                                exported.incrementAndGet();
                                 int d = done.incrementAndGet();
                                 Platform.runLater(() -> {
                                     progressBar.setProgress((double) d / total);
                                     statusLabel.setText("Processing " + d + " / " + total);
-                                    logArea.appendText("✗ " + imgName + ": not found in project\n");
+                                    logArea.appendText("✓ " + imgName + "\n");
                                 });
-                                return null;
-                            }
-                            data = entryOpt.get().readImageData();
-                            if (data == null) {
-                                errors.add(imgName + ": could not read image data");
+
+                            } catch (Exception ex) {
+                                String errMsg = ex.getMessage();
+                                logger.error("Failed to export cell table for '{}'", imgName, ex);
+                                errors.add(imgName + ": " + errMsg);
                                 int d = done.incrementAndGet();
                                 Platform.runLater(() -> {
                                     progressBar.setProgress((double) d / total);
                                     statusLabel.setText("Processing " + d + " / " + total);
-                                    logArea.appendText("✗ " + imgName + ": could not read image data\n");
+                                    logArea.appendText("✗ " + imgName + ": " + errMsg + "\n");
                                 });
-                                return null;
                             }
-                        }
-
-                        Collection<PathObject> cells = data.getHierarchy()
-                                .getObjects(null, PathObject.class).stream()
-                                .filter(PathObjectFilter.DETECTIONS_ALL)
-                                .toList();
-
-                        // All annotations for geometric containment testing
-                        // (captures overlapping regions the hierarchy discards).
-                        Collection<PathObject> annotations =
-                                data.getHierarchy().getAnnotationObjects();
-
-                        // Use the user-selected measurement columns. Missing
-                        // measurements are written as NA by the exporter.
-                        List<String> feats = selectedFeats;
-
-                        // Pixel calibration for centroid conversion to microns
-                        var cal = data.getServer().getPixelCalibration();
-                        double pixelWidthUm  = cal.getPixelWidthMicrons();
-                        double pixelHeightUm = cal.getPixelHeightMicrons();
-                        if (Double.isNaN(pixelWidthUm))  pixelWidthUm  = 1.0;
-                        if (Double.isNaN(pixelHeightUm)) pixelHeightUm = 1.0;
-
-                        // Sanitise the image name to produce a safe file name
-                        String safeFileName = imgName.replaceAll("[\\\\/:*?\"<>|]", "_") + ".csv";
-                        Path outputPath = outDir.toPath().resolve(safeFileName);
-
-                        CellTableExporter.export(outputPath, cells, annotations, imgName, feats,
-                                pixelWidthUm, pixelHeightUm, includeGeometry, geometryInMicrons);
-                        exported.incrementAndGet();
-                        int d = done.incrementAndGet();
-                        Platform.runLater(() -> {
-                            progressBar.setProgress((double) d / total);
-                            statusLabel.setText("Processing " + d + " / " + total);
-                            logArea.appendText("✓ " + imgName + "\n");
-                        });
-
-                    } catch (Exception ex) {
-                        String errMsg = ex.getMessage();
-                        logger.error("Failed to export cell table for '{}'", imgName, ex);
-                        errors.add(imgName + ": " + errMsg);
-                        int d = done.incrementAndGet();
-                        Platform.runLater(() -> {
-                            progressBar.setProgress((double) d / total);
-                            statusLabel.setText("Processing " + d + " / " + total);
-                            logArea.appendText("✗ " + imgName + ": " + errMsg + "\n");
+                            return null;
                         });
                     }
-                    return null;
-                });
-            }
 
-            try {
-                pool.invokeAll(tasks);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } finally {
-                pool.shutdown();
-            }
+                    try {
+                        pool.invokeAll(tasks);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        pool.shutdown();
+                    }
 
-            final int finalExported = exported.get();
-            final List<String> finalErrors = new ArrayList<>(errors);
-            Platform.runLater(() -> {
-                progressBar.setProgress(1.0);
-                closeBtn.setDisable(false);
-                if (finalErrors.isEmpty()) {
-                    statusLabel.setText("Done — exported " + finalExported + " image(s) to " + outDir.getName());
-                } else {
-                    statusLabel.setText("Done — " + finalExported + " exported, " + finalErrors.size() + " error(s).");
-                }
-            });
-        }, "CellTune-ExportCellTable");
+                    final int finalExported = exported.get();
+                    final List<String> finalErrors = new ArrayList<>(errors);
+                    Platform.runLater(() -> {
+                        progressBar.setProgress(1.0);
+                        closeBtn.setDisable(false);
+                        if (finalErrors.isEmpty()) {
+                            statusLabel.setText(
+                                    "Done — exported " + finalExported + " image(s) to " + outDir.getName());
+                        } else {
+                            statusLabel.setText(
+                                    "Done — " + finalExported + " exported, " + finalErrors.size() + " error(s).");
+                        }
+                    });
+                },
+                "CellTune-ExportCellTable");
         worker.setDaemon(true);
         worker.start();
     }
@@ -356,8 +363,7 @@ final class ImportExport {
     static CellTypeTable importMarkerTable(QuPathGUI qupath) {
         FileChooser fc = new FileChooser();
         fc.setTitle("Import Marker Table");
-        fc.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
         var project = qupath.getProject();
         if (project != null && project.getPath() != null) {
             File dir = project.getPath().getParent().toFile();
@@ -375,8 +381,8 @@ final class ImportExport {
                     logger.warn("Failed to persist marker table to project: {}", saveEx.getMessage());
                 }
             }
-            Dialogs.showInfoNotification(EXTENSION_NAME,
-                    "Loaded " + table.size() + " cell types from " + chosen.getName());
+            Dialogs.showInfoNotification(
+                    EXTENSION_NAME, "Loaded " + table.size() + " cell types from " + chosen.getName());
             return table;
         } catch (IOException ex) {
             logger.error("Failed to import marker table", ex);
@@ -387,12 +393,13 @@ final class ImportExport {
 
     // ── Ground truth export/import ─────────────────────────────────────────────
 
-    static void exportGroundTruth(QuPathGUI qupath,
-                                  LabelStore labelStore,
-                                  String activeBinaryMarker,
-                                  List<GroundTruthIO.TrainingRow> importedTrainingRows,
-                                  List<String> importedTrainingFeatureNames,
-                                  FeatureNormalizer featureNormalizer) {
+    static void exportGroundTruth(
+            QuPathGUI qupath,
+            LabelStore labelStore,
+            String activeBinaryMarker,
+            List<GroundTruthIO.TrainingRow> importedTrainingRows,
+            List<String> importedTrainingFeatureNames,
+            FeatureNormalizer featureNormalizer) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -415,16 +422,16 @@ final class ImportExport {
 
         FileChooser fc = new FileChooser();
         fc.setTitle("Export Ground Truth");
-        fc.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
         var project = qupath.getProject();
         if (project != null && project.getPath() != null) {
             File dir = project.getPath().getParent().toFile();
             if (dir.isDirectory()) fc.setInitialDirectory(dir);
         }
-        fc.setInitialFileName(activeBinaryMarker != null && !activeBinaryMarker.isBlank()
-                ? activeBinaryMarker + "_ground_truth.csv"
-                : "ground_truth.csv");
+        fc.setInitialFileName(
+                activeBinaryMarker != null && !activeBinaryMarker.isBlank()
+                        ? activeBinaryMarker + "_ground_truth.csv"
+                        : "ground_truth.csv");
         File chosen = fc.showSaveDialog(qupath.getStage());
         if (chosen == null) return;
 
@@ -435,8 +442,8 @@ final class ImportExport {
             CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
             extractor.setNormalizer(featureNormalizer);
             String imgName = imageData.getServer().getMetadata().getName();
-            GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName,
-                    opts.includeRaw(), opts.includeNorm());
+            GroundTruthIO.exportCSV(
+                    chosen.toPath(), detections, labelStore, extractor, imgName, opts.includeRaw(), opts.includeNorm());
 
             // Pool labels from every other project image so the export reflects the
             // full training set used (matches the auto-pool behaviour during training).
@@ -460,8 +467,10 @@ final class ImportExport {
             // This keeps round-trips (project1 -> project2 -> project3) lossless for a single
             // binary marker, since each export carries the full accumulated training set.
             int appendedImported = 0;
-            if (inBinaryMode && importedRowCount > 0
-                    && importedTrainingFeatureNames != null && !importedTrainingFeatureNames.isEmpty()) {
+            if (inBinaryMode
+                    && importedRowCount > 0
+                    && importedTrainingFeatureNames != null
+                    && !importedTrainingFeatureNames.isEmpty()) {
                 appendedImported = appendImportedRowsToCsv(
                         chosen.toPath(),
                         featureNames,
@@ -492,12 +501,14 @@ final class ImportExport {
      *
      * @return number of rows appended
      */
-    private static int appendImportedRowsToCsv(Path csvPath,
-                                               List<String> featureNames,
-                                               boolean includeRaw,
-                                               boolean hasNorm,
-                                               List<String> importedFeatureNames,
-                                               List<GroundTruthIO.TrainingRow> importedRows) throws IOException {
+    private static int appendImportedRowsToCsv(
+            Path csvPath,
+            List<String> featureNames,
+            boolean includeRaw,
+            boolean hasNorm,
+            List<String> importedFeatureNames,
+            List<GroundTruthIO.TrainingRow> importedRows)
+            throws IOException {
         if (importedRows == null || importedRows.isEmpty()) return 0;
 
         // Build the export column ordering: raw featureNames first (if includeRaw), then
@@ -545,14 +556,16 @@ final class ImportExport {
      * @param scope sanitized binary marker name, or null in multi-class mode
      * @return number of rows appended (across all other images)
      */
-    private static int appendOtherImageLabelsToCsv(Path csvPath,
-                                                   qupath.lib.projects.Project<?> project,
-                                                   qupath.lib.images.ImageData<BufferedImage> currentImageData,
-                                                   String scope,
-                                                   List<String> featureNames,
-                                                   FeatureNormalizer normalizer,
-                                                   boolean includeRaw,
-                                                   boolean includeNorm) throws IOException {
+    private static int appendOtherImageLabelsToCsv(
+            Path csvPath,
+            qupath.lib.projects.Project<?> project,
+            qupath.lib.images.ImageData<BufferedImage> currentImageData,
+            String scope,
+            List<String> featureNames,
+            FeatureNormalizer normalizer,
+            boolean includeRaw,
+            boolean includeNorm)
+            throws IOException {
         if (project == null) return 0;
         boolean hasNorm = includeNorm && normalizer != null;
         if (!includeRaw && !hasNorm) return 0;
@@ -621,8 +634,7 @@ final class ImportExport {
                     linesOut.add(sb.toString());
                 }
             } catch (Exception ex) {
-                logger.warn("Failed to extract labelled features from {}: {}",
-                        otherImageName, ex.getMessage());
+                logger.warn("Failed to extract labelled features from {}: {}", otherImageName, ex.getMessage());
             }
         }
 
@@ -637,11 +649,12 @@ final class ImportExport {
      * @return the new session state to apply (labels and/or imported rows), or null on
      *         cancel/failure. The caller assigns the returned fields and refreshes its panel.
      */
-    static GroundTruthImportResult importGroundTruth(QuPathGUI qupath,
-                                                     LabelStore labelStore,
-                                                     List<GroundTruthIO.TrainingRow> importedTrainingRows,
-                                                     List<String> importedTrainingFeatureNames,
-                                                     String activeBinaryMarker) {
+    static GroundTruthImportResult importGroundTruth(
+            QuPathGUI qupath,
+            LabelStore labelStore,
+            List<GroundTruthIO.TrainingRow> importedTrainingRows,
+            List<String> importedTrainingFeatureNames,
+            String activeBinaryMarker) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -650,8 +663,7 @@ final class ImportExport {
 
         FileChooser fc = new FileChooser();
         fc.setTitle("Import Ground Truth");
-        fc.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
         var project = qupath.getProject();
         if (project != null && project.getPath() != null) {
             File dir = project.getPath().getParent().toFile();
@@ -664,8 +676,7 @@ final class ImportExport {
         var result = Dialogs.showChoiceDialog(
                 resources.getString("gt.import.mode.title"),
                 resources.getString("gt.import.mode.prompt"),
-                List.of(resources.getString("gt.import.mode.spatial"),
-                        resources.getString("gt.import.mode.training")),
+                List.of(resources.getString("gt.import.mode.spatial"), resources.getString("gt.import.mode.training")),
                 resources.getString("gt.import.mode.spatial"));
         if (result == null) return null;
 
@@ -692,17 +703,17 @@ final class ImportExport {
                 LabelStore newStore = (labelStore == null) ? new LabelStore("CellTune") : labelStore;
                 newStore.mergeFrom(imported);
 
-                Dialogs.showInfoNotification(EXTENSION_NAME,
-                        "Imported " + imported.size() + " labels via spatial matching. "
-                        + "Total labels: " + newStore.size());
+                Dialogs.showInfoNotification(
+                        EXTENSION_NAME,
+                        "Imported " + imported.size() + " labels via spatial matching. " + "Total labels: "
+                                + newStore.size());
                 return new GroundTruthImportResult(newStore, importedTrainingRows, importedTrainingFeatureNames);
             } else {
                 var rows = GroundTruthIO.importCSVAsTrainingData(chosen.toPath());
                 var featureNames = GroundTruthIO.readFeatureNames(chosen.toPath());
 
                 if (featureNames.isEmpty()) {
-                    Dialogs.showErrorMessage(EXTENSION_NAME,
-                            "Imported file has no readable feature columns.");
+                    Dialogs.showErrorMessage(EXTENSION_NAME, "Imported file has no readable feature columns.");
                     return null;
                 }
 
@@ -715,8 +726,7 @@ final class ImportExport {
                 if (importedTrainingRows == null || importedTrainingRows.isEmpty()) {
                     newImportedRows = new ArrayList<>(rows);
                     newImportedFeatureNames = new ArrayList<>(featureNames);
-                } else if (importedTrainingFeatureNames != null
-                        && importedTrainingFeatureNames.equals(featureNames)) {
+                } else if (importedTrainingFeatureNames != null && importedTrainingFeatureNames.equals(featureNames)) {
                     importedTrainingRows.addAll(rows);
                     newImportedRows = importedTrainingRows;
                     newImportedFeatureNames = importedTrainingFeatureNames;
@@ -735,16 +745,16 @@ final class ImportExport {
                                 project, activeBinaryMarker,
                                 newImportedFeatureNames, newImportedRows);
                     } else {
-                        ProjectStateManager.saveImportedTrainingData(
-                                project, newImportedFeatureNames, newImportedRows);
+                        ProjectStateManager.saveImportedTrainingData(project, newImportedFeatureNames, newImportedRows);
                     }
                 }
 
-                Dialogs.showInfoNotification(EXTENSION_NAME,
+                Dialogs.showInfoNotification(
+                        EXTENSION_NAME,
                         "Loaded " + loaded + " training rows ("
-                        + featureNames.size() + " features). "
-                        + "Imported rows available for training: " + total + "."
-                        + schemaNote);
+                                + featureNames.size() + " features). "
+                                + "Imported rows available for training: " + total + "."
+                                + schemaNote);
                 return new GroundTruthImportResult(labelStore, newImportedRows, newImportedFeatureNames);
             }
         } catch (IOException ex) {
@@ -767,11 +777,10 @@ final class ImportExport {
      */
     static boolean clearImportedTrainingData(QuPathGUI qupath, String activeBinaryMarker) {
         boolean binary = activeBinaryMarker != null && !activeBinaryMarker.isBlank();
-        String context = binary
-                ? "the \"" + activeBinaryMarker + "\" binary classifier"
-                : "multi-class mode";
+        String context = binary ? "the \"" + activeBinaryMarker + "\" binary classifier" : "multi-class mode";
 
-        boolean confirmed = Dialogs.showConfirmDialog(EXTENSION_NAME,
+        boolean confirmed = Dialogs.showConfirmDialog(
+                EXTENSION_NAME,
                 "Remove all imported training rows for " + context + "?\n\n"
                         + "Your labels, trained models and predictions are not affected.");
         if (!confirmed) return false;
@@ -786,8 +795,7 @@ final class ImportExport {
                 }
             } catch (IOException ex) {
                 logger.error("Failed to clear imported training data", ex);
-                Dialogs.showErrorMessage(EXTENSION_NAME,
-                        "Failed to clear imported training data: " + ex.getMessage());
+                Dialogs.showErrorMessage(EXTENSION_NAME, "Failed to clear imported training data: " + ex.getMessage());
                 return false;
             }
         }

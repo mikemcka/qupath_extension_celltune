@@ -1,5 +1,6 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
@@ -8,8 +9,6 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.CellTypeTable;
-
-import java.util.*;
 
 /**
  * A toolbar for the Review Mode: navigation buttons, dynamic per-cell
@@ -28,8 +27,7 @@ import java.util.*;
  */
 public class ReviewToolbar extends HBox {
 
-    private static final ResourceBundle STRINGS =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle STRINGS = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
 
     private final ReviewController controller;
     private final ChannelSelector channelSelector;
@@ -56,9 +54,7 @@ public class ReviewToolbar extends HBox {
      *  named annotation. */
     private final Label annotationLabel = new Label();
 
-    public ReviewToolbar(ReviewController controller,
-                         CellTypeTable cellTypeTable,
-                         ChannelSelector channelSelector) {
+    public ReviewToolbar(ReviewController controller, CellTypeTable cellTypeTable, ChannelSelector channelSelector) {
         super(8);
         this.controller = controller;
         this.cellTypeTable = cellTypeTable;
@@ -143,8 +139,19 @@ public class ReviewToolbar extends HBox {
 
         Separator sep3 = new Separator(javafx.geometry.Orientation.VERTICAL);
 
-        getChildren().addAll(prevBtn, nextBtn, skipBtn, sep1,
-                predictionBox, allClassesMenu, sep2, spacer, statusBox, sep3, doneBtn);
+        getChildren()
+                .addAll(
+                        prevBtn,
+                        nextBtn,
+                        skipBtn,
+                        sep1,
+                        predictionBox,
+                        allClassesMenu,
+                        sep2,
+                        spacer,
+                        statusBox,
+                        sep3,
+                        doneBtn);
 
         // ── Auto-advance on first show ──────────────────────────────────
         controller.next();
@@ -186,8 +193,7 @@ public class ReviewToolbar extends HBox {
         // Show which source image the current cell was sampled from.
         String src = controller.getCurrentCellImageName();
         imageNameLabel.setText(src == null || src.isBlank() ? "" : src);
-        imageNameLabel.setTooltip(
-                (src == null || src.isBlank()) ? null : new Tooltip("Source image: " + src));
+        imageNameLabel.setTooltip((src == null || src.isBlank()) ? null : new Tooltip("Source image: " + src));
 
         // Show annotation(s) (if any) containing this cell's centroid.
         java.util.List<String> annoNames = controller.getCurrentCellAnnotationNames();
@@ -212,11 +218,11 @@ public class ReviewToolbar extends HBox {
         }
 
         if (existingLabel == null) {
-            statusDot.setFill(Color.WHITE);   // unlabelled
+            statusDot.setFill(Color.WHITE); // unlabelled
         } else if (pred != null && existingLabel.equals(pred.allLabel())) {
             statusDot.setFill(Color.LIMEGREEN); // matches prediction
         } else {
-            statusDot.setFill(Color.TOMATO);    // mismatch
+            statusDot.setFill(Color.TOMATO); // mismatch
         }
     }
 
@@ -229,14 +235,14 @@ public class ReviewToolbar extends HBox {
 
         if (pred.isDisagreement()) {
             // XGBoost top prediction
-            Button xgbBtn = new Button(String.format("XGB: %s (%.0f%%)",
-                    pred.getModel1Label(), pred.model1Confidence() * 100));
+            Button xgbBtn =
+                    new Button(String.format("XGB: %s (%.0f%%)", pred.getModel1Label(), pred.model1Confidence() * 100));
             xgbBtn.setStyle("-fx-background-color: #bbdefb; -fx-font-weight: bold; -fx-font-size: 11px;");
             xgbBtn.setOnAction(e -> assignAndAdvance(pred.getModel1Label()));
 
             // LightGBM top prediction
-            Button lgbBtn = new Button(String.format("LGB: %s (%.0f%%)",
-                    pred.getModel2Label(), pred.model2Confidence() * 100));
+            Button lgbBtn =
+                    new Button(String.format("LGB: %s (%.0f%%)", pred.getModel2Label(), pred.model2Confidence() * 100));
             lgbBtn.setStyle("-fx-background-color: #f8bbd0; -fx-font-weight: bold; -fx-font-size: 11px;");
             lgbBtn.setOnAction(e -> assignAndAdvance(pred.getModel2Label()));
 
@@ -253,8 +259,7 @@ public class ReviewToolbar extends HBox {
         } else {
             // Both models agree — single button
             float avgConf = (pred.model1Confidence() + pred.model2Confidence()) / 2f;
-            Button agreedBtn = new Button(String.format("Both: %s (%.0f%%)",
-                    pred.getModel1Label(), avgConf * 100));
+            Button agreedBtn = new Button(String.format("Both: %s (%.0f%%)", pred.getModel1Label(), avgConf * 100));
             agreedBtn.setStyle("-fx-background-color: #c8e6c9; -fx-font-weight: bold; -fx-font-size: 11px;");
             agreedBtn.setOnAction(e -> assignAndAdvance(pred.getModel1Label()));
             predictionBox.getChildren().add(agreedBtn);
@@ -347,8 +352,7 @@ public class ReviewToolbar extends HBox {
         alert.setTitle(STRINGS.getString("review.complete"));
         alert.setHeaderText(null);
         alert.setContentText(String.format(
-                "Review complete. %d / %d cells labelled.",
-                controller.getLabelledCount(), controller.size()));
+                "Review complete. %d / %d cells labelled.", controller.getLabelledCount(), controller.size()));
 
         // Anchor the alert to the Review Mode window so it stays on top
         // (without an owner it can be hidden behind the toolbar window).
@@ -367,7 +371,8 @@ public class ReviewToolbar extends HBox {
             alert.setY(targetY);
         }
         alert.setOnShown(e -> {
-            javafx.stage.Stage stage = (javafx.stage.Stage) alert.getDialogPane().getScene().getWindow();
+            javafx.stage.Stage stage =
+                    (javafx.stage.Stage) alert.getDialogPane().getScene().getWindow();
             stage.setAlwaysOnTop(true);
             stage.toFront();
         });

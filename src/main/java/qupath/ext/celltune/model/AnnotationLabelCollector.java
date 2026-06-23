@@ -1,12 +1,11 @@
 package qupath.ext.celltune.model;
 
-import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjectTools;
-import qupath.lib.objects.hierarchy.PathObjectHierarchy;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjectTools;
+import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 
 /**
  * Collects ground-truth labels from point annotations in a hierarchy into a
@@ -52,8 +51,12 @@ public final class AnnotationLabelCollector {
             List<PathObject> hits = new ArrayList<>();
             for (var pt : anno.getROI().getAllPoints()) {
                 hits.addAll(PathObjectTools.getObjectsForLocation(
-                        hierarchy, pt.getX(), pt.getY(),
-                        anno.getROI().getZ(), anno.getROI().getT(), -1));
+                        hierarchy,
+                        pt.getX(),
+                        pt.getY(),
+                        anno.getROI().getZ(),
+                        anno.getROI().getT(),
+                        -1));
             }
 
             for (PathObject det : hits) {

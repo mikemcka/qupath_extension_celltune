@@ -1,10 +1,9 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class PopulationSetTest {
 
@@ -17,8 +16,10 @@ class PopulationSetTest {
     }
 
     private static CellPrediction disagreed(String cellId, String m1, String m2) {
-        float[] p1 = new float[3]; p1[CLASSES.indexOf(m1)] = 0.8f;
-        float[] p2 = new float[3]; p2[CLASSES.indexOf(m2)] = 0.8f;
+        float[] p1 = new float[3];
+        p1[CLASSES.indexOf(m1)] = 0.8f;
+        float[] p2 = new float[3];
+        p2[CLASSES.indexOf(m2)] = 0.8f;
         return new CellPrediction(cellId, m1, m2, p1, p2, CLASSES);
     }
 
@@ -62,8 +63,7 @@ class PopulationSetTest {
         var ps = new PopulationSet("test");
         ps.put("cell-1", agreed("cell-1", "T", 0.9f));
         var all = ps.getAll();
-        assertThrows(UnsupportedOperationException.class,
-                () -> all.put("cell-2", agreed("cell-2", "NK", 0.5f)));
+        assertThrows(UnsupportedOperationException.class, () -> all.put("cell-2", agreed("cell-2", "NK", 0.5f)));
     }
 
     // ── disagreement filtering ───────────────────────────────────────────────
@@ -107,7 +107,7 @@ class PopulationSetTest {
     void getByModel1LabelFiltersCorrectly() {
         var ps = new PopulationSet("Pred_ALL");
         ps.put("cell-1", agreed("cell-1", "T", 0.9f));
-        ps.put("cell-2", disagreed("cell-2", "T", "NK"));  // model1 = T
+        ps.put("cell-2", disagreed("cell-2", "T", "NK")); // model1 = T
         ps.put("cell-3", agreed("cell-3", "NK", 0.8f));
 
         var tPreds = ps.getByModel1Label("T");
@@ -118,9 +118,9 @@ class PopulationSetTest {
     @Test
     void getByModel2LabelFiltersCorrectly() {
         var ps = new PopulationSet("Pred_ALL");
-        ps.put("cell-1", disagreed("cell-1", "T", "NK"));  // model2 = NK
-        ps.put("cell-2", agreed("cell-2", "NK", 0.8f));     // model2 = NK
-        ps.put("cell-3", agreed("cell-3", "T", 0.9f));      // model2 = T
+        ps.put("cell-1", disagreed("cell-1", "T", "NK")); // model2 = NK
+        ps.put("cell-2", agreed("cell-2", "NK", 0.8f)); // model2 = NK
+        ps.put("cell-3", agreed("cell-3", "T", 0.9f)); // model2 = T
 
         var nkPreds = ps.getByModel2Label("NK");
         assertEquals(2, nkPreds.size());

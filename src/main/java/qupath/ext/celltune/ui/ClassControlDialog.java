@@ -1,9 +1,16 @@
 package qupath.ext.celltune.ui;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
-import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
@@ -12,19 +19,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.io.ClassManager;
 import qupath.ext.celltune.model.LabelStore;
+import qupath.ext.celltune.util.BackgroundExecutors;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.classes.PathClass;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import qupath.ext.celltune.util.BackgroundExecutors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
  * Dialog for adding, deleting, and merging cell classes across the QuPath
@@ -76,9 +74,8 @@ public class ClassControlDialog {
      * @param labelStoreSupplier  provides the current in-memory LabelStore (may return null)
      * @param labelStoreUpdater   called after an operation that changes the in-memory store
      */
-    public ClassControlDialog(QuPathGUI qupath,
-                              Supplier<LabelStore> labelStoreSupplier,
-                              Consumer<LabelStore> labelStoreUpdater) {
+    public ClassControlDialog(
+            QuPathGUI qupath, Supplier<LabelStore> labelStoreSupplier, Consumer<LabelStore> labelStoreUpdater) {
         this(qupath, labelStoreSupplier, labelStoreUpdater, null, null);
     }
 
@@ -95,11 +92,12 @@ public class ClassControlDialog {
      *                            operation finishes, to reload the active image's
      *                            labels from disk so memory matches the new disk state.
      */
-    public ClassControlDialog(QuPathGUI qupath,
-                              Supplier<LabelStore> labelStoreSupplier,
-                              Consumer<LabelStore> labelStoreUpdater,
-                              Runnable preOpDiskSync,
-                              Runnable postOpDiskReload) {
+    public ClassControlDialog(
+            QuPathGUI qupath,
+            Supplier<LabelStore> labelStoreSupplier,
+            Consumer<LabelStore> labelStoreUpdater,
+            Runnable preOpDiskSync,
+            Runnable postOpDiskReload) {
         this.qupath = qupath;
         this.labelStoreSupplier = labelStoreSupplier;
         this.labelStoreUpdater = labelStoreUpdater;
@@ -122,12 +120,7 @@ public class ClassControlDialog {
 
         var tabPane = new TabPane();
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-        tabPane.getTabs().addAll(
-                buildAddTab(),
-                buildDeleteTab(),
-                buildMergeTab(),
-                buildUndoMergeTab()
-        );
+        tabPane.getTabs().addAll(buildAddTab(), buildDeleteTab(), buildMergeTab(), buildUndoMergeTab());
 
         statusLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #555;");
         var statusBar = new HBox(statusLabel);
@@ -170,11 +163,11 @@ public class ClassControlDialog {
             setStatus("Added class: " + name);
         });
 
-        var box = new VBox(10,
+        var box = new VBox(
+                10,
                 label("Enter the name of a new classification class to add to the QuPath class panel."),
                 nameField,
-                addBtn
-        );
+                addBtn);
         box.setPadding(new Insets(16));
 
         return new Tab("Add", box);
@@ -194,8 +187,8 @@ public class ClassControlDialog {
         purgeCheck.setWrapText(true);
 
         var refreshBtn = new Button("Refresh list");
-        refreshBtn.setOnAction(e ->
-                classListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames())));
+        refreshBtn.setOnAction(
+                e -> classListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames())));
 
         var deleteBtn = new Button("Delete Selected Class");
         deleteBtn.setMaxWidth(Double.MAX_VALUE);
@@ -208,8 +201,10 @@ public class ClassControlDialog {
             }
             boolean purge = purgeCheck.isSelected();
             String msg = purge
-                    ? "Delete class \"" + selected + "\" and remove all its labels from every image file? This cannot be undone."
-                    : "Remove class \"" + selected + "\" from the QuPath class panel? Labels already stored will remain.";
+                    ? "Delete class \"" + selected
+                            + "\" and remove all its labels from every image file? This cannot be undone."
+                    : "Remove class \"" + selected
+                            + "\" from the QuPath class panel? Labels already stored will remain.";
             if (!Dialogs.showConfirmDialog("Delete Class", msg)) return;
 
             deleteBtn.setDisable(true);
@@ -217,23 +212,23 @@ public class ClassControlDialog {
             runPreOpSync();
             try {
                 executor().submit(() -> {
-                try {
-                    int removed = ClassManager.deletePathClass(qupath, selected, purge);
-                    Platform.runLater(() -> {
-                        classListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames()));
-                        runPostOpReload();
-                        setStatus("Deleted \"" + selected + "\""
-                                + (purge ? " (" + removed + " label entries purged)." : "."));
-                    });
-                } catch (Exception ex) {
-                    logger.error("Delete class failed", ex);
-                    Platform.runLater(() -> {
-                        Dialogs.showErrorMessage(EXTENSION_NAME, "Delete failed: " + ex.getMessage());
-                        setStatus("Error: " + ex.getMessage());
-                    });
-                } finally {
-                    Platform.runLater(() -> deleteBtn.setDisable(false));
-                }
+                    try {
+                        int removed = ClassManager.deletePathClass(qupath, selected, purge);
+                        Platform.runLater(() -> {
+                            classListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames()));
+                            runPostOpReload();
+                            setStatus("Deleted \"" + selected + "\""
+                                    + (purge ? " (" + removed + " label entries purged)." : "."));
+                        });
+                    } catch (Exception ex) {
+                        logger.error("Delete class failed", ex);
+                        Platform.runLater(() -> {
+                            Dialogs.showErrorMessage(EXTENSION_NAME, "Delete failed: " + ex.getMessage());
+                            setStatus("Error: " + ex.getMessage());
+                        });
+                    } finally {
+                        Platform.runLater(() -> deleteBtn.setDisable(false));
+                    }
                 });
             } catch (RejectedExecutionException rex) {
                 logger.error("Delete task could not be submitted", rex);
@@ -243,13 +238,13 @@ public class ClassControlDialog {
             }
         });
 
-        var box = new VBox(10,
+        var box = new VBox(
+                10,
                 label("Select a class to remove from the QuPath class panel.\n"
                         + "Tick the checkbox to also purge its labels from disk."),
                 classListView,
                 purgeCheck,
-                new HBox(8, refreshBtn, hSpacer(), deleteBtn)
-        );
+                new HBox(8, refreshBtn, hSpacer(), deleteBtn));
         box.setPadding(new Insets(16));
 
         return new Tab("Delete", box);
@@ -267,8 +262,8 @@ public class ClassControlDialog {
         VBox.setVgrow(sourceListView, Priority.ALWAYS);
 
         var refreshMergeBtn = new Button("Refresh");
-        refreshMergeBtn.setOnAction(e ->
-                sourceListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames())));
+        refreshMergeBtn.setOnAction(
+                e -> sourceListView.setItems(FXCollections.observableArrayList(currentEffectiveClassNames())));
 
         // Target class — either pick an existing class or type a new one
         var targetField = new TextField();
@@ -282,30 +277,36 @@ public class ClassControlDialog {
             if (existingCombo.getValue() != null) targetField.setText(existingCombo.getValue());
         });
 
-        var infoLabel = label(
-                "Original class names are encoded in the label file for undo:\n"
-                        + "\"test1\" merged into \"myType\" → stored as \"test1-mergedInto(myType)\".\n"
-                        + "Training always sees only the effective class name.");
+        var infoLabel = label("Original class names are encoded in the label file for undo:\n"
+                + "\"test1\" merged into \"myType\" → stored as \"test1-mergedInto(myType)\".\n"
+                + "Training always sees only the effective class name.");
         infoLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #555;");
 
         var mergeBtn = new Button("Merge Selected → Target");
         mergeBtn.setMaxWidth(Double.MAX_VALUE);
         mergeBtn.setStyle("-fx-base: #337ab7;");
         mergeBtn.setOnAction(e -> {
-            List<String> sources = new ArrayList<>(sourceListView.getSelectionModel().getSelectedItems());
+            List<String> sources =
+                    new ArrayList<>(sourceListView.getSelectionModel().getSelectedItems());
             String target = targetField.getText().trim();
-            if (sources.isEmpty()) { setStatus("Select at least one source class."); return; }
-            if (target.isEmpty())  { setStatus("Enter or select a target class name."); return; }
+            if (sources.isEmpty()) {
+                setStatus("Select at least one source class.");
+                return;
+            }
+            if (target.isEmpty()) {
+                setStatus("Enter or select a target class name.");
+                return;
+            }
             if (sources.size() == 1 && sources.get(0).equals(target)) {
                 setStatus("Source and target are the same — nothing to merge.");
                 return;
             }
 
             String sourceSummary = sources.stream().collect(Collectors.joining(", "));
-            if (!Dialogs.showConfirmDialog("Merge Classes",
-                    "Merge " + sources.size() + " class(es) [" + sourceSummary + "] into \""
-                            + target + "\"?\n\nLabel files will be updated. Use Undo Merge to reverse."))
-                return;
+            if (!Dialogs.showConfirmDialog(
+                    "Merge Classes",
+                    "Merge " + sources.size() + " class(es) [" + sourceSummary + "] into \"" + target
+                            + "\"?\n\nLabel files will be updated. Use Undo Merge to reverse.")) return;
 
             mergeBtn.setDisable(true);
             setStatus("Merging…");
@@ -313,28 +314,28 @@ public class ClassControlDialog {
             LabelStore inMemory = labelStoreSupplier.get();
             try {
                 executor().submit(() -> {
-                try {
-                    int count = ClassManager.mergeClasses(qupath, sources, target, inMemory);
-                    Platform.runLater(() -> {
-                        if (inMemory != null) labelStoreUpdater.accept(inMemory);
-                        runPostOpReload();
-                        // Refresh both source lists
-                        List<String> refreshed = currentEffectiveClassNames();
-                        sourceListView.setItems(FXCollections.observableArrayList(refreshed));
-                        existingCombo.setItems(FXCollections.observableArrayList(refreshed));
-                        targetField.clear();
-                        setStatus("Merged " + sources.size() + " class(es) → \"" + target
-                                + "\" (" + count + " labels updated).");
-                    });
-                } catch (Exception ex) {
-                    logger.error("Merge classes failed", ex);
-                    Platform.runLater(() -> {
-                        Dialogs.showErrorMessage(EXTENSION_NAME, "Merge failed: " + ex.getMessage());
-                        setStatus("Error: " + ex.getMessage());
-                    });
-                } finally {
-                    Platform.runLater(() -> mergeBtn.setDisable(false));
-                }
+                    try {
+                        int count = ClassManager.mergeClasses(qupath, sources, target, inMemory);
+                        Platform.runLater(() -> {
+                            if (inMemory != null) labelStoreUpdater.accept(inMemory);
+                            runPostOpReload();
+                            // Refresh both source lists
+                            List<String> refreshed = currentEffectiveClassNames();
+                            sourceListView.setItems(FXCollections.observableArrayList(refreshed));
+                            existingCombo.setItems(FXCollections.observableArrayList(refreshed));
+                            targetField.clear();
+                            setStatus("Merged " + sources.size() + " class(es) → \"" + target + "\" (" + count
+                                    + " labels updated).");
+                        });
+                    } catch (Exception ex) {
+                        logger.error("Merge classes failed", ex);
+                        Platform.runLater(() -> {
+                            Dialogs.showErrorMessage(EXTENSION_NAME, "Merge failed: " + ex.getMessage());
+                            setStatus("Error: " + ex.getMessage());
+                        });
+                    } finally {
+                        Platform.runLater(() -> mergeBtn.setDisable(false));
+                    }
                 });
             } catch (RejectedExecutionException rex) {
                 logger.error("Merge task could not be submitted", rex);
@@ -344,7 +345,8 @@ public class ClassControlDialog {
             }
         });
 
-        var box = new VBox(10,
+        var box = new VBox(
+                10,
                 label("Select one or more source classes (hold Ctrl/Cmd to multi-select),\n"
                         + "then enter or choose the target class name."),
                 sourceListView,
@@ -352,8 +354,7 @@ public class ClassControlDialog {
                 new HBox(8, new Label("Target:"), targetField),
                 new HBox(8, new Label("Existing:"), existingCombo),
                 infoLabel,
-                mergeBtn
-        );
+                mergeBtn);
         box.setPadding(new Insets(16));
 
         return new Tab("Merge", box);
@@ -372,24 +373,26 @@ public class ClassControlDialog {
         refreshUndoBtn.setOnAction(e -> refreshUndoCombo(targetCombo));
         refreshUndoCombo(targetCombo);
 
-        var infoLabel = label(
-                "Select the class that was the merge TARGET to restore all source\n"
-                        + "classes to their original names. Only labels carrying\n"
-                        + "merge-history annotations are changed.\n\n"
-                        + "Note: the source PathClasses are re-added to the QuPath\n"
-                        + "class panel automatically.");
+        var infoLabel = label("Select the class that was the merge TARGET to restore all source\n"
+                + "classes to their original names. Only labels carrying\n"
+                + "merge-history annotations are changed.\n\n"
+                + "Note: the source PathClasses are re-added to the QuPath\n"
+                + "class panel automatically.");
         infoLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #555;");
 
         var undoBtn = new Button("Undo Merge for Selected Class");
         undoBtn.setMaxWidth(Double.MAX_VALUE);
         undoBtn.setOnAction(e -> {
             String target = targetCombo.getValue();
-            if (target == null) { setStatus("Select a merged-into class first."); return; }
-
-            if (!Dialogs.showConfirmDialog("Undo Merge",
-                    "Restore all labels that were merged into \"" + target + "\" back to their original class names?\n"
-                            + "The source PathClasses will be re-added to the QuPath class panel."))
+            if (target == null) {
+                setStatus("Select a merged-into class first.");
                 return;
+            }
+
+            if (!Dialogs.showConfirmDialog(
+                    "Undo Merge",
+                    "Restore all labels that were merged into \"" + target + "\" back to their original class names?\n"
+                            + "The source PathClasses will be re-added to the QuPath class panel.")) return;
 
             undoBtn.setDisable(true);
             setStatus("Undoing merge…");
@@ -397,23 +400,23 @@ public class ClassControlDialog {
             LabelStore inMemory = labelStoreSupplier.get();
             try {
                 executor().submit(() -> {
-                try {
-                    int count = ClassManager.undoMerge(qupath, target, inMemory);
-                    Platform.runLater(() -> {
-                        if (inMemory != null) labelStoreUpdater.accept(inMemory);
-                        runPostOpReload();
-                        refreshUndoCombo(targetCombo);
-                        setStatus("Restored " + count + " labels merged into \"" + target + "\".");
-                    });
-                } catch (Exception ex) {
-                    logger.error("Undo merge failed", ex);
-                    Platform.runLater(() -> {
-                        Dialogs.showErrorMessage(EXTENSION_NAME, "Undo failed: " + ex.getMessage());
-                        setStatus("Error: " + ex.getMessage());
-                    });
-                } finally {
-                    Platform.runLater(() -> undoBtn.setDisable(false));
-                }
+                    try {
+                        int count = ClassManager.undoMerge(qupath, target, inMemory);
+                        Platform.runLater(() -> {
+                            if (inMemory != null) labelStoreUpdater.accept(inMemory);
+                            runPostOpReload();
+                            refreshUndoCombo(targetCombo);
+                            setStatus("Restored " + count + " labels merged into \"" + target + "\".");
+                        });
+                    } catch (Exception ex) {
+                        logger.error("Undo merge failed", ex);
+                        Platform.runLater(() -> {
+                            Dialogs.showErrorMessage(EXTENSION_NAME, "Undo failed: " + ex.getMessage());
+                            setStatus("Error: " + ex.getMessage());
+                        });
+                    } finally {
+                        Platform.runLater(() -> undoBtn.setDisable(false));
+                    }
                 });
             } catch (RejectedExecutionException rex) {
                 logger.error("Undo task could not be submitted", rex);
@@ -423,12 +426,12 @@ public class ClassControlDialog {
             }
         });
 
-        var box = new VBox(10,
+        var box = new VBox(
+                10,
                 label("Undo a previous merge operation."),
                 new HBox(8, targetCombo, refreshUndoBtn),
                 infoLabel,
-                undoBtn
-        );
+                undoBtn);
         box.setPadding(new Insets(16));
 
         return new Tab("Undo Merge", box);
@@ -441,7 +444,8 @@ public class ClassControlDialog {
     /** Current effective class names from QuPath's available PathClasses (FX thread). */
     private List<String> currentEffectiveClassNames() {
         return qupath.getAvailablePathClasses().stream()
-                .filter(pc -> pc != null && pc.getName() != null && !pc.getName().isEmpty())
+                .filter(pc ->
+                        pc != null && pc.getName() != null && !pc.getName().isEmpty())
                 .map(PathClass::getName)
                 .collect(Collectors.toList());
     }
@@ -464,8 +468,10 @@ public class ClassControlDialog {
             for (var path : ClassManager.listImageLabelFiles(project)) {
                 String json = java.nio.file.Files.readString(path, java.nio.charset.StandardCharsets.UTF_8);
                 @SuppressWarnings("unchecked")
-                var map = new com.google.gson.Gson().<java.util.Map<String, String>>fromJson(
-                        json, new com.google.gson.reflect.TypeToken<java.util.Map<String, String>>() {}.getType());
+                var map = new com.google.gson.Gson()
+                        .<java.util.Map<String, String>>fromJson(
+                                json,
+                                new com.google.gson.reflect.TypeToken<java.util.Map<String, String>>() {}.getType());
                 if (map != null) {
                     for (String raw : map.values()) {
                         int start = raw.indexOf("-mergedInto(");

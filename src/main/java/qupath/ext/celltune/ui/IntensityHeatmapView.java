@@ -1,5 +1,15 @@
 package qupath.ext.celltune.ui;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
@@ -24,6 +34,7 @@ import javafx.scene.text.TextAlignment;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.IntensityHeatmap;
@@ -33,19 +44,6 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
-
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * JavaFX window that renders a mean marker-intensity heatmap grouped by
@@ -83,13 +81,14 @@ public class IntensityHeatmapView {
     // Layout constants
     private static final int CELL_W = 68;
     private static final int CELL_H = 34;
-    private static final int LEFT_MARGIN_MIN = 160;  // minimum room for class names
-    private static final int LEFT_MARGIN_MAX = 460;  // cap so wide labels don't dominate
-    private static final int LABEL_PAD = 16;          // gap between label and grid
-    private static final int TOP_MARGIN = 70;     // title + spacing
-    private static final int BOTTOM_MARGIN = 150;  // rotated marker labels
-    private static final int COLORBAR_W = 90;      // colour scale on the right
-    private static final Font TITLE_FONT = Font.font("SansSerif", Font.getDefault().getSize() + 3);
+    private static final int LEFT_MARGIN_MIN = 160; // minimum room for class names
+    private static final int LEFT_MARGIN_MAX = 460; // cap so wide labels don't dominate
+    private static final int LABEL_PAD = 16; // gap between label and grid
+    private static final int TOP_MARGIN = 70; // title + spacing
+    private static final int BOTTOM_MARGIN = 150; // rotated marker labels
+    private static final int COLORBAR_W = 90; // colour scale on the right
+    private static final Font TITLE_FONT =
+            Font.font("SansSerif", Font.getDefault().getSize() + 3);
     private static final Font LABEL_FONT = Font.font("SansSerif", 12);
     private static final Font VALUE_FONT = Font.font("SansSerif", 10);
 
@@ -100,8 +99,12 @@ public class IntensityHeatmapView {
      * @param markerFeatures   ordered full marker-mean measurement names
      * @param current          heatmap for the current image
      */
-    public IntensityHeatmapView(Stage owner, QuPathGUI qupath, String currentImageName,
-                                List<String> markerFeatures, IntensityHeatmap.Result current) {
+    public IntensityHeatmapView(
+            Stage owner,
+            QuPathGUI qupath,
+            String currentImageName,
+            List<String> markerFeatures,
+            IntensityHeatmap.Result current) {
         this.qupath = qupath;
         this.currentImageName = currentImageName;
         this.markerFeatures = List.copyOf(markerFeatures);
@@ -131,8 +134,8 @@ public class IntensityHeatmapView {
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> stage.close());
 
-        HBox buttons = new HBox(8, showValuesBox, new javafx.scene.layout.Region(),
-                exportPngBtn, exportCsvBtn, closeBtn);
+        HBox buttons =
+                new HBox(8, showValuesBox, new javafx.scene.layout.Region(), exportPngBtn, exportCsvBtn, closeBtn);
         buttons.setAlignment(Pos.CENTER_LEFT);
         buttons.setPadding(new Insets(8));
         HBox.setHgrow(buttons.getChildren().get(1), Priority.ALWAYS);
@@ -220,32 +223,34 @@ public class IntensityHeatmapView {
         }
 
         summaryLabel.setText("Loading \u201c" + selected + "\u201d\u2026");
-        new Thread(() -> {
-            try {
-                IntensityHeatmap.Result result = ALL_IMAGES_LABEL.equals(selected)
-                        ? computeForAllImages(project)
-                        : computeForImage(project, selected);
-                if (result == null) {
-                    Platform.runLater(() -> summaryLabel.setText(
-                            "No cells found for \u201c" + selected + "\u201d."));
-                    return;
-                }
-                Platform.runLater(() -> {
-                    cache.put(selected, result);
-                    current = result;
-                    currentTitle = selected;
-                    redraw();
-                });
-            } catch (Exception ex) {
-                logger.warn("Failed to compute intensity heatmap for '{}'", selected, ex);
-                Platform.runLater(() -> summaryLabel.setText(
-                        "Failed to load \u201c" + selected + "\u201d: " + ex.getMessage()));
-            }
-        }, "CellTune-IntensityHeatmap-Loader").start();
+        new Thread(
+                        () -> {
+                            try {
+                                IntensityHeatmap.Result result = ALL_IMAGES_LABEL.equals(selected)
+                                        ? computeForAllImages(project)
+                                        : computeForImage(project, selected);
+                                if (result == null) {
+                                    Platform.runLater(() ->
+                                            summaryLabel.setText("No cells found for \u201c" + selected + "\u201d."));
+                                    return;
+                                }
+                                Platform.runLater(() -> {
+                                    cache.put(selected, result);
+                                    current = result;
+                                    currentTitle = selected;
+                                    redraw();
+                                });
+                            } catch (Exception ex) {
+                                logger.warn("Failed to compute intensity heatmap for '{}'", selected, ex);
+                                Platform.runLater(() -> summaryLabel.setText(
+                                        "Failed to load \u201c" + selected + "\u201d: " + ex.getMessage()));
+                            }
+                        },
+                        "CellTune-IntensityHeatmap-Loader")
+                .start();
     }
 
-    private IntensityHeatmap.Result computeForImage(Project<?> project, String imageName)
-            throws IOException {
+    private IntensityHeatmap.Result computeForImage(Project<?> project, String imageName) throws IOException {
         ProjectImageEntry<?> entry = findEntry(project, imageName);
         if (entry == null) {
             return null;
@@ -275,8 +280,7 @@ public class IntensityHeatmapView {
                     any = true;
                 }
             } catch (Exception ex) {
-                logger.warn("Skipping '{}' in project heatmap: {}",
-                        entry.getImageName(), ex.getMessage());
+                logger.warn("Skipping '{}' in project heatmap: {}", entry.getImageName(), ex.getMessage());
             }
         }
         return any ? acc.build() : null;
@@ -291,8 +295,7 @@ public class IntensityHeatmapView {
         return null;
     }
 
-    private static Collection<PathObject> detections(
-            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy) {
+    private static Collection<PathObject> detections(qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy) {
         return hierarchy.getObjects(null, PathObject.class).stream()
                 .filter(PathObjectFilter.DETECTIONS_ALL)
                 .toList();
@@ -335,8 +338,10 @@ public class IntensityHeatmapView {
             gc.setFill(Color.gray(0.3));
             gc.setFont(LABEL_FONT);
             gc.setTextAlign(TextAlignment.CENTER);
-            gc.fillText("No classified cells with marker measurements to display.",
-                    canvas.getWidth() / 2.0, canvas.getHeight() / 2.0);
+            gc.fillText(
+                    "No classified cells with marker measurements to display.",
+                    canvas.getWidth() / 2.0,
+                    canvas.getHeight() / 2.0);
             summaryLabel.setText("");
             return;
         }
@@ -373,8 +378,10 @@ public class IntensityHeatmapView {
         gc.setFont(TITLE_FONT);
         gc.setFill(Color.BLACK);
         gc.setTextAlign(TextAlignment.CENTER);
-        gc.fillText("Mean marker expression per phenotype  (colour = z-score across phenotypes)",
-                gridLeft + nMarkers * CELL_W / 2.0, 26);
+        gc.fillText(
+                "Mean marker expression per phenotype  (colour = z-score across phenotypes)",
+                gridLeft + nMarkers * CELL_W / 2.0,
+                26);
         gc.setFont(Font.font("SansSerif", 12));
         gc.fillText(currentTitle, gridLeft + nMarkers * CELL_W / 2.0, 46);
 
@@ -398,8 +405,7 @@ public class IntensityHeatmapView {
                     gc.setFill(t > 0.6 ? Color.WHITE : Color.gray(0.15));
                     gc.setFont(VALUE_FONT);
                     gc.setTextAlign(TextAlignment.CENTER);
-                    gc.fillText(formatValue(meanVal),
-                            x + CELL_W / 2.0, y + CELL_H / 2.0 + 4);
+                    gc.fillText(formatValue(meanVal), x + CELL_W / 2.0, y + CELL_H / 2.0 + 4);
                 }
             }
         }
@@ -428,8 +434,7 @@ public class IntensityHeatmapView {
             gc.restore();
         }
 
-        drawColorbar(gc, gridLeft + nMarkers * CELL_W + 24, gridTop,
-                nClasses * CELL_H, scale);
+        drawColorbar(gc, gridLeft + nMarkers * CELL_W + 24, gridTop, nClasses * CELL_H, scale);
 
         updateSummary(r);
     }
@@ -553,8 +558,7 @@ public class IntensityHeatmapView {
 
             for (int i = 0; i < r.classNames().size(); i++) {
                 StringBuilder row = new StringBuilder();
-                row.append(csvQuote(r.classNames().get(i))).append(',')
-                        .append(r.classCounts()[i]);
+                row.append(csvQuote(r.classNames().get(i))).append(',').append(r.classCounts()[i]);
                 for (int j = 0; j < r.markers().size(); j++) {
                     double v = r.meanIntensity()[i][j];
                     row.append(',').append(Double.isNaN(v) ? "NA" : v);

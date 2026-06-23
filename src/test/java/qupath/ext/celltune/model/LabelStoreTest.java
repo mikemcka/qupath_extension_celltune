@@ -1,11 +1,10 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Map;
 import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class LabelStoreTest {
 
@@ -92,7 +91,7 @@ class LabelStoreTest {
         store.setLabel("cell-2", "NK");
 
         var other = new LabelStore("secondary");
-        other.setLabel("cell-2", "B");  // overwrites "NK"
+        other.setLabel("cell-2", "B"); // overwrites "NK"
         other.setLabel("cell-3", "Macro");
 
         store.mergeFrom(other);

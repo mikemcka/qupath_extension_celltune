@@ -1,5 +1,23 @@
 package qupath.ext.celltune;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
+import java.awt.image.Raster;
+import java.awt.image.WritableRaster;
+import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.ResourceBundle;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
@@ -31,24 +49,6 @@ import qupath.lib.images.servers.TileRequest;
 import qupath.lib.objects.PathObject;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.interfaces.ROI;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.Rectangle;
-import java.awt.RenderingHints;
-import java.awt.Shape;
-import java.awt.geom.AffineTransform;
-import java.awt.image.BufferedImage;
-import java.awt.image.Raster;
-import java.awt.image.WritableRaster;
-import java.io.File;
-import java.io.IOException;
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.ResourceBundle;
-import java.util.stream.Collectors;
 
 /**
  * Export annotation ROIs from the current image as polygon-masked, pyramidal
@@ -61,8 +61,7 @@ import java.util.stream.Collectors;
  */
 final class AnnotationRegionExporter {
 
-    private static final ResourceBundle resources =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle resources = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
     private static final String EXTENSION_NAME = resources.getString("name");
     private static final Logger logger = LoggerFactory.getLogger(AnnotationRegionExporter.class);
 
@@ -70,8 +69,7 @@ final class AnnotationRegionExporter {
     private static final String LARGE_EXPORT_REPO =
             "https://github.com/BioimageAnalysisCoreWEHI/export_large_annotation_regions";
 
-    private AnnotationRegionExporter() {
-    }
+    private AnnotationRegionExporter() {}
 
     /**
      * Export one or more annotation ROIs from the current image as polygon-masked
@@ -107,8 +105,7 @@ final class AnnotationRegionExporter {
         CheckBox pyramidCb = new CheckBox("Build pyramid");
         pyramidCb.setSelected(true);
 
-        Label warning = new Label(
-                "Exports the chosen annotation region(s) from the current image as polygon-masked "
+        Label warning = new Label("Exports the chosen annotation region(s) from the current image as polygon-masked "
                 + "OME-TIFF(s). Pixels are streamed tile-by-tile, but very large or batch exports "
                 + "are better run headless on HPC with the dedicated pipeline:");
         warning.setWrapText(true);
@@ -167,7 +164,8 @@ final class AnnotationRegionExporter {
         }
         nThreads = Math.max(1, Math.min(nThreads, cores));
 
-        String namesRaw = namesField.getText() == null ? "" : namesField.getText().strip();
+        String namesRaw =
+                namesField.getText() == null ? "" : namesField.getText().strip();
         List<String> targetNames = new ArrayList<>();
         if (!namesRaw.isEmpty()) {
             for (String n : namesRaw.split(",")) {
@@ -188,7 +186,8 @@ final class AnnotationRegionExporter {
         if (toExport.isEmpty()) {
             String available = allAnnotations.stream()
                     .map(a -> a.getName() == null ? "(unnamed)" : a.getName())
-                    .distinct().collect(Collectors.joining(", "));
+                    .distinct()
+                    .collect(Collectors.joining(", "));
             Dialogs.showErrorMessage(EXTENSION_NAME, "No annotations matched.\nAvailable: " + available);
             return;
         }
@@ -208,9 +207,7 @@ final class AnnotationRegionExporter {
         var entry = project != null ? project.getEntry(imageData) : null;
         if (entry != null && entry.getImageName() != null) imageName = entry.getImageName();
         if (imageName == null || imageName.isBlank()) imageName = "image";
-        String imageStem = imageName
-                .replaceAll("(?i)\\.ome\\.tiff?$", "")
-                .replaceAll("(?i)\\.tiff?$", "");
+        String imageStem = imageName.replaceAll("(?i)\\.ome\\.tiff?$", "").replaceAll("(?i)\\.tiff?$", "");
         final String safeStem = imageStem.replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
 
         final List<PathObject> exportList = toExport;
@@ -248,72 +245,85 @@ final class AnnotationRegionExporter {
         progressStage.setScene(new Scene(progressRoot, 460, 300));
         progressStage.show();
 
-        Thread worker = new Thread(() -> {
-            // The OME-TIFF writer ships with the Bio-Formats extension, which is loaded at
-            // runtime but not on the compile classpath — fail fast with a clear message.
-            try {
-                Class.forName("qupath.lib.images.writers.ome.OMEPyramidWriter$Builder");
-            } catch (Throwable t) {
-                Platform.runLater(() -> {
-                    progressStage.close();
-                    Dialogs.showErrorMessage(EXTENSION_NAME,
-                            "OME-TIFF writer unavailable (the Bio-Formats extension is not loaded in this QuPath instance).");
-                });
-                return;
-            }
-
-            int ok = 0, failed = 0, done = 0;
-            HashMap<String, Integer> nameCount = new HashMap<>();
-            for (PathObject ann : exportList) {
-                String rawName = (ann.getName() != null && !ann.getName().isBlank())
-                        ? ann.getName().strip() : "Unnamed";
-                final int dStart = done + 1;
-                Platform.runLater(() ->
-                        statusLabel.setText("Exporting " + dStart + " / " + total + ": " + rawName + "…"));
-                String safeName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
-                int c = nameCount.merge(safeName, 1, Integer::sum);
-                String suffix = c > 1 ? "_" + c : "";
-                File outFile = new File(outDir, safeStem + "__" + safeName + suffix + ".ome.tif");
-                RoiMaskedServer masked = null;
-                String logLine;
-                try {
-                    masked = new RoiMaskedServer(server, ann.getROI(), ds);
-                    writeOmePyramid(masked, compression, ts, threads, bigTiff, pyramid, outFile.getAbsolutePath());
-                    ok++;
-                    logger.info("[CellTune] Exported annotation '{}' -> {}", rawName, outFile.getAbsolutePath());
-                    logLine = "✓ " + rawName + " -> " + outFile.getName() + "\n";
-                } catch (Throwable t) {
-                    failed++;
-                    logger.error("[CellTune] Export failed for '{}': {}", rawName, t.toString(), t);
-                    logLine = "✗ " + rawName + ": " + t + "\n";
-                } finally {
-                    if (masked != null) {
-                        try { masked.close(); } catch (Exception ignored) { /* best effort */ }
+        Thread worker = new Thread(
+                () -> {
+                    // The OME-TIFF writer ships with the Bio-Formats extension, which is loaded at
+                    // runtime but not on the compile classpath — fail fast with a clear message.
+                    try {
+                        Class.forName("qupath.lib.images.writers.ome.OMEPyramidWriter$Builder");
+                    } catch (Throwable t) {
+                        Platform.runLater(() -> {
+                            progressStage.close();
+                            Dialogs.showErrorMessage(
+                                    EXTENSION_NAME,
+                                    "OME-TIFF writer unavailable (the Bio-Formats extension is not loaded in this QuPath instance).");
+                        });
+                        return;
                     }
-                }
-                done++;
-                final int dDone = done;
-                final String fLogLine = logLine;
-                Platform.runLater(() -> {
-                    progressBar.setProgress((double) dDone / total);
-                    statusLabel.setText("Processed " + dDone + " / " + total);
-                    logArea.appendText(fLogLine);
-                });
-            }
-            final int fOk = ok, fFailed = failed;
-            Platform.runLater(() -> {
-                statusLabel.setText(fFailed == 0
-                        ? "Done — exported " + fOk + " region(s) to " + outDir.getName() + "."
-                        : "Done — exported " + fOk + " region(s); " + fFailed + " failed (see log).");
-                closeBtn.setDisable(false);
-                if (fFailed == 0)
-                    Dialogs.showInfoNotification(EXTENSION_NAME,
-                            "Exported " + fOk + " region(s) to " + outDir.getName() + ".");
-                else
-                    Dialogs.showWarningNotification(EXTENSION_NAME,
-                            "Exported " + fOk + " region(s); " + fFailed + " failed (see log).");
-            });
-        }, "celltune-export-annotations");
+
+                    int ok = 0, failed = 0, done = 0;
+                    HashMap<String, Integer> nameCount = new HashMap<>();
+                    for (PathObject ann : exportList) {
+                        String rawName =
+                                (ann.getName() != null && !ann.getName().isBlank())
+                                        ? ann.getName().strip()
+                                        : "Unnamed";
+                        final int dStart = done + 1;
+                        Platform.runLater(() ->
+                                statusLabel.setText("Exporting " + dStart + " / " + total + ": " + rawName + "…"));
+                        String safeName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
+                        int c = nameCount.merge(safeName, 1, Integer::sum);
+                        String suffix = c > 1 ? "_" + c : "";
+                        File outFile = new File(outDir, safeStem + "__" + safeName + suffix + ".ome.tif");
+                        RoiMaskedServer masked = null;
+                        String logLine;
+                        try {
+                            masked = new RoiMaskedServer(server, ann.getROI(), ds);
+                            writeOmePyramid(
+                                    masked, compression, ts, threads, bigTiff, pyramid, outFile.getAbsolutePath());
+                            ok++;
+                            logger.info(
+                                    "[CellTune] Exported annotation '{}' -> {}", rawName, outFile.getAbsolutePath());
+                            logLine = "✓ " + rawName + " -> " + outFile.getName() + "\n";
+                        } catch (Throwable t) {
+                            failed++;
+                            logger.error("[CellTune] Export failed for '{}': {}", rawName, t.toString(), t);
+                            logLine = "✗ " + rawName + ": " + t + "\n";
+                        } finally {
+                            if (masked != null) {
+                                try {
+                                    masked.close();
+                                } catch (Exception ignored) {
+                                    /* best effort */
+                                }
+                            }
+                        }
+                        done++;
+                        final int dDone = done;
+                        final String fLogLine = logLine;
+                        Platform.runLater(() -> {
+                            progressBar.setProgress((double) dDone / total);
+                            statusLabel.setText("Processed " + dDone + " / " + total);
+                            logArea.appendText(fLogLine);
+                        });
+                    }
+                    final int fOk = ok, fFailed = failed;
+                    Platform.runLater(() -> {
+                        statusLabel.setText(
+                                fFailed == 0
+                                        ? "Done — exported " + fOk + " region(s) to " + outDir.getName() + "."
+                                        : "Done — exported " + fOk + " region(s); " + fFailed + " failed (see log).");
+                        closeBtn.setDisable(false);
+                        if (fFailed == 0)
+                            Dialogs.showInfoNotification(
+                                    EXTENSION_NAME, "Exported " + fOk + " region(s) to " + outDir.getName() + ".");
+                        else
+                            Dialogs.showWarningNotification(
+                                    EXTENSION_NAME,
+                                    "Exported " + fOk + " region(s); " + fFailed + " failed (see log).");
+                    });
+                },
+                "celltune-export-annotations");
         worker.setDaemon(true);
         worker.start();
     }
@@ -322,15 +332,21 @@ final class AnnotationRegionExporter {
      * Write an image server as a pyramidal OME-TIFF via the Bio-Formats {@code OMEPyramidWriter},
      * invoked reflectively because that class is only present on QuPath's runtime classpath.
      */
-    private static void writeOmePyramid(ImageServer<BufferedImage> server, String compressionName,
-                                        int tileSize, int nThreads, boolean bigTiff,
-                                        boolean buildPyramid, String outputPath) throws Exception {
+    private static void writeOmePyramid(
+            ImageServer<BufferedImage> server,
+            String compressionName,
+            int tileSize,
+            int nThreads,
+            boolean bigTiff,
+            boolean buildPyramid,
+            String outputPath)
+            throws Exception {
         Class<?> builderCls = Class.forName("qupath.lib.images.writers.ome.OMEPyramidWriter$Builder");
         Class<?> compCls = Class.forName("qupath.lib.images.writers.ome.OMEPyramidWriter$CompressionType");
         Class<?> serverIface = Class.forName("qupath.lib.images.servers.ImageServer");
         Object builder = builderCls.getConstructor(serverIface).newInstance(server);
 
-        builder = applyBuilderOption(builder, "tileSize", new Class<?>[]{int.class}, new Object[]{tileSize});
+        builder = applyBuilderOption(builder, "tileSize", new Class<?>[] {int.class}, new Object[] {tileSize});
         Object compression;
         try {
             compression = compCls.getMethod("valueOf", String.class)
@@ -338,12 +354,13 @@ final class AnnotationRegionExporter {
         } catch (Exception e) {
             compression = compCls.getMethod("valueOf", String.class).invoke(null, "LZW");
         }
-        builder = applyBuilderOption(builder, "compression", new Class<?>[]{compCls}, new Object[]{compression});
-        builder = applyBuilderOption(builder, "parallelize", new Class<?>[]{int.class}, new Object[]{nThreads});
-        builder = applyBuilderOption(builder, "bigTiff", new Class<?>[]{boolean.class}, new Object[]{bigTiff});
+        builder = applyBuilderOption(builder, "compression", new Class<?>[] {compCls}, new Object[] {compression});
+        builder = applyBuilderOption(builder, "parallelize", new Class<?>[] {int.class}, new Object[] {nThreads});
+        builder = applyBuilderOption(builder, "bigTiff", new Class<?>[] {boolean.class}, new Object[] {bigTiff});
         if (buildPyramid)
-            builder = applyBuilderOption(builder, "downsamples",
-                    new Class<?>[]{double[].class}, new Object[]{new double[]{1.0, 4.0, 16.0}});
+            builder = applyBuilderOption(
+                    builder, "downsamples", new Class<?>[] {double[].class}, new Object[] {new double[] {1.0, 4.0, 16.0}
+                    });
 
         Object writer = builderCls.getMethod("build").invoke(builder);
         writer.getClass().getMethod("writeSeries", String.class).invoke(writer, outputPath);
@@ -387,14 +404,36 @@ final class AnnotationRegionExporter {
                     + "|x=" + cropX + "|y=" + cropY + "|w=" + cropW + "|h=" + cropH
                     + "|ds=" + downsample + ")";
             this.metadata = new ImageServerMetadata.Builder(wrapped.getMetadata())
-                    .width(cropW).height(cropH).levelsFromDownsamples(1.0).build();
+                    .width(cropW)
+                    .height(cropH)
+                    .levelsFromDownsamples(1.0)
+                    .build();
         }
 
-        @Override public ImageServerMetadata getOriginalMetadata() { return metadata; }
-        @Override public String getServerType() { return "ROI Masked Server"; }
-        @Override protected ImageServerBuilder.ServerBuilder<BufferedImage> createServerBuilder() { return null; }
-        @Override protected String createID() { return serverId; }
-        @Override public Collection<URI> getURIs() { return wrapped.getURIs(); }
+        @Override
+        public ImageServerMetadata getOriginalMetadata() {
+            return metadata;
+        }
+
+        @Override
+        public String getServerType() {
+            return "ROI Masked Server";
+        }
+
+        @Override
+        protected ImageServerBuilder.ServerBuilder<BufferedImage> createServerBuilder() {
+            return null;
+        }
+
+        @Override
+        protected String createID() {
+            return serverId;
+        }
+
+        @Override
+        public Collection<URI> getURIs() {
+            return wrapped.getURIs();
+        }
 
         @Override
         protected BufferedImage readTile(TileRequest tileRequest) throws IOException {
@@ -403,8 +442,8 @@ final class AnnotationRegionExporter {
             int tileY = (int) Math.floor(cropY + tileRequest.getTileY() * sourceDownsample);
             int tileW = (int) Math.ceil(tileRequest.getTileWidth() * sourceDownsample);
             int tileH = (int) Math.ceil(tileRequest.getTileHeight() * sourceDownsample);
-            RegionRequest request = RegionRequest.createInstance(
-                    wrapped.getPath(), sourceDownsample, tileX, tileY, tileW, tileH);
+            RegionRequest request =
+                    RegionRequest.createInstance(wrapped.getPath(), sourceDownsample, tileX, tileY, tileW, tileH);
             BufferedImage tile = wrapped.readRegion(request);
             if (tile == null) return null;
 
@@ -427,8 +466,7 @@ final class AnnotationRegionExporter {
             // Fast path 2: tile fully outside the ROI — zero everything.
             if (!scaledShape.intersects(tileBounds)) {
                 for (int b = 0; b < nBands; b++)
-                    for (int y = 0; y < h; y++)
-                        tileRaster.setSamples(0, y, w, 1, b, zeroRow);
+                    for (int y = 0; y < h; y++) tileRaster.setSamples(0, y, w, 1, b, zeroRow);
                 return tile;
             }
 
@@ -451,8 +489,7 @@ final class AnnotationRegionExporter {
                     while (x < w && maskRow[x] == 0) x++;
                     int runLen = x - runStart;
                     if (runLen > 0)
-                        for (int b = 0; b < nBands; b++)
-                            tileRaster.setSamples(runStart, y, runLen, 1, b, zeroRow);
+                        for (int b = 0; b < nBands; b++) tileRaster.setSamples(runStart, y, runLen, 1, b, zeroRow);
                 }
             }
             return tile;

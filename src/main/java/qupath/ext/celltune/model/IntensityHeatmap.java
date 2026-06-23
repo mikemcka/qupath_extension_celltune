@@ -1,14 +1,13 @@
 package qupath.ext.celltune.model;
 
-import qupath.lib.objects.PathObject;
-import qupath.lib.objects.classes.PathClass;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.classes.PathClass;
 
 /**
  * Computes a mean marker-intensity heatmap grouped by predicted cell class.
@@ -50,8 +49,7 @@ public final class IntensityHeatmap {
             List<String> markers,
             double[][] meanIntensity,
             double[][] zScores,
-            long[] classCounts) {
-    }
+            long[] classCounts) {}
 
     /**
      * Discover marker columns from a list of measurement names.
@@ -73,8 +71,7 @@ public final class IntensityHeatmap {
             return out;
         }
         for (String name : featureNames) {
-            if (name != null && name.endsWith(MARKER_MEAN_SUFFIX)
-                    && name.length() > MARKER_MEAN_SUFFIX.length()) {
+            if (name != null && name.endsWith(MARKER_MEAN_SUFFIX) && name.length() > MARKER_MEAN_SUFFIX.length()) {
                 String label = markerLabel(name);
                 // Only plain channel markers — skip derived/aggregated features
                 // whose marker name itself contains a ": " segment.
@@ -98,8 +95,7 @@ public final class IntensityHeatmap {
         }
         if (markerFeatureName.endsWith(MARKER_MEAN_SUFFIX)
                 && markerFeatureName.length() > MARKER_MEAN_SUFFIX.length()) {
-            return markerFeatureName.substring(
-                    0, markerFeatureName.length() - MARKER_MEAN_SUFFIX.length());
+            return markerFeatureName.substring(0, markerFeatureName.length() - MARKER_MEAN_SUFFIX.length());
         }
         return markerFeatureName;
     }
@@ -241,8 +237,7 @@ public final class IntensityHeatmap {
          */
         public Result build() {
             List<String> classNames = new ArrayList<>(sums.keySet());
-            classNames.sort(Comparator
-                    .comparing((String s) -> s.equals(UNCLASSIFIED))
+            classNames.sort(Comparator.comparing((String s) -> s.equals(UNCLASSIFIED))
                     .thenComparing(Comparator.naturalOrder()));
 
             int nClasses = classNames.size();
@@ -261,12 +256,7 @@ public final class IntensityHeatmap {
             }
 
             double[][] z = zScoreByColumn(means);
-            return new Result(
-                    List.copyOf(classNames),
-                    List.copyOf(markerLabels),
-                    means,
-                    z,
-                    classCountArr);
+            return new Result(List.copyOf(classNames), List.copyOf(markerLabels), means, z, classCountArr);
         }
     }
 }

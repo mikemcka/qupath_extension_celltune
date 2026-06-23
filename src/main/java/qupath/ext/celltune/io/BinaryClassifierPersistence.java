@@ -1,13 +1,5 @@
 package qupath.ext.celltune.io;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.classifier.ModelType;
-import qupath.ext.celltune.io.ProjectStateManager.BinaryImportedTrainingData;
-import qupath.ext.celltune.io.ProjectStateManager.SavedState;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -16,6 +8,13 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.classifier.ModelType;
+import qupath.ext.celltune.io.ProjectStateManager.BinaryImportedTrainingData;
+import qupath.ext.celltune.io.ProjectStateManager.SavedState;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.lib.projects.Project;
 
 /**
  * Per-marker binary-classifier persistence.
@@ -46,17 +45,19 @@ final class BinaryClassifierPersistence {
         return binaryDir;
     }
 
-    static Path saveBinaryState(Project<?> project,
-                                String sanitizedMarkerName,
-                                LabelStore labelStore,
-                                List<String> featureNames,
-                                List<String> classNames,
-                                byte[] xgboostBytes,
-                                byte[] lightgbmBytes,
-                                byte[] rfModel1Bytes,
-                                byte[] rfModel2Bytes,
-                                ModelType model1Type,
-                                ModelType model2Type) throws IOException {
+    static Path saveBinaryState(
+            Project<?> project,
+            String sanitizedMarkerName,
+            LabelStore labelStore,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes,
+            byte[] rfModel1Bytes,
+            byte[] rfModel2Bytes,
+            ModelType model1Type,
+            ModelType model2Type)
+            throws IOException {
         Path binaryDir = getBinaryDir(project);
         Path outPath = binaryDir.resolve(sanitizedMarkerName + ".json");
 
@@ -66,10 +67,11 @@ final class BinaryClassifierPersistence {
         state.featureNames = List.copyOf(featureNames);
         state.classNames = List.copyOf(classNames);
         state.labels = labelStore.getAllLabels();
-        if (xgboostBytes != null)  state.xgboostModelBase64  = Base64.getEncoder().encodeToString(xgboostBytes);
-        if (lightgbmBytes != null) state.lightgbmModelBase64 = Base64.getEncoder().encodeToString(lightgbmBytes);
-        if (rfModel1Bytes != null) state.rfModel1Base64       = Base64.getEncoder().encodeToString(rfModel1Bytes);
-        if (rfModel2Bytes != null) state.rfModel2Base64       = Base64.getEncoder().encodeToString(rfModel2Bytes);
+        if (xgboostBytes != null) state.xgboostModelBase64 = Base64.getEncoder().encodeToString(xgboostBytes);
+        if (lightgbmBytes != null)
+            state.lightgbmModelBase64 = Base64.getEncoder().encodeToString(lightgbmBytes);
+        if (rfModel1Bytes != null) state.rfModel1Base64 = Base64.getEncoder().encodeToString(rfModel1Bytes);
+        if (rfModel2Bytes != null) state.rfModel2Base64 = Base64.getEncoder().encodeToString(rfModel2Bytes);
         state.model1Type = model1Type != null ? model1Type.name() : ModelType.XGBOOST.name();
         state.model2Type = model2Type != null ? model2Type.name() : ModelType.LIGHTGBM.name();
 
@@ -78,8 +80,7 @@ final class BinaryClassifierPersistence {
         return outPath;
     }
 
-    static SavedState loadBinaryState(Project<?> project,
-                                      String sanitizedMarkerName) throws IOException {
+    static SavedState loadBinaryState(Project<?> project, String sanitizedMarkerName) throws IOException {
         Path binaryDir = getBinaryDir(project);
         Path statePath = binaryDir.resolve(sanitizedMarkerName + ".json");
         if (!Files.exists(statePath)) return null;
@@ -87,9 +88,8 @@ final class BinaryClassifierPersistence {
         return ProjectStateManager.GSON.fromJson(json, SavedState.class);
     }
 
-    static void saveBinaryLabels(Project<?> project,
-                                 String sanitizedMarkerName,
-                                 LabelStore labelStore) throws IOException {
+    static void saveBinaryLabels(Project<?> project, String sanitizedMarkerName, LabelStore labelStore)
+            throws IOException {
         Path binaryDir = getBinaryDir(project);
         Path statePath = binaryDir.resolve(sanitizedMarkerName + ".json");
 
@@ -109,8 +109,7 @@ final class BinaryClassifierPersistence {
         logger.info("Saved binary labels for '{}' ({} labels)", sanitizedMarkerName, labelStore.size());
     }
 
-    static LabelStore loadBinaryLabels(Project<?> project,
-                                       String sanitizedMarkerName) throws IOException {
+    static LabelStore loadBinaryLabels(Project<?> project, String sanitizedMarkerName) throws IOException {
         SavedState state = loadBinaryState(project, sanitizedMarkerName);
         if (state == null || state.labels == null) return new LabelStore(sanitizedMarkerName);
         return ProjectStateManager.toLabelStore(state);
@@ -132,10 +131,12 @@ final class BinaryClassifierPersistence {
         return importedDir;
     }
 
-    static Path saveBinaryImportedTrainingData(Project<?> project,
-                                               String sanitizedMarkerName,
-                                               List<String> featureNames,
-                                               List<GroundTruthIO.TrainingRow> rows) throws IOException {
+    static Path saveBinaryImportedTrainingData(
+            Project<?> project,
+            String sanitizedMarkerName,
+            List<String> featureNames,
+            List<GroundTruthIO.TrainingRow> rows)
+            throws IOException {
         String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);
         Path importedDir = getBinaryImportedDir(project);
         Path outPath = importedDir.resolve(safeMarker + ".json");
@@ -156,8 +157,7 @@ final class BinaryClassifierPersistence {
      *
      * @return true if a payload file existed and was deleted
      */
-    static boolean deleteBinaryImportedTrainingData(Project<?> project,
-                                                    String sanitizedMarkerName) throws IOException {
+    static boolean deleteBinaryImportedTrainingData(Project<?> project, String sanitizedMarkerName) throws IOException {
         String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);
         Path importedDir = getBinaryImportedDir(project);
         Path inPath = importedDir.resolve(safeMarker + ".json");
@@ -168,8 +168,8 @@ final class BinaryClassifierPersistence {
         return deleted;
     }
 
-    static BinaryImportedTrainingData loadBinaryImportedTrainingData(Project<?> project,
-                                                                     String sanitizedMarkerName) throws IOException {
+    static BinaryImportedTrainingData loadBinaryImportedTrainingData(Project<?> project, String sanitizedMarkerName)
+            throws IOException {
         String safeMarker = BinaryClassifierRegistry.sanitizeMarkerName(sanitizedMarkerName);
         Path importedDir = getBinaryImportedDir(project);
         Path inPath = importedDir.resolve(safeMarker + ".json");
@@ -188,7 +188,8 @@ final class BinaryClassifierPersistence {
         return new BinaryImportedTrainingData(featureNames, rows);
     }
 
-    private static List<GroundTruthIO.TrainingRow> decodeSavedTrainingRows(List<SavedState.SavedTrainingRow> savedRows) {
+    private static List<GroundTruthIO.TrainingRow> decodeSavedTrainingRows(
+            List<SavedState.SavedTrainingRow> savedRows) {
         if (savedRows == null || savedRows.isEmpty()) {
             return List.of();
         }

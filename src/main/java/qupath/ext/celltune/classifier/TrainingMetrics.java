@@ -47,10 +47,8 @@ public record TrainingMetrics(
      * @param trueLabels  ground-truth class indices (length n)
      * @param predProba   per-sample class probabilities, [n][nClasses]
      */
-    public static TrainingMetrics compute(String label,
-                                          List<String> classNames,
-                                          float[] trueLabels,
-                                          float[][] predProba) {
+    public static TrainingMetrics compute(
+            String label, List<String> classNames, float[] trueLabels, float[][] predProba) {
         int n = predProba.length;
         int nClasses = classNames.size();
         int[][] cm = new int[nClasses][nClasses];
@@ -73,9 +71,9 @@ public record TrainingMetrics(
         }
 
         double[] precision = new double[nClasses];
-        double[] recall    = new double[nClasses];
-        double[] f1        = new double[nClasses];
-        int[]    support   = new int[nClasses];
+        double[] recall = new double[nClasses];
+        double[] f1 = new double[nClasses];
+        int[] support = new int[nClasses];
 
         double weightedF1Sum = 0;
         double macroF1Sum = 0;
@@ -87,23 +85,20 @@ public record TrainingMetrics(
                 rowSum += cm[c][j];
                 colSum += cm[j][c];
             }
-            support[c]   = rowSum;
+            support[c] = rowSum;
             precision[c] = colSum > 0 ? (double) tp / colSum : 0;
-            recall[c]    = rowSum > 0 ? (double) tp / rowSum : 0;
-            f1[c] = (precision[c] + recall[c]) > 0
-                    ? 2.0 * precision[c] * recall[c] / (precision[c] + recall[c])
-                    : 0;
-            macroF1Sum    += f1[c];
+            recall[c] = rowSum > 0 ? (double) tp / rowSum : 0;
+            f1[c] = (precision[c] + recall[c]) > 0 ? 2.0 * precision[c] * recall[c] / (precision[c] + recall[c]) : 0;
+            macroF1Sum += f1[c];
             weightedF1Sum += f1[c] * support[c];
         }
 
-        double accuracy   = n > 0 ? (double) correct / n : 0;
-        double macroF1    = nClasses > 0 ? macroF1Sum / nClasses : 0;
+        double accuracy = n > 0 ? (double) correct / n : 0;
+        double macroF1 = nClasses > 0 ? macroF1Sum / nClasses : 0;
         double weightedF1 = n > 0 ? weightedF1Sum / n : 0;
 
-        return new TrainingMetrics(label, List.copyOf(classNames),
-                precision, recall, f1, support,
-                accuracy, macroF1, weightedF1, n, cm);
+        return new TrainingMetrics(
+                label, List.copyOf(classNames), precision, recall, f1, support, accuracy, macroF1, weightedF1, n, cm);
     }
 
     /**
@@ -112,21 +107,17 @@ public record TrainingMetrics(
     public String toFormattedReport() {
         StringBuilder sb = new StringBuilder();
         sb.append(label).append('\n');
-        sb.append(String.format("%-24s %10s %10s %10s %10s%n",
-                "class", "precision", "recall", "f1", "support"));
+        sb.append(String.format("%-24s %10s %10s %10s %10s%n", "class", "precision", "recall", "f1", "support"));
         sb.append("-".repeat(68)).append('\n');
         for (int c = 0; c < classNames.size(); c++) {
-            sb.append(String.format("%-24s %10.3f %10.3f %10.3f %10d%n",
-                    truncate(classNames.get(c), 24),
-                    precision[c], recall[c], f1[c], support[c]));
+            sb.append(String.format(
+                    "%-24s %10.3f %10.3f %10.3f %10d%n",
+                    truncate(classNames.get(c), 24), precision[c], recall[c], f1[c], support[c]));
         }
         sb.append("-".repeat(68)).append('\n');
-        sb.append(String.format("%-24s %10s %10s %10.3f %10d%n",
-                "accuracy", "", "", accuracy, total));
-        sb.append(String.format("%-24s %10s %10s %10.3f %10d%n",
-                "macro F1", "", "", macroF1, total));
-        sb.append(String.format("%-24s %10s %10s %10.3f %10d%n",
-                "weighted F1", "", "", weightedF1, total));
+        sb.append(String.format("%-24s %10s %10s %10.3f %10d%n", "accuracy", "", "", accuracy, total));
+        sb.append(String.format("%-24s %10s %10s %10.3f %10d%n", "macro F1", "", "", macroF1, total));
+        sb.append(String.format("%-24s %10s %10s %10.3f %10d%n", "weighted F1", "", "", weightedF1, total));
         return sb.toString();
     }
 

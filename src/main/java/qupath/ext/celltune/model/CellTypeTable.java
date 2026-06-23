@@ -35,10 +35,10 @@ public class CellTypeTable {
     /** Maximum number of marker channels per cell type (for display). */
     public static final int MAX_MARKERS = 5;
 
-    private final Map<String, List<String>> table;               // cellType → display markers
-    private final Map<String, String> primaryMarkers;            // cellType → primary expression
-    private final Map<String, String> secondaryMarkers;          // cellType → pipe-separated
-    private final Map<String, String> tertiaryMarkers;           // cellType → pipe-separated
+    private final Map<String, List<String>> table; // cellType → display markers
+    private final Map<String, String> primaryMarkers; // cellType → primary expression
+    private final Map<String, String> secondaryMarkers; // cellType → pipe-separated
+    private final Map<String, String> tertiaryMarkers; // cellType → pipe-separated
     private boolean hasRules = false;
 
     public CellTypeTable() {
@@ -89,8 +89,7 @@ public class CellTypeTable {
     /**
      * Define a cell type with gating rules (rule format).
      */
-    public void putRule(String cellType, String primaryExpr,
-                        String secondary, String tertiary) {
+    public void putRule(String cellType, String primaryExpr, String secondary, String tertiary) {
         this.hasRules = true;
         primaryMarkers.put(cellType, primaryExpr);
         secondaryMarkers.put(cellType, secondary);
@@ -179,8 +178,7 @@ public class CellTypeTable {
         }
     }
 
-    private static CellTypeTable loadSimpleFormat(CellTypeTable tbl,
-                                                   BufferedReader reader) throws IOException {
+    private static CellTypeTable loadSimpleFormat(CellTypeTable tbl, BufferedReader reader) throws IOException {
         String line;
         while ((line = reader.readLine()) != null) {
             line = line.strip();
@@ -201,8 +199,8 @@ public class CellTypeTable {
         return tbl;
     }
 
-    private static CellTypeTable loadRuleFormat(CellTypeTable tbl, String header,
-                                                 BufferedReader reader) throws IOException {
+    private static CellTypeTable loadRuleFormat(CellTypeTable tbl, String header, BufferedReader reader)
+            throws IOException {
         // Parse header to find column indices
         String[] cols = header.split(",", -1);
         int classCol = -1, primaryCol = -1, secondaryCol = -1, tertiaryCol = -1;
@@ -292,7 +290,6 @@ public class CellTypeTable {
 
     @Override
     public String toString() {
-        return "CellTypeTable[" + table.size() + " types"
-                + (hasRules ? ", with gating rules" : "") + "]";
+        return "CellTypeTable[" + table.size() + " types" + (hasRules ? ", with gating rules" : "") + "]";
     }
 }

@@ -1,16 +1,15 @@
 package qupath.ext.celltune.ui;
 
-import qupath.lib.gui.viewer.QuPathViewer;
-import qupath.lib.gui.viewer.overlays.AbstractOverlay;
-import qupath.lib.images.ImageData;
-import qupath.lib.regions.ImageRegion;
-import qupath.lib.roi.interfaces.ROI;
-
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import qupath.lib.gui.viewer.QuPathViewer;
+import qupath.lib.gui.viewer.overlays.AbstractOverlay;
+import qupath.lib.images.ImageData;
+import qupath.lib.regions.ImageRegion;
+import qupath.lib.roi.interfaces.ROI;
 
 /**
  * A lightweight QuPath custom overlay that paints a single magenta ring around
@@ -67,11 +66,12 @@ public class SelectionHighlightOverlay extends AbstractOverlay {
     }
 
     @Override
-    public void paintOverlay(Graphics2D g2d,
-                             ImageRegion imageRegion,
-                             double downsampleFactor,
-                             ImageData<BufferedImage> imageData,
-                             boolean paintCompletely) {
+    public void paintOverlay(
+            Graphics2D g2d,
+            ImageRegion imageRegion,
+            double downsampleFactor,
+            ImageData<BufferedImage> imageData,
+            boolean paintCompletely) {
         ROI roi = targetRoi;
         if (roi == null) return;
 
@@ -84,8 +84,10 @@ public class SelectionHighlightOverlay extends AbstractOverlay {
         // doesn't intersect the visible region.
         if (imageRegion != null) {
             double rx = cx - r, ry = cy - r, rw = 2 * r, rh = 2 * r;
-            if (rx + rw < imageRegion.getMinX() || rx > imageRegion.getMaxX()
-                    || ry + rh < imageRegion.getMinY() || ry > imageRegion.getMaxY()) {
+            if (rx + rw < imageRegion.getMinX()
+                    || rx > imageRegion.getMaxX()
+                    || ry + rh < imageRegion.getMinY()
+                    || ry > imageRegion.getMaxY()) {
                 return;
             }
         }
@@ -94,15 +96,12 @@ public class SelectionHighlightOverlay extends AbstractOverlay {
         // so a fixed-screen-width stroke must be scaled by the downsample factor.
         Graphics2D g = (Graphics2D) g2d.create();
         try {
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             float strokeWidth = (float) (STROKE_WIDTH_SCREEN_PX * downsampleFactor);
             g.setStroke(new BasicStroke(strokeWidth));
             g.setColor(Color.MAGENTA);
-            g.drawOval((int) Math.round(cx - r),
-                       (int) Math.round(cy - r),
-                       (int) Math.round(2 * r),
-                       (int) Math.round(2 * r));
+            g.drawOval((int) Math.round(cx - r), (int) Math.round(cy - r), (int) Math.round(2 * r), (int)
+                    Math.round(2 * r));
         } finally {
             g.dispose();
         }

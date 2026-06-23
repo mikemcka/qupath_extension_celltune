@@ -1,5 +1,12 @@
 package qupath.ext.celltune.classifier;
 
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 import javafx.application.Platform;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
@@ -14,14 +21,6 @@ import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
-
-import java.awt.image.BufferedImage;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Consumer;
 
 /**
  * Applies multiple trained binary classifiers to all cell detections and assigns
@@ -64,10 +63,8 @@ public class CompositeClassifier {
      * Equivalent to {@link #apply(ImageData, List, Project, boolean, Consumer)}
      * with {@code mergeWithPrimary = false}.
      */
-    public int apply(ImageData<?> imageData,
-                     List<String> markerNames,
-                     Project<?> project,
-                     Consumer<String> log) throws Exception {
+    public int apply(ImageData<?> imageData, List<String> markerNames, Project<?> project, Consumer<String> log)
+            throws Exception {
         return apply(imageData, markerNames, project, false, log);
     }
 
@@ -82,16 +79,18 @@ public class CompositeClassifier {
      *                         Cells with no current class fall back to the
      *                         binary-only label.
      */
-    public int apply(ImageData<?> imageData,
-                     List<String> markerNames,
-                     Project<?> project,
-                     boolean mergeWithPrimary,
-                     Consumer<String> log) throws Exception {
+    public int apply(
+            ImageData<?> imageData,
+            List<String> markerNames,
+            Project<?> project,
+            boolean mergeWithPrimary,
+            Consumer<String> log)
+            throws Exception {
 
-        Consumer<String> out = log != null ? log : s -> {
-        };
+        Consumer<String> out = log != null ? log : s -> {};
 
-        List<PathObject> detectionList = new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
+        List<PathObject> detectionList =
+                new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
         if (detectionList.isEmpty()) {
             out.accept("No detections found in current image.");
             return 0;
@@ -140,7 +139,9 @@ public class CompositeClassifier {
             for (int i = 0; i < detectionList.size(); i++) {
                 StringBuilder sb = new StringBuilder();
                 PathClass primary = mergeWithPrimary ? primaryClasses.get(i) : null;
-                if (primary != null && primary.getName() != null && !primary.getName().isEmpty()) {
+                if (primary != null
+                        && primary.getName() != null
+                        && !primary.getName().isEmpty()) {
                     sb.append(primary.toString());
                 }
                 for (int mi = 0; mi < activeMarkers.size(); mi++) {
@@ -165,8 +166,9 @@ public class CompositeClassifier {
             classifyObjects.get(i).setPathClass(classifyClasses.get(i));
         }
 
-        Platform.runLater(() -> imageData.getHierarchy().fireObjectClassificationsChangedEvent(
-                CompositeClassifier.this, classifyObjects));
+        Platform.runLater(() -> imageData
+                .getHierarchy()
+                .fireObjectClassificationsChangedEvent(CompositeClassifier.this, classifyObjects));
 
         updateStatus("Complete", 1.0);
         out.accept("Composite classification complete: " + detectionList.size() + " cells.");
@@ -177,10 +179,9 @@ public class CompositeClassifier {
      * Apply a named marker-polarity rule to the current image.
      * Only matched cells are updated unless clearUnmatched is true.
      */
-    public int applyRule(ImageData<?> imageData,
-                         CompositeClassificationRule rule,
-                         Project<?> project,
-                         Consumer<String> log) throws Exception {
+    public int applyRule(
+            ImageData<?> imageData, CompositeClassificationRule rule, Project<?> project, Consumer<String> log)
+            throws Exception {
         return applyRule(imageData, rule, project, false, log);
     }
 
@@ -189,19 +190,21 @@ public class CompositeClassifier {
      *
      * @param clearUnmatched if true, unmatched cells are assigned null PathClass
      */
-    public int applyRule(ImageData<?> imageData,
-                         CompositeClassificationRule rule,
-                         Project<?> project,
-                         boolean clearUnmatched,
-                         Consumer<String> log) throws Exception {
+    public int applyRule(
+            ImageData<?> imageData,
+            CompositeClassificationRule rule,
+            Project<?> project,
+            boolean clearUnmatched,
+            Consumer<String> log)
+            throws Exception {
 
         if (rule == null) {
             throw new IllegalArgumentException("Composite rule must not be null");
         }
 
-        Consumer<String> out = log != null ? log : s -> {
-        };
-        List<PathObject> detectionList = new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
+        Consumer<String> out = log != null ? log : s -> {};
+        List<PathObject> detectionList =
+                new ArrayList<>(imageData.getHierarchy().getDetectionObjects());
         if (detectionList.isEmpty()) {
             out.accept("No detections found in current image.");
             return 0;
@@ -209,8 +212,8 @@ public class CompositeClassifier {
 
         List<CompositeClassificationRule.MarkerCondition> conditions = rule.conditions();
         updateStatus("Starting rule application: " + rule.name(), 0.0);
-        out.accept("Applying rule '" + rule.name() + "' (" + rule.expression() + ") to "
-                + detectionList.size() + " cells...");
+        out.accept("Applying rule '" + rule.name() + "' (" + rule.expression() + ") to " + detectionList.size()
+                + " cells...");
 
         List<MarkerPrediction> predictions = new ArrayList<>(conditions.size());
         for (int i = 0; i < conditions.size(); i++) {
@@ -259,8 +262,9 @@ public class CompositeClassifier {
         }
 
         if (!changedObjects.isEmpty()) {
-            Platform.runLater(() -> imageData.getHierarchy().fireObjectClassificationsChangedEvent(
-                    CompositeClassifier.this, changedObjects));
+            Platform.runLater(() -> imageData
+                    .getHierarchy()
+                    .fireObjectClassificationsChangedEvent(CompositeClassifier.this, changedObjects));
         }
 
         updateStatus("Complete", 1.0);
@@ -273,10 +277,9 @@ public class CompositeClassifier {
      * Equivalent to {@link #batch(Project, List, List, boolean, Consumer)} with
      * {@code mergeWithPrimary = false}.
      */
-    public Map<String, String> batch(Project<?> project,
-                                     List<String> imageNames,
-                                     List<String> markerNames,
-                                     Consumer<String> log) throws Exception {
+    public Map<String, String> batch(
+            Project<?> project, List<String> imageNames, List<String> markerNames, Consumer<String> log)
+            throws Exception {
         return batch(project, imageNames, markerNames, false, log);
     }
 
@@ -287,14 +290,15 @@ public class CompositeClassifier {
      * @see #apply(ImageData, List, Project, boolean, Consumer)
      */
     @SuppressWarnings("unchecked")
-    public Map<String, String> batch(Project<?> project,
-                                     List<String> imageNames,
-                                     List<String> markerNames,
-                                     boolean mergeWithPrimary,
-                                     Consumer<String> log) throws Exception {
+    public Map<String, String> batch(
+            Project<?> project,
+            List<String> imageNames,
+            List<String> markerNames,
+            boolean mergeWithPrimary,
+            Consumer<String> log)
+            throws Exception {
 
-        Consumer<String> out = log != null ? log : s -> {
-        };
+        Consumer<String> out = log != null ? log : s -> {};
         Map<String, String> results = new LinkedHashMap<>();
         int total = imageNames.size();
 
@@ -342,14 +346,15 @@ public class CompositeClassifier {
      * Apply a named rule to multiple project images.
      */
     @SuppressWarnings("unchecked")
-    public Map<String, String> batchApplyRule(Project<?> project,
-                                              List<String> imageNames,
-                                              CompositeClassificationRule rule,
-                                              boolean clearUnmatched,
-                                              Consumer<String> log) throws Exception {
+    public Map<String, String> batchApplyRule(
+            Project<?> project,
+            List<String> imageNames,
+            CompositeClassificationRule rule,
+            boolean clearUnmatched,
+            Consumer<String> log)
+            throws Exception {
 
-        Consumer<String> out = log != null ? log : s -> {
-        };
+        Consumer<String> out = log != null ? log : s -> {};
         Map<String, String> results = new LinkedHashMap<>();
         int total = imageNames.size();
 
@@ -393,17 +398,21 @@ public class CompositeClassifier {
         return results;
     }
 
-    private MarkerPrediction predictMarker(List<PathObject> detectionList,
-                                           Project<?> project,
-                                           String markerName,
-                                           Consumer<String> out,
-                                           boolean allowSkip) throws Exception {
+    private MarkerPrediction predictMarker(
+            List<PathObject> detectionList,
+            Project<?> project,
+            String markerName,
+            Consumer<String> out,
+            boolean allowSkip)
+            throws Exception {
 
         String sanitized = BinaryClassifierRegistry.sanitizeMarkerName(markerName);
         ProjectStateManager.SavedState state = ProjectStateManager.loadBinaryState(project, sanitized);
 
-        if (state == null || state.xgboostModelBase64 == null
-                || state.featureNames == null || state.featureNames.isEmpty()) {
+        if (state == null
+                || state.xgboostModelBase64 == null
+                || state.featureNames == null
+                || state.featureNames.isEmpty()) {
             if (allowSkip) {
                 out.accept("Skipping '" + markerName + "' - not trained or missing state.");
                 return null;
@@ -457,9 +466,7 @@ public class CompositeClassifier {
         float[] posProbs = new float[nSamples];
         for (int i = 0; i < nSamples; i++) {
             float xgbPos = xgbProbs[i][Math.min(posIdx, xgbProbs[i].length - 1)];
-            float lgbPos = (lgbProbs != null)
-                    ? lgbProbs[i][Math.min(posIdx, lgbProbs[i].length - 1)]
-                    : xgbPos;
+            float lgbPos = (lgbProbs != null) ? lgbProbs[i][Math.min(posIdx, lgbProbs[i].length - 1)] : xgbPos;
             posProbs[i] = (lgbProbs != null) ? (xgbPos + lgbPos) / 2.0f : xgbPos;
         }
 

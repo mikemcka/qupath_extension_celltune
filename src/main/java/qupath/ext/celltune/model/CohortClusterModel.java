@@ -1,5 +1,13 @@
 package qupath.ext.celltune.model;
 
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.function.Consumer;
+import java.util.function.DoubleConsumer;
 import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,15 +17,6 @@ import qupath.lib.objects.PathObjectFilter;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.function.Consumer;
-import java.util.function.DoubleConsumer;
 
 /**
  * Headless, memory-safe backend for project-wide cell clustering. It owns the two
@@ -38,11 +37,9 @@ import java.util.function.DoubleConsumer;
  */
 public final class CohortClusterModel {
 
-    private static final Logger logger =
-            LoggerFactory.getLogger(CohortClusterModel.class);
+    private static final Logger logger = LoggerFactory.getLogger(CohortClusterModel.class);
 
-    private CohortClusterModel() {
-    }
+    private CohortClusterModel() {}
 
     /**
      * A bounded sample pooled across the cohort. All arrays are aligned by row.
@@ -55,10 +52,14 @@ public final class CohortClusterModel {
      * @param totalCells   total detections seen across the sampled images
      * @param imageCount   number of images that contributed cells
      */
-    public record SampleData(double[][] raw, String[] rowClass, String[] rowImage,
-                             List<String> markers, int sampledCells,
-                             int totalCells, int imageCount) {
-    }
+    public record SampleData(
+            double[][] raw,
+            String[] rowClass,
+            String[] rowImage,
+            List<String> markers,
+            int sampledCells,
+            int totalCells,
+            int imageCount) {}
 
     /**
      * Pool a bounded random sample of cells across {@code images}, drawn roughly
@@ -74,10 +75,13 @@ public final class CohortClusterModel {
      *                  must match the one used at {@link #assignAcrossProject})
      * @param log       progress sink (called off the FX thread)
      */
-    public static SampleData sample(Project<BufferedImage> project,
-                                    List<String> images, List<String> markers,
-                                    int sampleCap, FeatureNormalizer normalizer,
-                                    Consumer<String> log) {
+    public static SampleData sample(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            int sampleCap,
+            FeatureNormalizer normalizer,
+            Consumer<String> log) {
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
         int nMarkers = markers.size();
         int perImage = Math.max(1, sampleCap / Math.max(1, images.size()));
@@ -137,9 +141,14 @@ public final class CohortClusterModel {
                 raw[i][j] = row[j];
             }
         }
-        return new SampleData(raw, classes.toArray(new String[0]),
-                sources.toArray(new String[0]), List.copyOf(markers), m,
-                totalCells, imageCount);
+        return new SampleData(
+                raw,
+                classes.toArray(new String[0]),
+                sources.toArray(new String[0]),
+                List.copyOf(markers),
+                m,
+                totalCells,
+                imageCount);
     }
 
     /**
@@ -162,19 +171,25 @@ public final class CohortClusterModel {
      * @return total cells assigned
      */
     public static long assignAcrossProject(
-            Project<BufferedImage> project, List<String> images,
-            List<String> markers, double[] mean, double[] sd, double[][] centroids,
-            Map<Integer, PathClass> mapping, String classFilter,
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            double[] mean,
+            double[] sd,
+            double[][] centroids,
+            Map<Integer, PathClass> mapping,
+            String classFilter,
             FeatureNormalizer normalizer,
-            ImageData<BufferedImage> openData, String openName,
-            Consumer<String> log, DoubleConsumer progress) {
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress) {
 
         int nMarkers = markers.size();
         var extractor = new CellFeatureExtractor(markers, normalizer);
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
         boolean classFilterActive = classFilter != null && !classFilter.isBlank();
-        String classKw = classFilterActive
-                ? classFilter.trim().toLowerCase() : null;
+        String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
 
         long totalAssigned = 0;
         int done = 0;
@@ -219,8 +234,7 @@ public final class CohortClusterModel {
             for (int i = 0; i < n; i++) {
                 if (classFilterActive) {
                     PathClass pc = cells.get(i).getPathClass();
-                    if (pc == null
-                            || !pc.toString().toLowerCase().contains(classKw)) {
+                    if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
                         continue;
                     }
                 }
@@ -245,8 +259,7 @@ public final class CohortClusterModel {
                 log.accept("[" + name + "] save failed: " + e.getMessage());
             }
             totalAssigned += changedObjs.size();
-            log.accept(String.format("[%s] assigned %,d of %,d cells",
-                    name, changedObjs.size(), n));
+            log.accept(String.format("[%s] assigned %,d of %,d cells", name, changedObjs.size(), n));
 
             done++;
             progress.accept(done / (double) images.size());
@@ -255,15 +268,13 @@ public final class CohortClusterModel {
     }
 
     /** Applies classes; for the open image this marshals to the FX thread. */
-    private static void applyClasses(ImageData<BufferedImage> imageData,
-                                     List<PathObject> objs, List<PathClass> classes,
-                                     boolean isOpen) {
+    private static void applyClasses(
+            ImageData<BufferedImage> imageData, List<PathObject> objs, List<PathClass> classes, boolean isOpen) {
         Runnable apply = () -> {
             for (int i = 0; i < objs.size(); i++) {
                 objs.get(i).setPathClass(classes.get(i));
             }
-            imageData.getHierarchy().fireObjectClassificationsChangedEvent(
-                    CohortClusterModel.class, objs);
+            imageData.getHierarchy().fireObjectClassificationsChangedEvent(CohortClusterModel.class, objs);
         };
         if (isOpen) {
             if (Platform.isFxApplicationThread()) {
@@ -290,8 +301,7 @@ public final class CohortClusterModel {
 
     // ── Static helpers ────────────────────────────────────────────────────────
 
-    private static Map<String, ProjectImageEntry<BufferedImage>> entriesByName(
-            Project<BufferedImage> project) {
+    private static Map<String, ProjectImageEntry<BufferedImage>> entriesByName(Project<BufferedImage> project) {
         Map<String, ProjectImageEntry<BufferedImage>> map = new LinkedHashMap<>();
         for (ProjectImageEntry<BufferedImage> entry : project.getImageList()) {
             map.put(entry.getImageName(), entry);

@@ -1,13 +1,10 @@
 package qupath.ext.celltune.model;
 
-import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjectFilter;
-import qupath.lib.objects.PathObjectTools;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjectTools;
 
 /**
  * Reads QuPath cell measurements into flat float arrays suitable for ML training/inference.
@@ -115,9 +112,7 @@ public class CellFeatureExtractor {
         float[] matrix = new float[nCells * nFeatures];
 
         // Convert to indexed list for parallel random access
-        List<PathObject> cellList = (cells instanceof List)
-                ? (List<PathObject>) cells
-                : new ArrayList<>(cells);
+        List<PathObject> cellList = (cells instanceof List) ? (List<PathObject>) cells : new ArrayList<>(cells);
 
         java.util.stream.IntStream.range(0, nCells).parallel().forEach(i -> {
             var mlist = cellList.get(i).getMeasurementList();
