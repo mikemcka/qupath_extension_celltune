@@ -1,15 +1,14 @@
 package qupath.ext.celltune;
 
-import org.junit.jupiter.api.Test;
-import qupath.ext.celltune.model.CellPrediction;
-import qupath.ext.celltune.model.PopulationSet;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import org.junit.jupiter.api.Test;
+import qupath.ext.celltune.model.CellPrediction;
+import qupath.ext.celltune.model.PopulationSet;
 
 /**
  * Unit coverage for the pure sampling-pool dedup logic extracted into {@link ReviewSampling}.
@@ -19,7 +18,7 @@ class ReviewSamplingTest {
     private static final List<String> CLASSES = List.of("A", "B");
 
     private static CellPrediction pred(String id) {
-        return new CellPrediction(id, "A", "B", new float[]{0.6f, 0.4f}, new float[]{0.3f, 0.7f}, CLASSES);
+        return new CellPrediction(id, "A", "B", new float[] {0.6f, 0.4f}, new float[] {0.3f, 0.7f}, CLASSES);
     }
 
     private static PopulationSet set(String name, String... ids) {

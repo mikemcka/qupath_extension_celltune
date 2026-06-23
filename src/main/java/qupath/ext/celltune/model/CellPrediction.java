@@ -28,10 +28,13 @@ public class CellPrediction {
      * @param model2Probs per-class probability vector from model 2
      * @param classNames  ordered list of class names matching the probability indices
      */
-    public CellPrediction(String cellId,
-                          String model1Label, String model2Label,
-                          float[] model1Probs, float[] model2Probs,
-                          List<String> classNames) {
+    public CellPrediction(
+            String cellId,
+            String model1Label,
+            String model2Label,
+            float[] model1Probs,
+            float[] model2Probs,
+            List<String> classNames) {
         this.cellId = Objects.requireNonNull(cellId);
         this.model1Label = Objects.requireNonNull(model1Label);
         this.model2Label = Objects.requireNonNull(model2Label);
@@ -93,10 +96,27 @@ public class CellPrediction {
         return idx >= 0 ? idx : 0;
     }
 
-    public String getCellId()       { return cellId; }
-    public String getModel1Label()  { return model1Label; }
-    public String getModel2Label()  { return model2Label; }
-    public float[] getModel1Probs() { return model1Probs.clone(); }
-    public float[] getModel2Probs() { return model2Probs.clone(); }
-    public List<String> getClassNames() { return classNames; }
+    public String getCellId() {
+        return cellId;
+    }
+
+    public String getModel1Label() {
+        return model1Label;
+    }
+
+    public String getModel2Label() {
+        return model2Label;
+    }
+
+    public float[] getModel1Probs() {
+        return model1Probs.clone();
+    }
+
+    public float[] getModel2Probs() {
+        return model2Probs.clone();
+    }
+
+    public List<String> getClassNames() {
+        return classNames;
+    }
 }

@@ -1,8 +1,14 @@
 package qupath.ext.celltune.ui;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Scene;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
@@ -10,8 +16,8 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.image.WritableImage;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.image.WritableImage;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -21,15 +27,8 @@ import javafx.scene.text.TextAlignment;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-import qupath.ext.celltune.classifier.TrainingMetrics;
-
 import javax.imageio.ImageIO;
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
+import qupath.ext.celltune.classifier.TrainingMetrics;
 
 /**
  * Held-out validation-set confusion matrix for a single model.
@@ -59,7 +58,7 @@ public class ValidationConfusionMatrixView {
 
     private final String modelLabel;
     private final List<String> classNames;
-    private final int[][] cm;        // rows = true, cols = predicted
+    private final int[][] cm; // rows = true, cols = predicted
     private final int[] rowSum;
     private final int total;
     private final int correct;
@@ -70,19 +69,16 @@ public class ValidationConfusionMatrixView {
     private static final int LABEL_MARGIN = 110;
     private static final int HEADER_HEIGHT = 60;
     private static final int RIGHT_PAD = 30;
-    private static final int BOTTOM_PAD = 90;   // X-axis title + count row
+    private static final int BOTTOM_PAD = 90; // X-axis title + count row
     private static final int PANEL_GAP = 30;
 
     private static final Font CELL_FONT = Font.font("SansSerif", 12);
     private static final Font LABEL_FONT = Font.font("SansSerif", 12);
     private static final Font HEADER_FONT = Font.font("SansSerif", 14);
 
-    public ValidationConfusionMatrixView(Stage owner,
-                                          String modelLabel,
-                                          TrainingMetrics validationMetrics) {
+    public ValidationConfusionMatrixView(Stage owner, String modelLabel, TrainingMetrics validationMetrics) {
         if (validationMetrics == null) {
-            throw new IllegalArgumentException(
-                    "validationMetrics is null \u2014 train the classifier first");
+            throw new IllegalArgumentException("validationMetrics is null \u2014 train the classifier first");
         }
         this.modelLabel = modelLabel;
         this.classNames = validationMetrics.classNames();
@@ -112,14 +108,16 @@ public class ValidationConfusionMatrixView {
         this.canvas = new Canvas(canvasW, canvasH);
         drawAll(canvas.getGraphicsContext2D(), panelW);
 
-        Label header = new Label(String.format(
-                "Validation Confusion Matrix \u2014 %s (held-out 20%%)", modelLabel));
+        Label header = new Label(String.format("Validation Confusion Matrix \u2014 %s (held-out 20%%)", modelLabel));
         header.setFont(Font.font("SansSerif", 14));
 
         Label summary = new Label(String.format(
                 "Total: %,d cells | Correct: %,d (%.1f%%) | Misclassified: %,d (%.1f%%) | Macro F1: %.3f",
-                total, correct, total > 0 ? 100.0 * correct / total : 0,
-                total - correct, total > 0 ? 100.0 * (total - correct) / total : 0,
+                total,
+                correct,
+                total > 0 ? 100.0 * correct / total : 0,
+                total - correct,
+                total > 0 ? 100.0 * (total - correct) / total : 0,
                 macroF1));
 
         Button exportCsv = new Button("Download CSV\u2026");
@@ -195,9 +193,7 @@ public class ValidationConfusionMatrixView {
 
         // X-axis title — "Predicted class" (below the grid)
         gc.setTextAlign(TextAlignment.CENTER);
-        gc.fillText("Predicted class",
-                gridLeft + n * CELL_SIZE / 2.0,
-                gridTop + n * CELL_SIZE + 56);
+        gc.fillText("Predicted class", gridLeft + n * CELL_SIZE / 2.0, gridTop + n * CELL_SIZE + 56);
 
         // Column labels (top, rotated -45°)
         for (int j = 0; j < n; j++) {
@@ -219,9 +215,7 @@ public class ValidationConfusionMatrixView {
 
         // Find max for colour scaling
         int maxAbs = 0;
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j < n; j++)
-                if (cm[i][j] > maxAbs) maxAbs = cm[i][j];
+        for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) if (cm[i][j] > maxAbs) maxAbs = cm[i][j];
         if (maxAbs < 1) maxAbs = 1;
 
         // Cells
@@ -251,9 +245,7 @@ public class ValidationConfusionMatrixView {
                 // Blues ramp is light at low values, dark at high values,
                 // so flip to white only when the background is genuinely dark.
                 gc.setFill(intensity > 0.65 ? Color.WHITE : Color.BLACK);
-                String label = normalised
-                        ? String.format("%.3f", normValue)
-                        : Integer.toString(count);
+                String label = normalised ? String.format("%.3f", normValue) : Integer.toString(count);
                 gc.fillText(label, x + CELL_SIZE / 2.0, y + CELL_SIZE / 2.0 + 4);
             }
         }
@@ -269,20 +261,20 @@ public class ValidationConfusionMatrixView {
         t = Math.max(0, Math.min(1, t));
         // 9-stop approximation of matplotlib's Blues colormap (RGB 0..1).
         double[][] stops = {
-                {0.969, 0.984, 1.000},   // very light
-                {0.871, 0.922, 0.969},
-                {0.776, 0.859, 0.937},
-                {0.620, 0.792, 0.882},
-                {0.420, 0.682, 0.839},
-                {0.259, 0.573, 0.776},
-                {0.129, 0.443, 0.710},
-                {0.031, 0.318, 0.612},
-                {0.031, 0.188, 0.420}    // dark navy
+            {0.969, 0.984, 1.000}, // very light
+            {0.871, 0.922, 0.969},
+            {0.776, 0.859, 0.937},
+            {0.620, 0.792, 0.882},
+            {0.420, 0.682, 0.839},
+            {0.259, 0.573, 0.776},
+            {0.129, 0.443, 0.710},
+            {0.031, 0.318, 0.612},
+            {0.031, 0.188, 0.420} // dark navy
         };
         double scaled = t * (stops.length - 1);
         int idx = (int) Math.floor(scaled);
-        if (idx >= stops.length - 1) return Color.color(stops[stops.length - 1][0],
-                stops[stops.length - 1][1], stops[stops.length - 1][2]);
+        if (idx >= stops.length - 1)
+            return Color.color(stops[stops.length - 1][0], stops[stops.length - 1][1], stops[stops.length - 1][2]);
         double frac = scaled - idx;
         double r = stops[idx][0] + frac * (stops[idx + 1][0] - stops[idx][0]);
         double g = stops[idx][1] + frac * (stops[idx + 1][1] - stops[idx][1]);
@@ -303,11 +295,9 @@ public class ValidationConfusionMatrixView {
     private void exportCsv(Stage owner) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Export validation confusion matrix");
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
         chooser.setInitialFileName(String.format(
-                "celltune_validation_cm_%s.csv",
-                modelLabel.toLowerCase().replaceAll("[^a-z0-9]+", "_")));
+                "celltune_validation_cm_%s.csv", modelLabel.toLowerCase().replaceAll("[^a-z0-9]+", "_")));
         var target = chooser.showSaveDialog(owner);
         if (target == null) return;
 
@@ -319,14 +309,11 @@ public class ValidationConfusionMatrixView {
                 for (int j = 0; j < n; j++) {
                     int count = cm[i][j];
                     double norm = rowSum[i] > 0 ? (double) count / rowSum[i] : 0;
-                    w.printf("%s,%s,%d,%.6f%n",
-                            csv(classNames.get(i)), csv(classNames.get(j)),
-                            count, norm);
+                    w.printf("%s,%s,%d,%.6f%n", csv(classNames.get(i)), csv(classNames.get(j)), count, norm);
                 }
             }
         } catch (IOException ex) {
-            Alert a = new Alert(Alert.AlertType.ERROR,
-                    "Failed to write CSV: " + ex.getMessage());
+            Alert a = new Alert(Alert.AlertType.ERROR, "Failed to write CSV: " + ex.getMessage());
             a.initOwner(stage);
             a.showAndWait();
             return;
@@ -350,31 +337,26 @@ public class ValidationConfusionMatrixView {
     private void exportPng(Stage owner) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Export validation confusion matrix as PNG");
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("PNG image", "*.png"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PNG image", "*.png"));
         chooser.setInitialFileName(String.format(
-                "celltune_validation_cm_%s.png",
-                modelLabel.toLowerCase().replaceAll("[^a-z0-9]+", "_")));
+                "celltune_validation_cm_%s.png", modelLabel.toLowerCase().replaceAll("[^a-z0-9]+", "_")));
         File target = chooser.showSaveDialog(owner);
         if (target == null) return;
 
         try {
             SnapshotParameters params = new SnapshotParameters();
             params.setFill(Color.WHITE);
-            WritableImage img = new WritableImage(
-                    (int) canvas.getWidth(), (int) canvas.getHeight());
+            WritableImage img = new WritableImage((int) canvas.getWidth(), (int) canvas.getHeight());
             canvas.snapshot(params, img);
             ImageIO.write(SwingFXUtils.fromFXImage(img, null), "png", target);
         } catch (IOException ex) {
-            Alert a = new Alert(Alert.AlertType.ERROR,
-                    "Failed to write PNG: " + ex.getMessage());
+            Alert a = new Alert(Alert.AlertType.ERROR, "Failed to write PNG: " + ex.getMessage());
             a.initOwner(stage);
             a.showAndWait();
             return;
         }
 
-        Alert ok = new Alert(Alert.AlertType.INFORMATION,
-                "Saved to:\n" + target.getAbsolutePath());
+        Alert ok = new Alert(Alert.AlertType.INFORMATION, "Saved to:\n" + target.getAbsolutePath());
         ok.setHeaderText("Validation confusion matrix exported");
         ok.initOwner(stage);
         ok.showAndWait();

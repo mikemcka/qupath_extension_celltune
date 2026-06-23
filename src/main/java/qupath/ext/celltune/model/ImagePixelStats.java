@@ -71,8 +71,7 @@ public final class ImagePixelStats {
     /** Fraction of {@code dtypeMax} at or above which a pixel counts as saturated. */
     private static final double SATURATION_FRACTION_OF_MAX = 0.999;
 
-    private ImagePixelStats() {
-    }
+    private ImagePixelStats() {}
 
     /**
      * Immutable per-channel statistics. See {@link ImagePixelStats} for the
@@ -110,8 +109,7 @@ public final class ImagePixelStats {
             double backgroundFraction,
             double foregroundCoverage,
             double dynamicRange,
-            double laplacianVariance) {
-    }
+            double laplacianVariance) {}
 
     /**
      * Immutable whole-image summary: one {@link ChannelStats} per channel plus
@@ -168,13 +166,25 @@ public final class ImagePixelStats {
      * @param height   image height in pixels
      * @return the channel statistics; a zeroed record if {@code values} is empty
      */
-    public static ChannelStats computeChannel(
-            String name, float[] values, double dtypeMax, int width, int height) {
+    public static ChannelStats computeChannel(String name, float[] values, double dtypeMax, int width, int height) {
         String channel = name == null ? "" : name;
         if (values == null || values.length == 0) {
-            return new ChannelStats(channel, 0L, Double.NaN, Double.NaN, Double.NaN,
-                    Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-                    Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+            return new ChannelStats(
+                    channel,
+                    0L,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN);
         }
 
         // Copy finite values into a double[] we can sort for percentiles.
@@ -190,9 +200,22 @@ public final class ImagePixelStats {
             sum += v;
         }
         if (n == 0) {
-            return new ChannelStats(channel, 0L, Double.NaN, Double.NaN, Double.NaN,
-                    Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-                    Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+            return new ChannelStats(
+                    channel,
+                    0L,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN,
+                    Double.NaN);
         }
         if (n < sorted.length) {
             sorted = Arrays.copyOf(sorted, n);
@@ -235,9 +258,22 @@ public final class ImagePixelStats {
         double dynamicRange = p99 - p1;
         double laplacianVariance = laplacianVariance(values, width, height);
 
-        return new ChannelStats(channel, n, mean, std, min, median, max, p1, p99,
-                saturationFraction, otsu, backgroundFraction, foregroundCoverage,
-                dynamicRange, laplacianVariance);
+        return new ChannelStats(
+                channel,
+                n,
+                mean,
+                std,
+                min,
+                median,
+                max,
+                p1,
+                p99,
+                saturationFraction,
+                otsu,
+                backgroundFraction,
+                foregroundCoverage,
+                dynamicRange,
+                laplacianVariance);
     }
 
     /**
@@ -253,8 +289,7 @@ public final class ImagePixelStats {
      *         smaller than 3×3, or no interior pixel has a finite neighbourhood
      */
     public static double laplacianVariance(float[] values, int width, int height) {
-        if (values == null || width < 3 || height < 3
-                || (long) width * height > values.length) {
+        if (values == null || width < 3 || height < 3 || (long) width * height > values.length) {
             return Double.NaN;
         }
         double sum = 0.0;
@@ -269,8 +304,11 @@ public final class ImagePixelStats {
                 float down = values[i + width];
                 float left = values[i - 1];
                 float right = values[i + 1];
-                if (!Float.isFinite(c) || !Float.isFinite(up) || !Float.isFinite(down)
-                        || !Float.isFinite(left) || !Float.isFinite(right)) {
+                if (!Float.isFinite(c)
+                        || !Float.isFinite(up)
+                        || !Float.isFinite(down)
+                        || !Float.isFinite(left)
+                        || !Float.isFinite(right)) {
                     continue;
                 }
                 double lap = (double) up + down + left + right - 4.0 * c;
@@ -319,8 +357,8 @@ public final class ImagePixelStats {
         var channelStats = new ArrayList<ChannelStats>(nChannels);
         double[] otsuThresholds = new double[nChannels];
         for (int c = 0; c < nChannels; c++) {
-            String name = (channelNames != null && c < channelNames.size())
-                    ? channelNames.get(c) : ("Channel " + (c + 1));
+            String name =
+                    (channelNames != null && c < channelNames.size()) ? channelNames.get(c) : ("Channel " + (c + 1));
             ChannelStats cs = computeChannel(name, channelValues[c], dtypeMax, width, height);
             channelStats.add(cs);
             otsuThresholds[c] = cs.otsuThreshold();
@@ -342,8 +380,10 @@ public final class ImagePixelStats {
      *         no pixels or channels
      */
     public static double emptyFraction(float[][] channelValues, double[] otsuThresholds) {
-        if (channelValues == null || channelValues.length == 0
-                || otsuThresholds == null || otsuThresholds.length == 0) {
+        if (channelValues == null
+                || channelValues.length == 0
+                || otsuThresholds == null
+                || otsuThresholds.length == 0) {
             return Double.NaN;
         }
         int nChannels = Math.min(channelValues.length, otsuThresholds.length);

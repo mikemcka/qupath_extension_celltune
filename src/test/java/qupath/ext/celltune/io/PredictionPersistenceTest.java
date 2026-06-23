@@ -1,11 +1,9 @@
 package qupath.ext.celltune.io;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import qupath.ext.celltune.model.CellPrediction;
-import qupath.ext.celltune.model.PopulationSet;
-import qupath.lib.projects.Project;
-import qupath.lib.projects.ProjectImageEntry;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -14,11 +12,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import qupath.ext.celltune.model.CellPrediction;
+import qupath.ext.celltune.model.PopulationSet;
+import qupath.lib.projects.Project;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Round-trip coverage for the per-image prediction persistence extracted into
@@ -37,10 +36,24 @@ class PredictionPersistenceTest {
         Project<BufferedImage> project = fakeProject(tempDir.resolve("p/project.qpproj"), List.of());
 
         PopulationSet predAll = new PopulationSet("Pred_ALL");
-        predAll.put("cell-1", new CellPrediction("cell-1", "Tumour", "Tumour",
-                new float[]{0.8f, 0.1f, 0.1f}, new float[]{0.7f, 0.2f, 0.1f}, CLASSES));
-        predAll.put("cell-2", new CellPrediction("cell-2", "Stroma", "Immune",
-                new float[]{0.1f, 0.6f, 0.3f}, new float[]{0.2f, 0.3f, 0.5f}, CLASSES));
+        predAll.put(
+                "cell-1",
+                new CellPrediction(
+                        "cell-1",
+                        "Tumour",
+                        "Tumour",
+                        new float[] {0.8f, 0.1f, 0.1f},
+                        new float[] {0.7f, 0.2f, 0.1f},
+                        CLASSES));
+        predAll.put(
+                "cell-2",
+                new CellPrediction(
+                        "cell-2",
+                        "Stroma",
+                        "Immune",
+                        new float[] {0.1f, 0.6f, 0.3f},
+                        new float[] {0.2f, 0.3f, 0.5f},
+                        CLASSES));
 
         Path written = ProjectStateManager.saveImagePredictions(project, "slide A.tif", predAll);
         assertNotNull(written);
@@ -56,8 +69,8 @@ class PredictionPersistenceTest {
         assertEquals("Tumour", c1.getModel1Label());
         assertEquals("Tumour", c1.getModel2Label());
         assertEquals(CLASSES, c1.getClassNames());
-        assertArrayEqualsExact(new float[]{0.8f, 0.1f, 0.1f}, c1.getModel1Probs());
-        assertArrayEqualsExact(new float[]{0.7f, 0.2f, 0.1f}, c1.getModel2Probs());
+        assertArrayEqualsExact(new float[] {0.8f, 0.1f, 0.1f}, c1.getModel1Probs());
+        assertArrayEqualsExact(new float[] {0.7f, 0.2f, 0.1f}, c1.getModel2Probs());
 
         CellPrediction c2 = all.get("cell-2");
         assertNotNull(c2);
@@ -80,13 +93,19 @@ class PredictionPersistenceTest {
 
     @Test
     void listsImagesWithPredictions() throws Exception {
-        Project<BufferedImage> project = fakeProject(
-                tempDir.resolve("list/project.qpproj"),
-                List.of("with-preds.tif", "without-preds.tif"));
+        Project<BufferedImage> project =
+                fakeProject(tempDir.resolve("list/project.qpproj"), List.of("with-preds.tif", "without-preds.tif"));
 
         PopulationSet predAll = new PopulationSet("Pred_ALL");
-        predAll.put("cell-1", new CellPrediction("cell-1", "Tumour", "Tumour",
-                new float[]{0.8f, 0.1f, 0.1f}, new float[]{0.7f, 0.2f, 0.1f}, CLASSES));
+        predAll.put(
+                "cell-1",
+                new CellPrediction(
+                        "cell-1",
+                        "Tumour",
+                        "Tumour",
+                        new float[] {0.8f, 0.1f, 0.1f},
+                        new float[] {0.7f, 0.2f, 0.1f},
+                        CLASSES));
         ProjectStateManager.saveImagePredictions(project, "with-preds.tif", predAll);
 
         List<String> imagesWithPreds = ProjectStateManager.listImagesWithPredictions(project);
@@ -111,13 +130,12 @@ class PredictionPersistenceTest {
             throw new RuntimeException(ex);
         }
 
-        List<ProjectImageEntry<BufferedImage>> entries = imageNames.stream()
-                .map(PredictionPersistenceTest::fakeEntry)
-                .toList();
+        List<ProjectImageEntry<BufferedImage>> entries =
+                imageNames.stream().map(PredictionPersistenceTest::fakeEntry).toList();
 
         return (Project<BufferedImage>) Proxy.newProxyInstance(
                 Project.class.getClassLoader(),
-                new Class[]{Project.class},
+                new Class[] {Project.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "getPath" -> projectFile;
                     case "getImageList" -> entries;
@@ -125,8 +143,9 @@ class PredictionPersistenceTest {
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
                     case "close" -> null;
-                    default -> throw new UnsupportedOperationException(
-                            "Method not implemented in fake project: " + method.getName());
+                    default ->
+                        throw new UnsupportedOperationException(
+                                "Method not implemented in fake project: " + method.getName());
                 });
     }
 
@@ -134,14 +153,15 @@ class PredictionPersistenceTest {
     private static ProjectImageEntry<BufferedImage> fakeEntry(String imageName) {
         return (ProjectImageEntry<BufferedImage>) Proxy.newProxyInstance(
                 ProjectImageEntry.class.getClassLoader(),
-                new Class[]{ProjectImageEntry.class},
+                new Class[] {ProjectImageEntry.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "getImageName" -> imageName;
                     case "toString" -> "FakeEntry(" + imageName + ")";
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
-                    default -> throw new UnsupportedOperationException(
-                            "Method not implemented in fake entry: " + method.getName());
+                    default ->
+                        throw new UnsupportedOperationException(
+                                "Method not implemented in fake entry: " + method.getName());
                 });
     }
 }

@@ -12,8 +12,7 @@ import java.util.Locale;
  */
 public final class ProjectSummaryCsvExporter {
 
-    private ProjectSummaryCsvExporter() {
-    }
+    private ProjectSummaryCsvExporter() {}
 
     public record Row(
             String imageName,
@@ -25,25 +24,34 @@ public final class ProjectSummaryCsvExporter {
             boolean flagged,
             String flagReasons,
             String rareEnrichment,
-            String classCounts) {
-    }
+            String classCounts) {}
 
     public static String toCsv(List<Row> rows) {
         var safeRows = rows == null ? List.<Row>of() : List.copyOf(rows);
 
         StringBuilder sb = new StringBuilder();
-        sb.append("Image,Predicted,Agreements,Disagreements,AgreementPercent,AnomalyScore,Flagged,FlagReasons,RareEnrichment,ClassCounts\n");
+        sb.append(
+                "Image,Predicted,Agreements,Disagreements,AgreementPercent,AnomalyScore,Flagged,FlagReasons,RareEnrichment,ClassCounts\n");
 
         for (var row : safeRows) {
-            sb.append(csvEscape(row.imageName())).append(',')
-                    .append(row.predictedCells()).append(',')
-                    .append(row.agreements()).append(',')
-                    .append(row.disagreements()).append(',')
-                    .append(csvEscape(row.agreementRate())).append(',')
-                    .append(String.format(Locale.ROOT, "%.4f", row.anomalyScore())).append(',')
-                    .append(row.flagged()).append(',')
-                    .append(csvEscape(row.flagReasons())).append(',')
-                    .append(csvEscape(row.rareEnrichment())).append(',')
+            sb.append(csvEscape(row.imageName()))
+                    .append(',')
+                    .append(row.predictedCells())
+                    .append(',')
+                    .append(row.agreements())
+                    .append(',')
+                    .append(row.disagreements())
+                    .append(',')
+                    .append(csvEscape(row.agreementRate()))
+                    .append(',')
+                    .append(String.format(Locale.ROOT, "%.4f", row.anomalyScore()))
+                    .append(',')
+                    .append(row.flagged())
+                    .append(',')
+                    .append(csvEscape(row.flagReasons()))
+                    .append(',')
+                    .append(csvEscape(row.rareEnrichment()))
+                    .append(',')
                     .append(csvEscape(row.classCounts()))
                     .append('\n');
         }

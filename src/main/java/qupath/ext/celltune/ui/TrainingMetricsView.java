@@ -1,5 +1,9 @@
 package qupath.ext.celltune.ui;
 
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -17,11 +21,6 @@ import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import qupath.ext.celltune.classifier.TrainingMetrics;
-
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 /**
  * Dialog showing per-class precision/recall/F1 (sklearn-style classification
@@ -45,15 +44,16 @@ public class TrainingMetricsView {
     private final TrainingMetrics m2Train;
     private final TrainingMetrics m2Val;
 
-    public TrainingMetricsView(Stage owner,
-                               TrainingMetrics m1Train,
-                               TrainingMetrics m1Val,
-                               TrainingMetrics m2Train,
-                               TrainingMetrics m2Val) {
+    public TrainingMetricsView(
+            Stage owner,
+            TrainingMetrics m1Train,
+            TrainingMetrics m1Val,
+            TrainingMetrics m2Train,
+            TrainingMetrics m2Val) {
         this.m1Train = m1Train;
-        this.m1Val   = m1Val;
+        this.m1Val = m1Val;
         this.m2Train = m2Train;
-        this.m2Val   = m2Val;
+        this.m2Val = m2Val;
 
         text.setEditable(false);
         text.setWrapText(false);
@@ -76,8 +76,7 @@ public class TrainingMetricsView {
         // Shown side-by-side as absolute + row-normalised heatmaps.
         Button cmBtn = new Button("Validation Confusion Matrix (XGBoost)\u2026");
         cmBtn.setDisable(m1Val == null);
-        cmBtn.setOnAction(e -> new ValidationConfusionMatrixView(
-                owner, "Model 1 (XGBoost)", m1Val).show());
+        cmBtn.setOnAction(e -> new ValidationConfusionMatrixView(owner, "Model 1 (XGBoost)", m1Val).show());
 
         Button close = new Button("Close");
         close.setOnAction(e -> stage.close());
@@ -148,7 +147,8 @@ public class TrainingMetricsView {
         return sum;
     }
 
-    // \u2500\u2500 CSV export \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // \u2500\u2500 CSV export
+    // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     /**
      * Export all available metric blocks as a tidy long-format CSV:
@@ -165,8 +165,7 @@ public class TrainingMetricsView {
     private void exportCsv(Stage owner) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Export training metrics as CSV");
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV files", "*.csv"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
         chooser.setInitialFileName("celltune_training_metrics.csv");
         var target = chooser.showSaveDialog(owner);
         if (target == null) return;
@@ -174,20 +173,18 @@ public class TrainingMetricsView {
         Path path = target.toPath();
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(path))) {
             w.println("split,model,class,precision,recall,f1,support");
-            writeBlock(w, "Train", "Model 1 (XGBoost)",  m1Train);
-            writeBlock(w, "Val",   "Model 1 (XGBoost)",  m1Val);
+            writeBlock(w, "Train", "Model 1 (XGBoost)", m1Train);
+            writeBlock(w, "Val", "Model 1 (XGBoost)", m1Val);
             writeBlock(w, "Train", "Model 2 (LightGBM)", m2Train);
-            writeBlock(w, "Val",   "Model 2 (LightGBM)", m2Val);
+            writeBlock(w, "Val", "Model 2 (LightGBM)", m2Val);
         } catch (IOException ex) {
-            Alert a = new Alert(Alert.AlertType.ERROR,
-                    "Failed to write CSV: " + ex.getMessage());
+            Alert a = new Alert(Alert.AlertType.ERROR, "Failed to write CSV: " + ex.getMessage());
             a.initOwner(stage);
             a.showAndWait();
             return;
         }
 
-        Alert ok = new Alert(Alert.AlertType.INFORMATION,
-                "Saved to:\n" + path);
+        Alert ok = new Alert(Alert.AlertType.INFORMATION, "Saved to:\n" + path);
         ok.setHeaderText("Training metrics exported");
         ok.initOwner(stage);
         ok.showAndWait();
@@ -202,17 +199,14 @@ public class TrainingMetricsView {
         double[] f1 = m.f1();
         int[] support = m.support();
         for (int i = 0; i < classes.size(); i++) {
-            w.printf("%s,%s,%s,%.6f,%.6f,%.6f,%d%n",
-                    csv(split), csv(model), csv(classes.get(i)),
-                    p[i], r[i], f1[i], support[i]);
+            w.printf(
+                    "%s,%s,%s,%.6f,%.6f,%.6f,%d%n",
+                    csv(split), csv(model), csv(classes.get(i)), p[i], r[i], f1[i], support[i]);
         }
         // Summary rows \u2014 sentinel class names make them easy to filter out.
-        w.printf("%s,%s,__accuracy__,,,%.6f,%d%n",
-                csv(split), csv(model), m.accuracy(), m.total());
-        w.printf("%s,%s,__macro_f1__,,,%.6f,%d%n",
-                csv(split), csv(model), m.macroF1(), m.total());
-        w.printf("%s,%s,__weighted_f1__,,,%.6f,%d%n",
-                csv(split), csv(model), m.weightedF1(), m.total());
+        w.printf("%s,%s,__accuracy__,,,%.6f,%d%n", csv(split), csv(model), m.accuracy(), m.total());
+        w.printf("%s,%s,__macro_f1__,,,%.6f,%d%n", csv(split), csv(model), m.macroF1(), m.total());
+        w.printf("%s,%s,__weighted_f1__,,,%.6f,%d%n", csv(split), csv(model), m.weightedF1(), m.total());
     }
 
     /** Minimal CSV escaping: quote and double any embedded quotes when needed. */

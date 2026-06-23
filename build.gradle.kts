@@ -5,6 +5,8 @@ plugins {
     id("qupath-conventions")
     // Static analysis — reporting only, never fails the build (see config below)
     id("com.github.spotbugs") version "6.4.2"
+    // Code formatting — palantir-java-format, non-blocking (see config below)
+    id("com.diffplug.spotless") version "7.0.2"
 }
 
 qupathExtension {
@@ -70,4 +72,21 @@ tasks.spotbugsMain {
 }
 tasks.named("spotbugsTest") {
     enabled = false
+}
+
+// ── Code formatting (Spotless + palantir-java-format) ───────────────────────
+// Auto-formatter. Run `./gradlew spotlessApply` to reformat in place, or
+// `./gradlew spotlessCheck` to verify without editing. palantir-java-format =
+// 4-space indent, 120-col lines (closest to the existing style, smallest diff).
+//
+// Enforced: `isEnforceCheck = true` wires spotlessCheck into `check`, so an
+// unformatted tree fails `./gradlew check` (and CI). Run `spotlessApply` before
+// committing. Set this back to `false` to make formatting reporting-only.
+spotless {
+    isEnforceCheck = true
+    java {
+        target("src/*/java/**/*.java")
+        palantirJavaFormat("2.93.0")
+        removeUnusedImports()
+    }
 }

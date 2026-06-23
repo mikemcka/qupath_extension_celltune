@@ -1,5 +1,11 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
@@ -15,13 +21,6 @@ import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.ProjectImageEntry;
 
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
 /**
  * Simple composite classification dialog.
  * Lists all trained binary markers as checkboxes and lets the user choose
@@ -36,17 +35,17 @@ public class CompositeClassificationDialog {
     private final Stage stage;
 
     private final Map<String, CheckBox> markerCheckBoxes = new LinkedHashMap<>();
-    private final Map<String, CheckBox> imageCheckBoxes  = new LinkedHashMap<>();
+    private final Map<String, CheckBox> imageCheckBoxes = new LinkedHashMap<>();
 
-    private final TextArea    logArea     = new TextArea();
+    private final TextArea logArea = new TextArea();
     private final ProgressBar progressBar = new ProgressBar(0);
-    private final Label       statusLabel = new Label("Select markers and images, then click Apply.");
-    private final CheckBox    mergePrimaryCheck = new CheckBox(
-            "Prepend current primary classification (colour follows primary)");
+    private final Label statusLabel = new Label("Select markers and images, then click Apply.");
+    private final CheckBox mergePrimaryCheck =
+            new CheckBox("Prepend current primary classification (colour follows primary)");
 
     public CompositeClassificationDialog(QuPathGUI qupath) {
         this.qupath = qupath;
-        this.stage  = buildStage();
+        this.stage = buildStage();
     }
 
     public void showAndWait() {
@@ -84,7 +83,8 @@ public class CompositeClassificationDialog {
                 ProjectStateManager.SavedState state = null;
                 try {
                     state = ProjectStateManager.loadBinaryState(project, markerName);
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
                 if (state == null || state.xgboostModelBase64 == null) continue;
 
                 CheckBox cb = new CheckBox(markerName);
@@ -95,8 +95,10 @@ public class CompositeClassificationDialog {
         }
 
         if (markerCheckBoxes.isEmpty()) {
-            markerBox.getChildren().add(new Label(
-                    "No trained binary classifiers found.\nTrain at least one binary classifier first."));
+            markerBox
+                    .getChildren()
+                    .add(new Label(
+                            "No trained binary classifiers found.\nTrain at least one binary classifier first."));
         }
 
         ScrollPane markerScroll = new ScrollPane(markerBox);
@@ -104,9 +106,9 @@ public class CompositeClassificationDialog {
         markerScroll.setPrefHeight(150);
         markerScroll.setStyle("-fx-border-color: #ccc;");
 
-        Button selectAllMarkers  = new Button("All");
+        Button selectAllMarkers = new Button("All");
         Button selectNoneMarkers = new Button("None");
-        selectAllMarkers .setOnAction(e -> markerCheckBoxes.values().forEach(cb -> cb.setSelected(true)));
+        selectAllMarkers.setOnAction(e -> markerCheckBoxes.values().forEach(cb -> cb.setSelected(true)));
         selectNoneMarkers.setOnAction(e -> markerCheckBoxes.values().forEach(cb -> cb.setSelected(false)));
         HBox markerButtons = new HBox(6, new Label("Markers:"), selectAllMarkers, selectNoneMarkers);
         markerButtons.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
@@ -136,13 +138,13 @@ public class CompositeClassificationDialog {
         imageScroll.setPrefHeight(150);
         imageScroll.setStyle("-fx-border-color: #ccc;");
 
-        Button selectAllImages  = new Button("All");
+        Button selectAllImages = new Button("All");
         Button selectNoneImages = new Button("None");
-        Button selectCurrent    = new Button("Current only");
-        selectAllImages .setOnAction(e -> imageCheckBoxes.values().forEach(cb -> cb.setSelected(true)));
+        Button selectCurrent = new Button("Current only");
+        selectAllImages.setOnAction(e -> imageCheckBoxes.values().forEach(cb -> cb.setSelected(true)));
         selectNoneImages.setOnAction(e -> imageCheckBoxes.values().forEach(cb -> cb.setSelected(false)));
-        selectCurrent   .setOnAction(e -> imageCheckBoxes.forEach((name, cb) ->
-                cb.setSelected(name.equals(currentImageNameFinal))));
+        selectCurrent.setOnAction(
+                e -> imageCheckBoxes.forEach((name, cb) -> cb.setSelected(name.equals(currentImageNameFinal))));
         HBox imageButtons = new HBox(6, new Label("Images:"), selectAllImages, selectNoneImages, selectCurrent);
         imageButtons.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
@@ -153,10 +155,9 @@ public class CompositeClassificationDialog {
         progressBar.setPrefWidth(Double.MAX_VALUE);
 
         mergePrimaryCheck.setWrapText(true);
-        mergePrimaryCheck.setTooltip(new Tooltip(
-                "When ticked, each cell's existing primary class becomes the first "
-                        + "segment of the composite label (e.g. Tumor:CD3+:CD8-), "
-                        + "and the composite class is coloured to match the primary."));
+        mergePrimaryCheck.setTooltip(new Tooltip("When ticked, each cell's existing primary class becomes the first "
+                + "segment of the composite label (e.g. Tumor:CD3+:CD8-), "
+                + "and the composite class is coloured to match the primary."));
 
         // ── Buttons ──
         Button applyBtn = new Button("Apply");
@@ -170,7 +171,8 @@ public class CompositeClassificationDialog {
         buttons.setPadding(new Insets(4, 0, 0, 0));
 
         // ── Root layout ──
-        VBox root = new VBox(8,
+        VBox root = new VBox(
+                8,
                 markerButtons,
                 markerScroll,
                 new Separator(),
@@ -204,7 +206,9 @@ public class CompositeClassificationDialog {
 
         // Collect selected markers
         List<String> selectedMarkers = new ArrayList<>();
-        markerCheckBoxes.forEach((name, cb) -> { if (cb.isSelected()) selectedMarkers.add(name); });
+        markerCheckBoxes.forEach((name, cb) -> {
+            if (cb.isSelected()) selectedMarkers.add(name);
+        });
         if (selectedMarkers.isEmpty()) {
             Dialogs.showErrorMessage("Composite Classification", "Select at least one marker.");
             return;
@@ -212,7 +216,9 @@ public class CompositeClassificationDialog {
 
         // Collect selected images
         List<String> selectedImages = new ArrayList<>();
-        imageCheckBoxes.forEach((name, cb) -> { if (cb.isSelected()) selectedImages.add(name); });
+        imageCheckBoxes.forEach((name, cb) -> {
+            if (cb.isSelected()) selectedImages.add(name);
+        });
         if (selectedImages.isEmpty()) {
             Dialogs.showErrorMessage("Composite Classification", "Select at least one image.");
             return;
@@ -228,8 +234,7 @@ public class CompositeClassificationDialog {
             currentImageName = null;
         }
 
-        boolean applyToCurrentImage = currentImageName != null
-                && selectedImages.contains(currentImageName);
+        boolean applyToCurrentImage = currentImageName != null && selectedImages.contains(currentImageName);
 
         // Images to handle via disk batch (everything except the open one)
         List<String> batchImages = new ArrayList<>(selectedImages);
@@ -242,49 +247,42 @@ public class CompositeClassificationDialog {
         final boolean mergeWithPrimary = mergePrimaryCheck.isSelected();
         CompositeClassifier compositeClassifier = new CompositeClassifier();
 
-        Thread worker = new Thread(() -> {
-            try {
-                // ── 1. Current open image — classify in-memory so viewer updates immediately ──
-                if (applyToCurrentImage && liveImageData != null) {
-                    log("Classifying current image: " + currentImageName);
-                    int count = compositeClassifier.apply(
-                            liveImageData,
-                            selectedMarkers,
-                            project,
-                            mergeWithPrimary,
-                            this::log);
-                    log("Current image done: " + count + " cells classified.");
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        // ── 1. Current open image — classify in-memory so viewer updates immediately ──
+                        if (applyToCurrentImage && liveImageData != null) {
+                            log("Classifying current image: " + currentImageName);
+                            int count = compositeClassifier.apply(
+                                    liveImageData, selectedMarkers, project, mergeWithPrimary, this::log);
+                            log("Current image done: " + count + " cells classified.");
 
-                    // Refresh the viewer on the FX thread
-                    Platform.runLater(() ->
-                            liveImageData.getHierarchy().fireHierarchyChangedEvent(this));
-                }
+                            // Refresh the viewer on the FX thread
+                            Platform.runLater(() -> liveImageData.getHierarchy().fireHierarchyChangedEvent(this));
+                        }
 
-                // ── 2. Remaining images — read/write from disk ──
-                if (!batchImages.isEmpty()) {
-                    Map<String, String> results = compositeClassifier.batch(
-                            project,
-                            batchImages,
-                            selectedMarkers,
-                            mergeWithPrimary,
-                            this::log);
-                    results.forEach((img, msg) -> log(img + ": " + msg));
-                }
+                        // ── 2. Remaining images — read/write from disk ──
+                        if (!batchImages.isEmpty()) {
+                            Map<String, String> results = compositeClassifier.batch(
+                                    project, batchImages, selectedMarkers, mergeWithPrimary, this::log);
+                            results.forEach((img, msg) -> log(img + ": " + msg));
+                        }
 
-                Platform.runLater(() -> {
-                    progressBar.setProgress(1.0);
-                    statusLabel.setText("Done — classification complete.");
-                });
+                        Platform.runLater(() -> {
+                            progressBar.setProgress(1.0);
+                            statusLabel.setText("Done — classification complete.");
+                        });
 
-            } catch (Exception ex) {
-                logger.error("Composite classification failed", ex);
-                Platform.runLater(() -> {
-                    progressBar.setProgress(0);
-                    statusLabel.setText("Error: " + ex.getMessage());
-                    logArea.appendText("ERROR: " + ex.getMessage() + "\n");
-                });
-            }
-        }, "CellTune-CompositeClassification");
+                    } catch (Exception ex) {
+                        logger.error("Composite classification failed", ex);
+                        Platform.runLater(() -> {
+                            progressBar.setProgress(0);
+                            statusLabel.setText("Error: " + ex.getMessage());
+                            logArea.appendText("ERROR: " + ex.getMessage() + "\n");
+                        });
+                    }
+                },
+                "CellTune-CompositeClassification");
         worker.setDaemon(true);
         worker.start();
     }

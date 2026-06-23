@@ -1,11 +1,10 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Arrays;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests the pure-Java numerical core of the scatter plot: column standardisation,
@@ -84,8 +83,8 @@ class ScatterMathTest {
 
     @Test
     void identityIsAscendingRange() {
-        assertArrayEquals(new int[]{0, 1, 2, 3}, ScatterMath.identity(4));
-        assertArrayEquals(new int[]{}, ScatterMath.identity(0));
+        assertArrayEquals(new int[] {0, 1, 2, 3}, ScatterMath.identity(4));
+        assertArrayEquals(new int[] {}, ScatterMath.identity(0));
     }
 
     @Test
@@ -106,9 +105,7 @@ class ScatterMathTest {
     @Test
     void randomSubsampleIsDeterministic() {
         // Fixed internal seed → same data plots the same points across runs.
-        assertArrayEquals(
-                ScatterMath.randomSubsample(500, 50),
-                ScatterMath.randomSubsample(500, 50));
+        assertArrayEquals(ScatterMath.randomSubsample(500, 50), ScatterMath.randomSubsample(500, 50));
     }
 
     // ── pointInPolygon ───────────────────────────────────────────────────────
@@ -116,8 +113,8 @@ class ScatterMathTest {
     @Test
     void pointInPolygonInsideAndOutsideUnitSquare() {
         List<double[]> square = List.of(
-                new double[]{0, 0}, new double[]{10, 0},
-                new double[]{10, 10}, new double[]{0, 10});
+                new double[] {0, 0}, new double[] {10, 0},
+                new double[] {10, 10}, new double[] {0, 10});
         assertTrue(ScatterMath.pointInPolygon(5, 5, square), "centre is inside");
         assertFalse(ScatterMath.pointInPolygon(15, 5, square), "right is outside");
         assertFalse(ScatterMath.pointInPolygon(-1, 5, square), "left is outside");
@@ -128,8 +125,9 @@ class ScatterMathTest {
     void pointInPolygonConcaveShape() {
         // Arrow/notch polygon: a point in the notch is outside.
         List<double[]> notch = List.of(
-                new double[]{0, 0}, new double[]{10, 0}, new double[]{10, 10},
-                new double[]{5, 5}, new double[]{0, 10});
+                new double[] {0, 0}, new double[] {10, 0}, new double[] {10, 10}, new double[] {5, 5}, new double[] {
+                    0, 10
+                });
         assertTrue(ScatterMath.pointInPolygon(2, 2, notch), "lower-left body inside");
         assertFalse(ScatterMath.pointInPolygon(5, 9, notch), "inside the notch is outside");
     }

@@ -1,17 +1,16 @@
 package qupath.ext.celltune.io;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.model.CellPrediction;
-import qupath.ext.celltune.model.PopulationSet;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.CellPrediction;
+import qupath.ext.celltune.model.PopulationSet;
+import qupath.lib.projects.Project;
 
 /**
  * Per-image {@code Pred_ALL} prediction persistence.
@@ -50,9 +49,7 @@ final class PredictionPersistence {
     /**
      * Save Pred_ALL predictions for a specific image.
      */
-    static Path saveImagePredictions(Project<?> project,
-                                     String imageName,
-                                     PopulationSet predAll) throws IOException {
+    static Path saveImagePredictions(Project<?> project, String imageName, PopulationSet predAll) throws IOException {
         if (predAll == null || predAll.size() == 0) {
             return null;
         }
@@ -87,16 +84,14 @@ final class PredictionPersistence {
 
         state.classNames = List.copyOf(classNames);
         Files.writeString(outPath, ProjectStateManager.GSON.toJson(state), StandardCharsets.UTF_8);
-        logger.info("Saved {} predictions for image '{}' to {}",
-                state.predictions.size(), imageName, outPath);
+        logger.info("Saved {} predictions for image '{}' to {}", state.predictions.size(), imageName, outPath);
         return outPath;
     }
 
     /**
      * Load Pred_ALL predictions previously saved for a specific image.
      */
-    static PopulationSet loadImagePredictions(Project<?> project,
-                                              String imageName) throws IOException {
+    static PopulationSet loadImagePredictions(Project<?> project, String imageName) throws IOException {
         Path dir = ProjectStateManager.getCellTuneDir(project).resolve(IMAGE_PREDICTIONS_DIR);
         String safeFileName = ProjectStateManager.sanitiseFileName(imageName) + ".json";
         Path filePath = dir.resolve(safeFileName);
@@ -107,16 +102,23 @@ final class PredictionPersistence {
 
         SavedPredictions saved = ProjectStateManager.GSON.fromJson(
                 Files.readString(filePath, StandardCharsets.UTF_8), SavedPredictions.class);
-        if (saved == null || saved.classNames == null || saved.classNames.isEmpty()
-                || saved.predictions == null || saved.predictions.isEmpty()) {
+        if (saved == null
+                || saved.classNames == null
+                || saved.classNames.isEmpty()
+                || saved.predictions == null
+                || saved.predictions.isEmpty()) {
             return null;
         }
 
         PopulationSet predAll = new PopulationSet("Pred_ALL");
         for (SavedPredictionEntry row : saved.predictions) {
-            if (row == null || row.cellId == null || row.cellId.isBlank()
-                    || row.model1Label == null || row.model2Label == null
-                    || row.model1Probs == null || row.model2Probs == null) {
+            if (row == null
+                    || row.cellId == null
+                    || row.cellId.isBlank()
+                    || row.model1Label == null
+                    || row.model2Label == null
+                    || row.model1Probs == null
+                    || row.model2Probs == null) {
                 continue;
             }
 
@@ -126,12 +128,7 @@ final class PredictionPersistence {
             }
 
             CellPrediction pred = new CellPrediction(
-                    row.cellId,
-                    row.model1Label,
-                    row.model2Label,
-                    row.model1Probs,
-                    row.model2Probs,
-                    saved.classNames);
+                    row.cellId, row.model1Label, row.model2Label, row.model1Probs, row.model2Probs, saved.classNames);
             predAll.put(row.cellId, pred);
         }
 
@@ -139,8 +136,7 @@ final class PredictionPersistence {
             return null;
         }
 
-        logger.info("Loaded {} predictions for image '{}' from {}",
-                predAll.size(), imageName, filePath);
+        logger.info("Loaded {} predictions for image '{}' from {}", predAll.size(), imageName, filePath);
         return predAll;
     }
 

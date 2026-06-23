@@ -1,5 +1,7 @@
 package qupath.ext.celltune.classifier;
 
+import java.util.*;
+import java.util.function.Consumer;
 import javafx.application.Platform;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
@@ -12,9 +14,6 @@ import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
-
-import java.util.*;
-import java.util.function.Consumer;
 
 /**
  * Orchestrates training of two tree-based models on the same labelled data,
@@ -42,8 +41,8 @@ public class DualModelClassifier {
 
     // ── Default hyperparameters ─────────────────────────────────────────────────
     private int numRounds = 1000;
-    private int maxDepth  = 6;
-    private float eta     = 0.1f;
+    private int maxDepth = 6;
+    private float eta = 0.1f;
     private float subsample = 0.8f;
 
     /** Max cells per prediction chunk to stay within flat float[] int-index limit. */
@@ -58,10 +57,7 @@ public class DualModelClassifier {
      * @param featureNames ordered feature names
      * @param meanAbsShap  mean |SHAP| values indexed as [nClasses][nFeatures]
      */
-    public record ShapResult(
-            List<String> classNames,
-            List<String> featureNames,
-            double[][] meanAbsShap) {}
+    public record ShapResult(List<String> classNames, List<String> featureNames, double[][] meanAbsShap) {}
 
     // ── Model type selection ────────────────────────────────────────────────────
     private ModelType model1Type = ModelType.XGBOOST;
@@ -75,7 +71,7 @@ public class DualModelClassifier {
 
     // ── Observable progress for UI binding ──────────────────────────────────────
     private final DoubleProperty progress = new SimpleDoubleProperty(0);
-    private final StringProperty status   = new SimpleStringProperty("");
+    private final StringProperty status = new SimpleStringProperty("");
 
     // ── Population sets (filled after trainAndPredict) ──────────────────────────
     private PopulationSet predMDL1;
@@ -110,15 +106,17 @@ public class DualModelClassifier {
      * @param log                  optional progress callback (may be null)
      * @throws Exception if training or prediction fails
      */
-    public void trainAndPredict(Collection<PathObject> allCells,
-                                LabelStore labelStore,
-                                CellFeatureExtractor extractor,
-                                List<float[]> supplementaryRows,
-                                List<String> supplementaryLabels,
-                                ResamplingStrategy resampling,
-                                boolean autoTune,
-                                boolean earlyStop,
-                                Consumer<String> log) throws Exception {
+    public void trainAndPredict(
+            Collection<PathObject> allCells,
+            LabelStore labelStore,
+            CellFeatureExtractor extractor,
+            List<float[]> supplementaryRows,
+            List<String> supplementaryLabels,
+            ResamplingStrategy resampling,
+            boolean autoTune,
+            boolean earlyStop,
+            Consumer<String> log)
+            throws Exception {
 
         Consumer<String> out = log != null ? log : s -> {};
 
@@ -138,8 +136,7 @@ public class DualModelClassifier {
         int nClasses = classNames.size();
 
         if (nClasses < 2) {
-            throw new IllegalStateException(
-                    "Need at least 2 classes to train, found " + nClasses);
+            throw new IllegalStateException("Need at least 2 classes to train, found " + nClasses);
         }
 
         // Map cell IDs to PathObjects for fast lookup
@@ -197,8 +194,8 @@ public class DualModelClassifier {
                 suppCount++;
             }
             if (suppCount > 0) {
-                out.accept("Pooled " + suppCount + " labelled cells from other images "
-                        + "(current image: " + currentImageSamples + ")");
+                out.accept("Pooled " + suppCount + " labelled cells from other images " + "(current image: "
+                        + currentImageSamples + ")");
             }
         }
 
@@ -206,15 +203,12 @@ public class DualModelClassifier {
         int nFeatures = extractor.getNumFeatures();
 
         if (nSamples < nClasses * 2) {
-            throw new IllegalStateException(
-                    "Too few training samples (" + nSamples + ") for " + nClasses
+            throw new IllegalStateException("Too few training samples (" + nSamples + ") for " + nClasses
                     + " classes. Label more cells before training.");
         }
 
-        out.accept("Training data: " + nSamples + " cells, "
-                + nFeatures + " features, " + nClasses + " classes");
-        out.accept("Threads: " + Runtime.getRuntime().availableProcessors()
-                + " available processors");
+        out.accept("Training data: " + nSamples + " cells, " + nFeatures + " features, " + nClasses + " classes");
+        out.accept("Threads: " + Runtime.getRuntime().availableProcessors() + " available processors");
 
         // ── 1b. Early stopping (split BEFORE resampling — validate on real data only)
         //        Save original data for the split, then resample separately.
@@ -231,8 +225,14 @@ public class DualModelClassifier {
         // Apply model-type-specific defaults
         if (model1Type == ModelType.LIGHTGBM) mdl1Eta = 0.05f;
         if (model2Type == ModelType.LIGHTGBM) mdl2Eta = 0.05f;
-        if (model1Type == ModelType.RANDOM_FOREST) { mdl1Rounds = 100; mdl1Depth = 100; }
-        if (model2Type == ModelType.RANDOM_FOREST) { mdl2Rounds = 100; mdl2Depth = 100; }
+        if (model1Type == ModelType.RANDOM_FOREST) {
+            mdl1Rounds = 100;
+            mdl1Depth = 100;
+        }
+        if (model2Type == ModelType.RANDOM_FOREST) {
+            mdl2Rounds = 100;
+            mdl2Depth = 100;
+        }
 
         int nRealSamples = trainRows.size();
 
@@ -261,12 +261,11 @@ public class DualModelClassifier {
 
             // Resample only the 80% training portion
             if (strategy != ResamplingStrategy.NONE) {
-                Resampler.Result esResampled = Resampler.apply(
-                        esTrainRows, esTrainLabelsList, nClasses, strategy, out);
+                Resampler.Result esResampled = Resampler.apply(esTrainRows, esTrainLabelsList, nClasses, strategy, out);
                 esTrainRows = esResampled.rows();
                 esTrainLabelsList = esResampled.labels();
-                out.accept("Early stopping train set after resampling: " + esTrainRows.size()
-                        + " (validation: " + split[1].length + " real samples)");
+                out.accept("Early stopping train set after resampling: " + esTrainRows.size() + " (validation: "
+                        + split[1].length + " real samples)");
             }
 
             // Flatten resampled 80% train
@@ -282,37 +281,76 @@ public class DualModelClassifier {
             float[] esValData = new float[split[1].length * nFeatures];
             float[] esValLabels = new float[split[1].length];
             for (int i = 0; i < split[1].length; i++) {
-                System.arraycopy(trainRows.get(split[1][i]), 0,
-                        esValData, i * nFeatures, nFeatures);
+                System.arraycopy(trainRows.get(split[1][i]), 0, esValData, i * nFeatures, nFeatures);
                 esValLabels[i] = trainLabels.get(split[1][i]);
             }
 
             if (mdl1Boosted && model1Type == ModelType.XGBOOST) {
                 mdl1Rounds = XGBoostModel.findBestRounds(
-                    esTrainData, esTrainLabels, esTrainSize,
-                    esValData, esValLabels, split[1].length,
-                    nFeatures, nClasses,
-                    mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub, patience, out);
+                        esTrainData,
+                        esTrainLabels,
+                        esTrainSize,
+                        esValData,
+                        esValLabels,
+                        split[1].length,
+                        nFeatures,
+                        nClasses,
+                        mdl1Rounds,
+                        mdl1Depth,
+                        mdl1Eta,
+                        mdl1Sub,
+                        patience,
+                        out);
             } else if (mdl1Boosted && model1Type == ModelType.LIGHTGBM) {
                 mdl1Rounds = LightGBMModel.findBestRounds(
-                    esTrainData, esTrainLabels, esTrainSize,
-                    esValData, esValLabels, split[1].length,
-                    nFeatures, nClasses,
-                    mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub, patience, out);
+                        esTrainData,
+                        esTrainLabels,
+                        esTrainSize,
+                        esValData,
+                        esValLabels,
+                        split[1].length,
+                        nFeatures,
+                        nClasses,
+                        mdl1Rounds,
+                        mdl1Depth,
+                        mdl1Eta,
+                        mdl1Sub,
+                        patience,
+                        out);
             }
 
             if (mdl2Boosted && model2Type == ModelType.XGBOOST) {
                 mdl2Rounds = XGBoostModel.findBestRounds(
-                    esTrainData, esTrainLabels, esTrainSize,
-                    esValData, esValLabels, split[1].length,
-                    nFeatures, nClasses,
-                    mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub, patience, out);
+                        esTrainData,
+                        esTrainLabels,
+                        esTrainSize,
+                        esValData,
+                        esValLabels,
+                        split[1].length,
+                        nFeatures,
+                        nClasses,
+                        mdl2Rounds,
+                        mdl2Depth,
+                        mdl2Eta,
+                        mdl2Sub,
+                        patience,
+                        out);
             } else if (mdl2Boosted && model2Type == ModelType.LIGHTGBM) {
                 mdl2Rounds = LightGBMModel.findBestRounds(
-                    esTrainData, esTrainLabels, esTrainSize,
-                    esValData, esValLabels, split[1].length,
-                    nFeatures, nClasses,
-                    mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub, patience, out);
+                        esTrainData,
+                        esTrainLabels,
+                        esTrainSize,
+                        esValData,
+                        esValLabels,
+                        split[1].length,
+                        nFeatures,
+                        nClasses,
+                        mdl2Rounds,
+                        mdl2Depth,
+                        mdl2Eta,
+                        mdl2Sub,
+                        patience,
+                        out);
             }
         }
 
@@ -322,8 +360,7 @@ public class DualModelClassifier {
         List<float[]> realTrainRows = trainRows;
         List<Integer> realTrainLabels = trainLabels;
         if (strategy != ResamplingStrategy.NONE) {
-            Resampler.Result resampled = Resampler.apply(
-                    trainRows, trainLabels, nClasses, strategy, out);
+            Resampler.Result resampled = Resampler.apply(trainRows, trainLabels, nClasses, strategy, out);
             trainRows = resampled.rows();
             trainLabels = resampled.labels();
             nSamples = trainRows.size();
@@ -342,30 +379,35 @@ public class DualModelClassifier {
             updateStatus("Auto-tuning hyperparameters…", earlyStop ? 0.10 : 0.05);
             out.accept("Auto-tuning hyperparameters (this may take several minutes)…");
             var tuneResult = HyperparameterTuner.tune(
-                    flatData, labelArray, nSamples, nFeatures, nClasses,
+                    flatData,
+                    labelArray,
+                    nSamples,
+                    nFeatures,
+                    nClasses,
                     HyperparameterTuner.DEFAULT_TRIALS,
-                    HyperparameterTuner.DEFAULT_FOLDS, out);
+                    HyperparameterTuner.DEFAULT_FOLDS,
+                    out);
             if (mdl1Boosted && model1Type == ModelType.XGBOOST) {
                 mdl1Rounds = tuneResult.xgbParams().numRounds();
-                mdl1Depth  = tuneResult.xgbParams().maxDepth();
-                mdl1Eta    = tuneResult.xgbParams().eta();
-                mdl1Sub    = tuneResult.xgbParams().subsample();
+                mdl1Depth = tuneResult.xgbParams().maxDepth();
+                mdl1Eta = tuneResult.xgbParams().eta();
+                mdl1Sub = tuneResult.xgbParams().subsample();
             } else if (mdl1Boosted && model1Type == ModelType.LIGHTGBM) {
                 mdl1Rounds = tuneResult.lgbParams().numRounds();
-                mdl1Depth  = tuneResult.lgbParams().maxDepth();
-                mdl1Eta    = tuneResult.lgbParams().eta();
-                mdl1Sub    = tuneResult.lgbParams().subsample();
+                mdl1Depth = tuneResult.lgbParams().maxDepth();
+                mdl1Eta = tuneResult.lgbParams().eta();
+                mdl1Sub = tuneResult.lgbParams().subsample();
             }
             if (mdl2Boosted && model2Type == ModelType.XGBOOST) {
                 mdl2Rounds = tuneResult.xgbParams().numRounds();
-                mdl2Depth  = tuneResult.xgbParams().maxDepth();
-                mdl2Eta    = tuneResult.xgbParams().eta();
-                mdl2Sub    = tuneResult.xgbParams().subsample();
+                mdl2Depth = tuneResult.xgbParams().maxDepth();
+                mdl2Eta = tuneResult.xgbParams().eta();
+                mdl2Sub = tuneResult.xgbParams().subsample();
             } else if (mdl2Boosted && model2Type == ModelType.LIGHTGBM) {
                 mdl2Rounds = tuneResult.lgbParams().numRounds();
-                mdl2Depth  = tuneResult.lgbParams().maxDepth();
-                mdl2Eta    = tuneResult.lgbParams().eta();
-                mdl2Sub    = tuneResult.lgbParams().subsample();
+                mdl2Depth = tuneResult.lgbParams().maxDepth();
+                mdl2Eta = tuneResult.lgbParams().eta();
+                mdl2Sub = tuneResult.lgbParams().subsample();
             }
         }
 
@@ -376,14 +418,24 @@ public class DualModelClassifier {
         // hyperparameters/round counts — these get overwritten below when the
         // final models are retrained on the full dataset.
         if (nRealSamples >= 20) {
-            updateStatus("Computing training/validation metrics\u2026",
-                    earlyStop ? 0.12 : 0.08);
+            updateStatus("Computing training/validation metrics\u2026", earlyStop ? 0.12 : 0.08);
             out.accept("Computing training/validation metrics on 80/20 stratified split\u2026");
             try {
-                computeTrainValMetrics(realTrainRows, realTrainLabels, nRealSamples,
-                        nClasses, nFeatures, strategy,
-                        mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub,
-                        mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub,
+                computeTrainValMetrics(
+                        realTrainRows,
+                        realTrainLabels,
+                        nRealSamples,
+                        nClasses,
+                        nFeatures,
+                        strategy,
+                        mdl1Rounds,
+                        mdl1Depth,
+                        mdl1Eta,
+                        mdl1Sub,
+                        mdl2Rounds,
+                        mdl2Depth,
+                        mdl2Eta,
+                        mdl2Sub,
                         out);
             } catch (Exception ex) {
                 logger.warn("Failed to compute training/validation metrics", ex);
@@ -391,9 +443,9 @@ public class DualModelClassifier {
             }
         } else {
             this.model1TrainMetrics = null;
-            this.model1ValMetrics   = null;
+            this.model1ValMetrics = null;
             this.model2TrainMetrics = null;
-            this.model2ValMetrics   = null;
+            this.model2ValMetrics = null;
             out.accept("Skipping train/val metrics (need \u2265 20 labelled samples).");
         }
 
@@ -401,16 +453,16 @@ public class DualModelClassifier {
         updateStatus("Training " + model1Type + "…", 0.15);
         out.accept("Training " + model1Type + " (" + mdl1Rounds
                 + (model1Type == ModelType.RANDOM_FOREST ? " trees" : " rounds") + ")…");
-        trainModel(model1Type, true, flatData, labelArray, nSamples, nFeatures,
-                mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub);
+        trainModel(
+                model1Type, true, flatData, labelArray, nSamples, nFeatures, mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub);
         out.accept(model1Type + " trained on: " + getModelDevice(model1Type, true));
 
         // ── 3. Train Model 2 ───────────────────────────────────────────────
         updateStatus("Training " + model2Type + "…", 0.40);
         out.accept("Training " + model2Type + " (" + mdl2Rounds
                 + (model2Type == ModelType.RANDOM_FOREST ? " trees" : " rounds") + ")…");
-        trainModel(model2Type, false, flatData, labelArray, nSamples, nFeatures,
-                mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub);
+        trainModel(
+                model2Type, false, flatData, labelArray, nSamples, nFeatures, mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub);
         out.accept(model2Type + " trained on: " + getModelDevice(model2Type, false));
 
         // ── 4. Predict all cells (chunked for large datasets) ────────────
@@ -420,15 +472,16 @@ public class DualModelClassifier {
 
         predMDL1 = new PopulationSet("Pred_MDL1");
         predMDL2 = new PopulationSet("Pred_MDL2");
-        predAVG  = new PopulationSet("Pred_AVG");
-        predALL  = new PopulationSet("Pred_ALL");
+        predAVG = new PopulationSet("Pred_AVG");
+        predALL = new PopulationSet("Pred_ALL");
 
-        List<PathObject> cellList = (allCells instanceof List)
-                ? (List<PathObject>) allCells
-                : new ArrayList<>(allCells);
+        List<PathObject> cellList =
+                (allCells instanceof List) ? (List<PathObject>) allCells : new ArrayList<>(allCells);
 
         PredictionBatcher.Batch batch = PredictionBatcher.predict(
-                cellList, extractor, PREDICT_CHUNK_SIZE,
+                cellList,
+                extractor,
+                PREDICT_CHUNK_SIZE,
                 (data, size) -> predictModel(model1Type, true, data, size, nFeatures),
                 (data, size) -> predictModel(model2Type, false, data, size, nFeatures),
                 classNames,
@@ -438,13 +491,13 @@ public class DualModelClassifier {
                     predAVG.put(cellId, pred);
                     predALL.put(cellId, pred);
                 },
-                chunkEnd -> updateStatus("Predicting… " + chunkEnd + "/" + totalCells,
-                        0.65 + 0.20 * ((double) chunkEnd / totalCells)));
+                chunkEnd -> updateStatus(
+                        "Predicting… " + chunkEnd + "/" + totalCells, 0.65 + 0.20 * ((double) chunkEnd / totalCells)));
 
         // Keep the original variable names so the summary and FX-thread apply
         // below are unchanged; the batcher now owns the chunked loop.
         List<PathObject> classifyObjects = batch.objects();
-        List<PathClass>  classifyClasses = batch.classes();
+        List<PathClass> classifyClasses = batch.classes();
         int disagreements = batch.disagreements();
 
         // ── 5. Summary ─────────────────────────────────────────────────────
@@ -486,10 +539,9 @@ public class DualModelClassifier {
      * @param log           optional progress callback
      * @throws Exception if prediction fails
      */
-    public void predictOnly(Collection<PathObject> cells,
-                            CellFeatureExtractor extractor,
-                            boolean populateSets,
-                            Consumer<String> log) throws Exception {
+    public void predictOnly(
+            Collection<PathObject> cells, CellFeatureExtractor extractor, boolean populateSets, Consumer<String> log)
+            throws Exception {
         if (!isTrained()) {
             throw new IllegalStateException("Models must be trained before predicting.");
         }
@@ -500,25 +552,24 @@ public class DualModelClassifier {
 
         // Guard against mis-matched feature sets (e.g. loading a model from a different session)
         if (featureNames != null && featureNames.size() != nFeatures) {
-            throw new IllegalStateException(
-                    "Feature count mismatch: extractor has " + nFeatures
+            throw new IllegalStateException("Feature count mismatch: extractor has " + nFeatures
                     + " feature(s) but this classifier was trained with "
                     + featureNames.size() + ". Re-select features and retrain.");
         }
 
         out.accept("Predicting " + totalCells + " cells…");
 
-        List<PathObject> cellList = (cells instanceof List)
-                ? (List<PathObject>) cells
-                : new ArrayList<>(cells);
+        List<PathObject> cellList = (cells instanceof List) ? (List<PathObject>) cells : new ArrayList<>(cells);
 
         PopulationSet localMDL1 = populateSets ? new PopulationSet("Pred_MDL1") : null;
         PopulationSet localMDL2 = populateSets ? new PopulationSet("Pred_MDL2") : null;
-        PopulationSet localAVG  = populateSets ? new PopulationSet("Pred_AVG")  : null;
-        PopulationSet localALL  = populateSets ? new PopulationSet("Pred_ALL")  : null;
+        PopulationSet localAVG = populateSets ? new PopulationSet("Pred_AVG") : null;
+        PopulationSet localALL = populateSets ? new PopulationSet("Pred_ALL") : null;
 
         PredictionBatcher.Batch batch = PredictionBatcher.predict(
-                cellList, extractor, PREDICT_CHUNK_SIZE,
+                cellList,
+                extractor,
+                PREDICT_CHUNK_SIZE,
                 (data, size) -> predictModel(model1Type, true, data, size, nFeatures),
                 (data, size) -> predictModel(model2Type, false, data, size, nFeatures),
                 classNames,
@@ -540,8 +591,8 @@ public class DualModelClassifier {
         if (populateSets) {
             this.predMDL1 = localMDL1;
             this.predMDL2 = localMDL2;
-            this.predAVG  = localAVG;
-            this.predALL  = localALL;
+            this.predAVG = localAVG;
+            this.predALL = localALL;
         }
 
         out.accept("Predictions applied: " + totalCells + " cells, "
@@ -552,9 +603,8 @@ public class DualModelClassifier {
     /**
      * Convenience overload — does not populate internal PopulationSets.
      */
-    public void predictOnly(Collection<PathObject> cells,
-                            CellFeatureExtractor extractor,
-                            Consumer<String> log) throws Exception {
+    public void predictOnly(Collection<PathObject> cells, CellFeatureExtractor extractor, Consumer<String> log)
+            throws Exception {
         predictOnly(cells, extractor, false, log);
     }
 
@@ -571,9 +621,8 @@ public class DualModelClassifier {
      * @return a populated {@link PopulationSet} keyed by cell ID
      * @throws Exception if prediction fails
      */
-    public PopulationSet predictAndCollect(Collection<PathObject> cells,
-                                           CellFeatureExtractor extractor,
-                                           Consumer<String> log) throws Exception {
+    public PopulationSet predictAndCollect(
+            Collection<PathObject> cells, CellFeatureExtractor extractor, Consumer<String> log) throws Exception {
         if (!isTrained()) {
             throw new IllegalStateException("Models must be trained before predicting.");
         }
@@ -583,22 +632,21 @@ public class DualModelClassifier {
         int nFeatures = extractor.getNumFeatures();
 
         if (featureNames != null && featureNames.size() != nFeatures) {
-            throw new IllegalStateException(
-                    "Feature count mismatch: extractor has " + nFeatures
+            throw new IllegalStateException("Feature count mismatch: extractor has " + nFeatures
                     + " feature(s) but this classifier was trained with "
                     + featureNames.size() + ". Re-select features and retrain.");
         }
 
         out.accept("Predicting " + totalCells + " cells…");
 
-        List<PathObject> cellList = (cells instanceof List)
-                ? (List<PathObject>) cells
-                : new ArrayList<>(cells);
+        List<PathObject> cellList = (cells instanceof List) ? (List<PathObject>) cells : new ArrayList<>(cells);
 
         PopulationSet localALL = new PopulationSet("Pred_ALL");
 
         PredictionBatcher.Batch batch = PredictionBatcher.predict(
-                cellList, extractor, PREDICT_CHUNK_SIZE,
+                cellList,
+                extractor,
+                PREDICT_CHUNK_SIZE,
                 (data, size) -> predictModel(model1Type, true, data, size, nFeatures),
                 (data, size) -> predictModel(model2Type, false, data, size, nFeatures),
                 classNames,
@@ -629,8 +677,8 @@ public class DualModelClassifier {
         byte[] lgbBytes = lgbModel != null && lgbModel.isTrained() ? lgbModel.toBytes() : null;
         byte[] rf1Bytes = rfModel1 != null && rfModel1.isTrained() ? rfModel1.toBytes() : null;
         byte[] rf2Bytes = rfModel2 != null && rfModel2.isTrained() ? rfModel2.toBytes() : null;
-        return new ClassifierState(name, featureNames, classNames,
-                xgbBytes, lgbBytes, rf1Bytes, rf2Bytes, model1Type, model2Type);
+        return new ClassifierState(
+                name, featureNames, classNames, xgbBytes, lgbBytes, rf1Bytes, rf2Bytes, model1Type, model2Type);
     }
 
     /**
@@ -689,16 +737,14 @@ public class DualModelClassifier {
      * @return per-class mean |SHAP| values
      * @throws Exception if SHAP computation fails
      */
-    public ShapResult computeFeatureImportance(Collection<PathObject> cells,
-                                               CellFeatureExtractor extractor)
+    public ShapResult computeFeatureImportance(Collection<PathObject> cells, CellFeatureExtractor extractor)
             throws Exception {
         if (!isTrained()) {
-            throw new IllegalStateException(
-                    "Models must be trained before computing feature importance.");
+            throw new IllegalStateException("Models must be trained before computing feature importance.");
         }
 
         int nFeatures = extractor.getNumFeatures();
-        int nClasses  = classNames.size();
+        int nClasses = classNames.size();
 
         // Sample cells for performance
         List<PathObject> sample = new ArrayList<>(cells);
@@ -713,39 +759,32 @@ public class DualModelClassifier {
         int modelCount = 0;
 
         // ── XGBoost TreeSHAP ────────────────────────────────────────────────
-        if (xgbModel != null && xgbModel.isTrained()
+        if (xgbModel != null
+                && xgbModel.isTrained()
                 && (model1Type == ModelType.XGBOOST || model2Type == ModelType.XGBOOST)) {
             double[][] shap = xgbModel.computeMeanAbsShap(flatData, nSamples, nFeatures);
-            for (int c = 0; c < nClasses; c++)
-                for (int f = 0; f < nFeatures; f++)
-                    result[c][f] += shap[c][f];
+            for (int c = 0; c < nClasses; c++) for (int f = 0; f < nFeatures; f++) result[c][f] += shap[c][f];
             modelCount++;
         }
 
         // ── Random Forest split importance ──────────────────────────────────
-        if (model1Type == ModelType.RANDOM_FOREST
-                && rfModel1 != null && rfModel1.isTrained()) {
+        if (model1Type == ModelType.RANDOM_FOREST && rfModel1 != null && rfModel1.isTrained()) {
             double[][] imp = rfModel1.computeSplitImportance();
-            for (int c = 0; c < nClasses; c++)
-                for (int f = 0; f < nFeatures; f++)
-                    result[c][f] += imp[c][f];
+            for (int c = 0; c < nClasses; c++) for (int f = 0; f < nFeatures; f++) result[c][f] += imp[c][f];
             modelCount++;
         }
         // RF model 2 only if it is a distinct model slot
         if (model2Type == ModelType.RANDOM_FOREST
-                && rfModel2 != null && rfModel2.isTrained()
+                && rfModel2 != null
+                && rfModel2.isTrained()
                 && model1Type != ModelType.RANDOM_FOREST) {
             double[][] imp = rfModel2.computeSplitImportance();
-            for (int c = 0; c < nClasses; c++)
-                for (int f = 0; f < nFeatures; f++)
-                    result[c][f] += imp[c][f];
+            for (int c = 0; c < nClasses; c++) for (int f = 0; f < nFeatures; f++) result[c][f] += imp[c][f];
             modelCount++;
         }
 
         if (modelCount > 1) {
-            for (int c = 0; c < nClasses; c++)
-                for (int f = 0; f < nFeatures; f++)
-                    result[c][f] /= modelCount;
+            for (int c = 0; c < nClasses; c++) for (int f = 0; f < nFeatures; f++) result[c][f] /= modelCount;
         }
 
         return new ShapResult(classNames, featureNames, result);
@@ -753,29 +792,79 @@ public class DualModelClassifier {
 
     // ── Hyperparameter setters ──────────────────────────────────────────────────
 
-    public void setNumRounds(int numRounds)    { this.numRounds = numRounds; }
-    public void setMaxDepth(int maxDepth)      { this.maxDepth = maxDepth; }
-    public void setEta(float eta)              { this.eta = eta; }
-    public void setSubsample(float subsample)  { this.subsample = subsample; }
-    public void setModel1Type(ModelType type)  { this.model1Type = type; }
-    public void setModel2Type(ModelType type)  { this.model2Type = type; }
+    public void setNumRounds(int numRounds) {
+        this.numRounds = numRounds;
+    }
 
-    public int getNumRounds()    { return numRounds; }
-    public int getMaxDepth()     { return maxDepth; }
-    public float getEta()        { return eta; }
-    public float getSubsample()  { return subsample; }
-    public ModelType getModel1Type() { return model1Type; }
-    public ModelType getModel2Type() { return model2Type; }
+    public void setMaxDepth(int maxDepth) {
+        this.maxDepth = maxDepth;
+    }
+
+    public void setEta(float eta) {
+        this.eta = eta;
+    }
+
+    public void setSubsample(float subsample) {
+        this.subsample = subsample;
+    }
+
+    public void setModel1Type(ModelType type) {
+        this.model1Type = type;
+    }
+
+    public void setModel2Type(ModelType type) {
+        this.model2Type = type;
+    }
+
+    public int getNumRounds() {
+        return numRounds;
+    }
+
+    public int getMaxDepth() {
+        return maxDepth;
+    }
+
+    public float getEta() {
+        return eta;
+    }
+
+    public float getSubsample() {
+        return subsample;
+    }
+
+    public ModelType getModel1Type() {
+        return model1Type;
+    }
+
+    public ModelType getModel2Type() {
+        return model2Type;
+    }
 
     // ── Population set accessors ────────────────────────────────────────────────
 
-    public PopulationSet getPredMDL1() { return predMDL1; }
-    public PopulationSet getPredMDL2() { return predMDL2; }
-    public PopulationSet getPredAVG()  { return predAVG; }
-    public PopulationSet getPredALL()  { return predALL; }
+    public PopulationSet getPredMDL1() {
+        return predMDL1;
+    }
 
-    public List<String> getClassNames()   { return classNames; }
-    public List<String> getFeatureNames() { return featureNames; }
+    public PopulationSet getPredMDL2() {
+        return predMDL2;
+    }
+
+    public PopulationSet getPredAVG() {
+        return predAVG;
+    }
+
+    public PopulationSet getPredALL() {
+        return predALL;
+    }
+
+    public List<String> getClassNames() {
+        return classNames;
+    }
+
+    public List<String> getFeatureNames() {
+        return featureNames;
+    }
 
     public boolean isTrained() {
         return isModelTrained(model1Type, true) && isModelTrained(model2Type, false);
@@ -783,8 +872,13 @@ public class DualModelClassifier {
 
     // ── Observable properties ───────────────────────────────────────────────────
 
-    public DoubleProperty progressProperty() { return progress; }
-    public StringProperty statusProperty()   { return status; }
+    public DoubleProperty progressProperty() {
+        return progress;
+    }
+
+    public StringProperty statusProperty() {
+        return status;
+    }
 
     /** Synchronously reset progress and status to their initial state. */
     public void resetProgress() {
@@ -820,38 +914,42 @@ public class DualModelClassifier {
 
     // ── Model dispatch helpers ──────────────────────────────────────────────────
 
-    private void trainModel(ModelType type, boolean isModel1,
-                            float[] flatData, float[] labels,
-                            int nSamples, int nFeatures,
-                            int rounds, int depth, float lr, float sub) throws Exception {
+    private void trainModel(
+            ModelType type,
+            boolean isModel1,
+            float[] flatData,
+            float[] labels,
+            int nSamples,
+            int nFeatures,
+            int rounds,
+            int depth,
+            float lr,
+            float sub)
+            throws Exception {
         switch (type) {
             case XGBOOST -> {
                 if (xgbModel == null) xgbModel = new XGBoostModel();
-                xgbModel.train(flatData, labels, nSamples, nFeatures,
-                        classNames, featureNames, rounds, depth, lr, sub);
+                xgbModel.train(flatData, labels, nSamples, nFeatures, classNames, featureNames, rounds, depth, lr, sub);
             }
             case LIGHTGBM -> {
                 if (lgbModel == null) lgbModel = new LightGBMModel();
-                lgbModel.train(flatData, labels, nSamples, nFeatures,
-                        classNames, featureNames, rounds, depth, lr, sub);
+                lgbModel.train(flatData, labels, nSamples, nFeatures, classNames, featureNames, rounds, depth, lr, sub);
             }
             case RANDOM_FOREST -> {
                 var rf = new RandomForestModel();
-                rf.train(flatData, labels, nSamples, nFeatures,
-                        classNames, featureNames, rounds, depth, lr, sub);
-                if (isModel1) rfModel1 = rf; else rfModel2 = rf;
+                rf.train(flatData, labels, nSamples, nFeatures, classNames, featureNames, rounds, depth, lr, sub);
+                if (isModel1) rfModel1 = rf;
+                else rfModel2 = rf;
             }
         }
     }
 
-    private float[][] predictModel(ModelType type, boolean isModel1,
-                                   float[] flatData, int nSamples, int nFeatures)
+    private float[][] predictModel(ModelType type, boolean isModel1, float[] flatData, int nSamples, int nFeatures)
             throws Exception {
         return switch (type) {
             case XGBOOST -> xgbModel.predictProba(flatData, nSamples, nFeatures);
             case LIGHTGBM -> lgbModel.predictProba(flatData, nSamples, nFeatures);
-            case RANDOM_FOREST -> (isModel1 ? rfModel1 : rfModel2)
-                    .predictProba(flatData, nSamples, nFeatures);
+            case RANDOM_FOREST -> (isModel1 ? rfModel1 : rfModel2).predictProba(flatData, nSamples, nFeatures);
         };
     }
 
@@ -880,27 +978,35 @@ public class DualModelClassifier {
     // ── Train/validation metrics ────────────────────────────────────────────────
 
     /** @return per-class precision/recall/F1 for Model 1 on the 80% train portion (may be null). */
-    public TrainingMetrics getModel1TrainMetrics() { return model1TrainMetrics; }
+    public TrainingMetrics getModel1TrainMetrics() {
+        return model1TrainMetrics;
+    }
     /** @return per-class precision/recall/F1 for Model 1 on the 20% held-out validation portion (may be null). */
-    public TrainingMetrics getModel1ValMetrics()   { return model1ValMetrics; }
+    public TrainingMetrics getModel1ValMetrics() {
+        return model1ValMetrics;
+    }
     /** @return per-class precision/recall/F1 for Model 2 on the 80% train portion (may be null). */
-    public TrainingMetrics getModel2TrainMetrics() { return model2TrainMetrics; }
+    public TrainingMetrics getModel2TrainMetrics() {
+        return model2TrainMetrics;
+    }
     /** @return per-class precision/recall/F1 for Model 2 on the 20% held-out validation portion (may be null). */
-    public TrainingMetrics getModel2ValMetrics()   { return model2ValMetrics; }
+    public TrainingMetrics getModel2ValMetrics() {
+        return model2ValMetrics;
+    }
 
     /** @return true if any train/val metrics are available. */
     public boolean hasTrainValMetrics() {
-        return model1TrainMetrics != null || model1ValMetrics != null
-                || model2TrainMetrics != null || model2ValMetrics != null;
+        return model1TrainMetrics != null
+                || model1ValMetrics != null
+                || model2TrainMetrics != null
+                || model2ValMetrics != null;
     }
 
     /**
      * Restore previously-computed metrics (e.g. after loading a saved classifier state).
      */
-    public void setTrainingMetrics(TrainingMetrics m1Train,
-                                   TrainingMetrics m1Val,
-                                   TrainingMetrics m2Train,
-                                   TrainingMetrics m2Val) {
+    public void setTrainingMetrics(
+            TrainingMetrics m1Train, TrainingMetrics m1Val, TrainingMetrics m2Train, TrainingMetrics m2Val) {
         this.model1TrainMetrics = m1Train;
         this.model1ValMetrics = m1Val;
         this.model2TrainMetrics = m2Train;
@@ -915,26 +1021,40 @@ public class DualModelClassifier {
      * themselves overwritten by the final full-data training step that runs
      * immediately after.
      */
-    private void computeTrainValMetrics(List<float[]> realRows,
-                                        List<Integer> realLabels,
-                                        int nRealSamples,
-                                        int nClasses,
-                                        int nFeatures,
-                                        ResamplingStrategy strategy,
-                                        int mdl1Rounds, int mdl1Depth, float mdl1Eta, float mdl1Sub,
-                                        int mdl2Rounds, int mdl2Depth, float mdl2Eta, float mdl2Sub,
-                                        Consumer<String> out) throws Exception {
+    private void computeTrainValMetrics(
+            List<float[]> realRows,
+            List<Integer> realLabels,
+            int nRealSamples,
+            int nClasses,
+            int nFeatures,
+            ResamplingStrategy strategy,
+            int mdl1Rounds,
+            int mdl1Depth,
+            float mdl1Eta,
+            float mdl1Sub,
+            int mdl2Rounds,
+            int mdl2Depth,
+            float mdl2Eta,
+            float mdl2Sub,
+            Consumer<String> out)
+            throws Exception {
         TrainValMetricsComputer.Result result = TrainValMetricsComputer.compute(
-                realRows, realLabels, nRealSamples, nClasses, nFeatures, strategy,
-                (data, labels, n) -> trainModel(model1Type, true, data, labels, n, nFeatures,
-                        mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub),
+                realRows,
+                realLabels,
+                nRealSamples,
+                nClasses,
+                nFeatures,
+                strategy,
+                (data, labels, n) -> trainModel(
+                        model1Type, true, data, labels, n, nFeatures, mdl1Rounds, mdl1Depth, mdl1Eta, mdl1Sub),
                 (data, n) -> predictModel(model1Type, true, data, n, nFeatures),
                 "Model 1 (" + model1Type + ")",
-                (data, labels, n) -> trainModel(model2Type, false, data, labels, n, nFeatures,
-                        mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub),
+                (data, labels, n) -> trainModel(
+                        model2Type, false, data, labels, n, nFeatures, mdl2Rounds, mdl2Depth, mdl2Eta, mdl2Sub),
                 (data, n) -> predictModel(model2Type, false, data, n, nFeatures),
                 "Model 2 (" + model2Type + ")",
-                classNames, out);
+                classNames,
+                out);
         this.model1TrainMetrics = result.model1Train();
         this.model1ValMetrics = result.model1Val();
         this.model2TrainMetrics = result.model2Train();

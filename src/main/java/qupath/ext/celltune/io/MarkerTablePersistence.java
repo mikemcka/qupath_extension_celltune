@@ -5,17 +5,16 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.celltune.model.CellTypeTable;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.CellTypeTable;
+import qupath.lib.projects.Project;
 
 /**
  * Imported marker-table persistence ({@code <project>/celltune/marker-table.json}).
@@ -79,8 +78,11 @@ final class MarkerTablePersistence {
         root.add("entries", entries);
 
         Files.writeString(path, ProjectStateManager.GSON.toJson(root), StandardCharsets.UTF_8);
-        logger.info("Saved marker table ({} cell types, {} format) to {}",
-                entries.size(), hasRules ? "rule" : "simple", path);
+        logger.info(
+                "Saved marker table ({} cell types, {} format) to {}",
+                entries.size(),
+                hasRules ? "rule" : "simple",
+                path);
     }
 
     static CellTypeTable loadMarkerTable(Project<?> project) {
@@ -114,13 +116,19 @@ final class MarkerTablePersistence {
         }
 
         JsonElement rawVersion = root.get("version");
-        if (rawVersion != null && rawVersion.isJsonPrimitive() && rawVersion.getAsJsonPrimitive().isNumber()
+        if (rawVersion != null
+                && rawVersion.isJsonPrimitive()
+                && rawVersion.getAsJsonPrimitive().isNumber()
                 && rawVersion.getAsInt() != MARKER_TABLE_SCHEMA_VERSION) {
-            logger.warn("loadMarkerTable: schema version {} in {} (expected {})",
-                    rawVersion.getAsInt(), path, MARKER_TABLE_SCHEMA_VERSION);
+            logger.warn(
+                    "loadMarkerTable: schema version {} in {} (expected {})",
+                    rawVersion.getAsInt(),
+                    path,
+                    MARKER_TABLE_SCHEMA_VERSION);
         }
 
-        boolean hasRules = root.has("hasRules") && root.get("hasRules").isJsonPrimitive()
+        boolean hasRules = root.has("hasRules")
+                && root.get("hasRules").isJsonPrimitive()
                 && root.get("hasRules").getAsBoolean();
 
         JsonElement rawEntries = root.get("entries");
@@ -138,7 +146,8 @@ final class MarkerTablePersistence {
                 continue;
             }
             if (hasRules) {
-                table.putRule(cellType,
+                table.putRule(
+                        cellType,
                         getOptionalString(entry, "primary"),
                         getOptionalString(entry, "secondary"),
                         getOptionalString(entry, "tertiary"));
@@ -159,14 +168,20 @@ final class MarkerTablePersistence {
         if (table.isEmpty()) {
             return null;
         }
-        logger.info("Loaded marker table ({} cell types, {} format) from {}",
-                table.size(), hasRules ? "rule" : "simple", path);
+        logger.info(
+                "Loaded marker table ({} cell types, {} format) from {}",
+                table.size(),
+                hasRules ? "rule" : "simple",
+                path);
         return table;
     }
 
     private static String getOptionalString(JsonObject obj, String key) {
         JsonElement raw = obj.get(key);
-        if (raw == null || raw.isJsonNull() || !raw.isJsonPrimitive() || !raw.getAsJsonPrimitive().isString()) {
+        if (raw == null
+                || raw.isJsonNull()
+                || !raw.isJsonPrimitive()
+                || !raw.getAsJsonPrimitive().isString()) {
             return null;
         }
         return raw.getAsString();

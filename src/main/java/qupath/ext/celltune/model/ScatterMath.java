@@ -3,7 +3,6 @@ package qupath.ext.celltune.model;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
-
 import smile.feature.extraction.PCA;
 import smile.manifold.UMAP;
 
@@ -16,8 +15,7 @@ import smile.manifold.UMAP;
  */
 public final class ScatterMath {
 
-    private ScatterMath() {
-    }
+    private ScatterMath() {}
 
     // ── Standardisation ──────────────────────────────────────────────────────
 
@@ -31,8 +29,7 @@ public final class ScatterMath {
      * Z-scores each column, writing the per-column mean/sd into {@code outMean}/
      * {@code outSd} so the same transform can be replayed at cohort-assign time.
      */
-    public static double[][] standardizeColumns(double[][] data, double[] outMean,
-                                                double[] outSd) {
+    public static double[][] standardizeColumns(double[][] data, double[] outMean, double[] outSd) {
         int n = data.length;
         int p = n == 0 ? 0 : data[0].length;
         double[][] out = new double[n][p];
@@ -77,12 +74,9 @@ public final class ScatterMath {
      * @throws LinkageError if the native ARPACK library cannot be loaded (caller
      *     falls back to PCA)
      */
-    public static String fillUmap(double[][] std, int n, double[] nx, double[] ny,
-                                  int maxCells) {
+    public static String fillUmap(double[][] std, int n, double[] nx, double[] ny, int maxCells) {
         // UMAP: subsample if larger than the cap; embed a connected subset.
-        int[] sub = (n > maxCells)
-                ? randomSubsample(n, maxCells)
-                : identity(n);
+        int[] sub = (n > maxCells) ? randomSubsample(n, maxCells) : identity(n);
         // The status bar's "clustered · plotted" counts convey the subsample, so
         // no extra notice is emitted here.
         String notice = "";
@@ -92,8 +86,7 @@ public final class ScatterMath {
         }
         int neighbors = Math.min(15, subMatrix.length - 1);
         if (neighbors < 2) {
-            throw new IllegalStateException(
-                    "Too few cells for UMAP (need at least 3).");
+            throw new IllegalStateException("Too few cells for UMAP (need at least 3).");
         }
         UMAP umap = UMAP.of(subMatrix, neighbors);
         // coordinates[j] corresponds to subMatrix row umap.index[j].
@@ -149,8 +142,7 @@ public final class ScatterMath {
         for (int i = 0, j = n - 1; i < n; j = i++) {
             double xi = poly.get(i)[0], yi = poly.get(i)[1];
             double xj = poly.get(j)[0], yj = poly.get(j)[1];
-            boolean intersect = ((yi > y) != (yj > y))
-                    && (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi);
+            boolean intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi);
             if (intersect) {
                 in = !in;
             }

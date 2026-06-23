@@ -1,15 +1,14 @@
 package qupath.ext.celltune.classifier;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.function.IntConsumer;
 import javafx.application.Platform;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.function.IntConsumer;
 
 /**
  * Shared chunked-prediction loop for {@link DualModelClassifier}.
@@ -67,10 +66,16 @@ final class PredictionBatcher {
      * @param onChunkDone called with the cumulative cell count after each chunk
      * @return the collected objects/classes to apply and the disagreement count
      */
-    static Batch predict(List<PathObject> cellList, CellFeatureExtractor extractor,
-                         int chunkSize, ChunkPredictor model1, ChunkPredictor model2,
-                         List<String> classNames, PredictionSink sink,
-                         IntConsumer onChunkDone) throws Exception {
+    static Batch predict(
+            List<PathObject> cellList,
+            CellFeatureExtractor extractor,
+            int chunkSize,
+            ChunkPredictor model1,
+            ChunkPredictor model2,
+            List<String> classNames,
+            PredictionSink sink,
+            IntConsumer onChunkDone)
+            throws Exception {
         int total = cellList.size();
         List<PathObject> objects = new ArrayList<>(total);
         List<PathClass> classes = new ArrayList<>(total);
@@ -92,9 +97,8 @@ final class PredictionBatcher {
                 String mdl1Label = classNames.get(argmax(mdl1Probs[i]));
                 String mdl2Label = classNames.get(argmax(mdl2Probs[i]));
 
-                CellPrediction pred = new CellPrediction(
-                        cellId, mdl1Label, mdl2Label,
-                        mdl1Probs[i], mdl2Probs[i], classNames);
+                CellPrediction pred =
+                        new CellPrediction(cellId, mdl1Label, mdl2Label, mdl1Probs[i], mdl2Probs[i], classNames);
 
                 objects.add(cell);
                 classes.add(PathClass.fromString(pred.avgLabel()));

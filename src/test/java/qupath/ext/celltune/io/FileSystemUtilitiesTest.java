@@ -1,7 +1,6 @@
 package qupath.ext.celltune.io;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -9,8 +8,8 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.zip.ZipFile;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class FileSystemUtilitiesTest {
 
@@ -55,7 +54,6 @@ class FileSystemUtilitiesTest {
 
     @Test
     void deleteDirectoryRecursivelyIsNoOpWhenMissing(@TempDir Path tmp) {
-        assertDoesNotThrow(() ->
-                FileSystemUtilities.deleteDirectoryRecursively(tmp.resolve("does-not-exist")));
+        assertDoesNotThrow(() -> FileSystemUtilities.deleteDirectoryRecursively(tmp.resolve("does-not-exist")));
     }
 }

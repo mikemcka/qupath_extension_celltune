@@ -63,19 +63,18 @@ public record PixelCohortReport(List<ImageReport> images) {
             double saturationMinFraction,
             double saturationHardFraction,
             double weakSignalZ,
-            double intensityOutlierZ) {
-    }
+            double intensityOutlierZ) {}
 
     /** Default thresholds (the values agreed for the first cut). */
     public static final Thresholds DEFAULT_THRESHOLDS = new Thresholds(
-            2.5,   // backgroundForegroundZ
-            2.5,   // backgroundEmptyZ
-            3.0,   // saturationZ
-            0.01,  // saturationMinFraction (1% of pixels clipped)
-            0.05,  // saturationHardFraction (5% clipped → always flag)
-            2.5,   // weakSignalZ
-            2.5    // intensityOutlierZ
-    );
+            2.5, // backgroundForegroundZ
+            2.5, // backgroundEmptyZ
+            3.0, // saturationZ
+            0.01, // saturationMinFraction (1% of pixels clipped)
+            0.05, // saturationHardFraction (5% clipped → always flag)
+            2.5, // weakSignalZ
+            2.5 // intensityOutlierZ
+            );
 
     /**
      * Per-channel context for one image: the raw per-channel statistics, carried
@@ -84,10 +83,7 @@ public record PixelCohortReport(List<ImageReport> images) {
      * @param channel channel name
      * @param stats   the raw per-channel statistics
      */
-    public record ChannelContext(
-            String channel,
-            ImagePixelStats.ChannelStats stats) {
-    }
+    public record ChannelContext(String channel, ImagePixelStats.ChannelStats stats) {}
 
     /**
      * Whole-image report with verdict, flags, the cohort-relative narrative, and

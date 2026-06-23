@@ -1,10 +1,9 @@
 package qupath.ext.celltune.classifier;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class TrainingMetricsTest {
 
@@ -18,10 +17,10 @@ class TrainingMetricsTest {
         var classNames = List.of("Neg", "Pos");
         float[] trueLabels = {0f, 0f, 1f, 1f};
         float[][] proba = {
-                {0.9f, 0.1f},   // true=Neg, pred=Neg ✓
-                {0.8f, 0.2f},   // true=Neg, pred=Neg ✓
-                {0.1f, 0.9f},   // true=Pos, pred=Pos ✓
-                {0.2f, 0.8f},   // true=Pos, pred=Pos ✓
+            {0.9f, 0.1f}, // true=Neg, pred=Neg ✓
+            {0.8f, 0.2f}, // true=Neg, pred=Neg ✓
+            {0.1f, 0.9f}, // true=Pos, pred=Pos ✓
+            {0.2f, 0.8f}, // true=Pos, pred=Pos ✓
         };
 
         var metrics = TrainingMetrics.compute("test", classNames, trueLabels, proba);
@@ -37,15 +36,15 @@ class TrainingMetricsTest {
         var classNames = List.of("Neg", "Pos");
         float[] trueLabels = {0f, 1f};
         float[][] proba = {
-                {0.9f, 0.1f},
-                {0.1f, 0.9f},
+            {0.9f, 0.1f},
+            {0.1f, 0.9f},
         };
 
         var metrics = TrainingMetrics.compute("test", classNames, trueLabels, proba);
 
-        assertArrayEquals(new double[]{1.0, 1.0}, metrics.f1(), DELTA);
-        assertArrayEquals(new double[]{1.0, 1.0}, metrics.precision(), DELTA);
-        assertArrayEquals(new double[]{1.0, 1.0}, metrics.recall(), DELTA);
+        assertArrayEquals(new double[] {1.0, 1.0}, metrics.f1(), DELTA);
+        assertArrayEquals(new double[] {1.0, 1.0}, metrics.precision(), DELTA);
+        assertArrayEquals(new double[] {1.0, 1.0}, metrics.recall(), DELTA);
     }
 
     // ── known binary case ────────────────────────────────────────────────────
@@ -56,10 +55,10 @@ class TrainingMetricsTest {
         var classNames = List.of("A", "B");
         float[] trueLabels = {0f, 0f, 1f, 1f};
         float[][] proba = {
-                {0.9f, 0.1f},   // true=A, pred=A ✓
-                {0.2f, 0.8f},   // true=A, pred=B ✗
-                {0.8f, 0.2f},   // true=B, pred=A ✗
-                {0.1f, 0.9f},   // true=B, pred=B ✓
+            {0.9f, 0.1f}, // true=A, pred=A ✓
+            {0.2f, 0.8f}, // true=A, pred=B ✗
+            {0.8f, 0.2f}, // true=B, pred=A ✗
+            {0.1f, 0.9f}, // true=B, pred=B ✓
         };
 
         var metrics = TrainingMetrics.compute("test", classNames, trueLabels, proba);
@@ -73,19 +72,19 @@ class TrainingMetricsTest {
         var classNames = List.of("A", "B");
         float[] trueLabels = {0f, 0f, 1f, 1f};
         float[][] proba = {
-                {0.9f, 0.1f},   // true=A, pred=A  → cm[0][0]++
-                {0.2f, 0.8f},   // true=A, pred=B  → cm[0][1]++
-                {0.8f, 0.2f},   // true=B, pred=A  → cm[1][0]++
-                {0.1f, 0.9f},   // true=B, pred=B  → cm[1][1]++
+            {0.9f, 0.1f}, // true=A, pred=A  → cm[0][0]++
+            {0.2f, 0.8f}, // true=A, pred=B  → cm[0][1]++
+            {0.8f, 0.2f}, // true=B, pred=A  → cm[1][0]++
+            {0.1f, 0.9f}, // true=B, pred=B  → cm[1][1]++
         };
 
         var metrics = TrainingMetrics.compute("test", classNames, trueLabels, proba);
 
         int[][] cm = metrics.confusionMatrix();
-        assertEquals(1, cm[0][0]);  // A predicted as A
-        assertEquals(1, cm[0][1]);  // A predicted as B
-        assertEquals(1, cm[1][0]);  // B predicted as A
-        assertEquals(1, cm[1][1]);  // B predicted as B
+        assertEquals(1, cm[0][0]); // A predicted as A
+        assertEquals(1, cm[0][1]); // A predicted as B
+        assertEquals(1, cm[1][0]); // B predicted as A
+        assertEquals(1, cm[1][1]); // B predicted as B
     }
 
     // ── multi-class ──────────────────────────────────────────────────────────
@@ -95,16 +94,16 @@ class TrainingMetricsTest {
         var classNames = List.of("T", "NK", "B");
         float[] trueLabels = {0f, 1f, 2f};
         float[][] proba = {
-                {0.9f, 0.05f, 0.05f},   // true=T, pred=T ✓
-                {0.05f, 0.9f, 0.05f},   // true=NK, pred=NK ✓
-                {0.05f, 0.05f, 0.9f},   // true=B, pred=B ✓
+            {0.9f, 0.05f, 0.05f}, // true=T, pred=T ✓
+            {0.05f, 0.9f, 0.05f}, // true=NK, pred=NK ✓
+            {0.05f, 0.05f, 0.9f}, // true=B, pred=B ✓
         };
 
         var metrics = TrainingMetrics.compute("test", classNames, trueLabels, proba);
 
         assertEquals(1.0, metrics.accuracy(), DELTA);
         assertEquals(3, metrics.total());
-        assertArrayEquals(new double[]{1.0, 1.0, 1.0}, metrics.f1(), DELTA);
+        assertArrayEquals(new double[] {1.0, 1.0, 1.0}, metrics.f1(), DELTA);
     }
 
     @Test
@@ -112,11 +111,11 @@ class TrainingMetricsTest {
         var classNames = List.of("A", "B", "C");
         float[] trueLabels = {0f, 0f, 1f, 2f, 2f};
         float[][] proba = {
-                {0.9f, 0.05f, 0.05f},
-                {0.9f, 0.05f, 0.05f},
-                {0.05f, 0.9f, 0.05f},
-                {0.05f, 0.05f, 0.9f},
-                {0.05f, 0.05f, 0.9f},
+            {0.9f, 0.05f, 0.05f},
+            {0.9f, 0.05f, 0.05f},
+            {0.05f, 0.9f, 0.05f},
+            {0.05f, 0.05f, 0.9f},
+            {0.05f, 0.05f, 0.9f},
         };
 
         var metrics = TrainingMetrics.compute("test", classNames, trueLabels, proba);
@@ -133,8 +132,7 @@ class TrainingMetricsTest {
 
     @Test
     void emptyInputReturnsZeroAccuracy() {
-        var metrics = TrainingMetrics.compute("empty", List.of("A", "B"),
-                new float[]{}, new float[][]{});
+        var metrics = TrainingMetrics.compute("empty", List.of("A", "B"), new float[] {}, new float[][] {});
         assertEquals(0.0, metrics.accuracy(), DELTA);
         assertEquals(0, metrics.total());
     }
@@ -142,8 +140,7 @@ class TrainingMetricsTest {
     @Test
     void labelContainsCorrectClassNames() {
         var classNames = List.of("T", "NK");
-        var metrics = TrainingMetrics.compute("label-test", classNames,
-                new float[]{0f}, new float[][]{{0.9f, 0.1f}});
+        var metrics = TrainingMetrics.compute("label-test", classNames, new float[] {0f}, new float[][] {{0.9f, 0.1f}});
         assertEquals("label-test", metrics.label());
         assertEquals(classNames, metrics.classNames());
     }
@@ -155,8 +152,8 @@ class TrainingMetricsTest {
         var classNames = List.of("A", "B");
         float[] trueLabels = {0f, 1f};
         float[][] proba = {
-                {0.1f, 0.9f},   // true=A, pred=B ✗
-                {0.9f, 0.1f},   // true=B, pred=A ✗
+            {0.1f, 0.9f}, // true=A, pred=B ✗
+            {0.9f, 0.1f}, // true=B, pred=A ✗
         };
 
         var metrics = TrainingMetrics.compute("all-wrong", classNames, trueLabels, proba);
@@ -169,8 +166,8 @@ class TrainingMetricsTest {
         var classNames = List.of("A", "B");
         float[] trueLabels = {0f, 0f};
         float[][] proba = {
-                {0.9f, 0.1f},
-                {0.8f, 0.2f},
+            {0.9f, 0.1f},
+            {0.8f, 0.2f},
         };
 
         assertDoesNotThrow(() -> {
@@ -188,8 +185,8 @@ class TrainingMetricsTest {
         var classNames = List.of("A", "B");
         float[] trueLabels = {0f, 1f};
         float[][] proba = {
-                {0.1f, 0.9f},
-                {0.9f, 0.1f},
+            {0.1f, 0.9f},
+            {0.9f, 0.1f},
         };
 
         var metrics = TrainingMetrics.compute("weighted-f1", classNames, trueLabels, proba);

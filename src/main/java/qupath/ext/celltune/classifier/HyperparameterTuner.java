@@ -3,16 +3,15 @@ package qupath.ext.celltune.classifier;
 import com.microsoft.ml.lightgbm.PredictionType;
 import io.github.metarank.lightgbm4j.LGBMBooster;
 import io.github.metarank.lightgbm4j.LGBMDataset;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.function.Consumer;
+import java.util.stream.IntStream;
 import ml.dmlc.xgboost4j.java.Booster;
 import ml.dmlc.xgboost4j.java.DMatrix;
 import ml.dmlc.xgboost4j.java.XGBoost;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.function.Consumer;
-import java.util.stream.IntStream;
 
 /**
  * Bayesian (TPE) hyperparameter tuner with stratified k-fold cross-validation.
@@ -58,14 +57,12 @@ public final class HyperparameterTuner {
     public record HyperParams(int numRounds, int maxDepth, float eta, float subsample) {
         @Override
         public String toString() {
-            return String.format("rounds=%d, depth=%d, eta=%.4f, subsample=%.2f",
-                    numRounds, maxDepth, eta, subsample);
+            return String.format("rounds=%d, depth=%d, eta=%.4f, subsample=%.2f", numRounds, maxDepth, eta, subsample);
         }
     }
 
     /** Result of a tuning run: best parameters for each model and their CV scores. */
-    public record TuningResult(HyperParams xgbParams, double xgbScore,
-                               HyperParams lgbParams, double lgbScore) {}
+    public record TuningResult(HyperParams xgbParams, double xgbScore, HyperParams lgbParams, double lgbScore) {}
 
     private record ModelTuneResult(HyperParams params, double score) {}
 
@@ -85,10 +82,15 @@ public final class HyperparameterTuner {
      * @param log       progress callback (may be null)
      * @return best parameters for each model and their scores
      */
-    public static TuningResult tune(float[] flatData, float[] labels,
-                                    int nSamples, int nFeatures, int nClasses,
-                                    int nTrials, int nFolds,
-                                    Consumer<String> log) {
+    public static TuningResult tune(
+            float[] flatData,
+            float[] labels,
+            int nSamples,
+            int nFeatures,
+            int nClasses,
+            int nTrials,
+            int nFolds,
+            Consumer<String> log) {
         Consumer<String> out = log != null ? log : s -> {};
 
         if (nSamples < MIN_SAMPLES) {
@@ -97,8 +99,8 @@ public final class HyperparameterTuner {
             return new TuningResult(defaults, 0, defaults, 0);
         }
 
-        out.accept("Auto-tuning: " + nTrials + " TPE trials × " + nFolds
-                + " folds per model on " + nSamples + " samples");
+        out.accept(
+                "Auto-tuning: " + nTrials + " TPE trials × " + nFolds + " folds per model on " + nSamples + " samples");
 
         int[] intLabels = new int[nSamples];
         for (int i = 0; i < nSamples; i++) intLabels[i] = (int) labels[i];
@@ -107,12 +109,32 @@ public final class HyperparameterTuner {
 
         // Tune each model independently
         out.accept("── Tuning XGBoost ──");
-        ModelTuneResult xgb = tuneModel("XGBoost", flatData, labels, intLabels,
-                nSamples, nFeatures, nClasses, folds, nTrials, new Random(42), out);
+        ModelTuneResult xgb = tuneModel(
+                "XGBoost",
+                flatData,
+                labels,
+                intLabels,
+                nSamples,
+                nFeatures,
+                nClasses,
+                folds,
+                nTrials,
+                new Random(42),
+                out);
 
         out.accept("── Tuning LightGBM ──");
-        ModelTuneResult lgb = tuneModel("LightGBM", flatData, labels, intLabels,
-                nSamples, nFeatures, nClasses, folds, nTrials, new Random(43), out);
+        ModelTuneResult lgb = tuneModel(
+                "LightGBM",
+                flatData,
+                labels,
+                intLabels,
+                nSamples,
+                nFeatures,
+                nClasses,
+                folds,
+                nTrials,
+                new Random(43),
+                out);
 
         out.accept(String.format("Best XGBoost:  %s → F1 = %.4f", xgb.params(), xgb.score()));
         out.accept(String.format("Best LightGBM: %s → F1 = %.4f", lgb.params(), lgb.score()));
@@ -122,11 +144,18 @@ public final class HyperparameterTuner {
 
     // ── Per-model TPE tuning loop ───────────────────────────────────────────
 
-    private static ModelTuneResult tuneModel(String modelName,
-                                             float[] flatData, float[] labels, int[] intLabels,
-                                             int nSamples, int nFeatures, int nClasses,
-                                             List<int[][]> folds, int nTrials,
-                                             Random rng, Consumer<String> log) {
+    private static ModelTuneResult tuneModel(
+            String modelName,
+            float[] flatData,
+            float[] labels,
+            int[] intLabels,
+            int nSamples,
+            int nFeatures,
+            int nClasses,
+            List<int[][]> folds,
+            int nTrials,
+            Random rng,
+            Consumer<String> log) {
         TPESampler sampler = new TPESampler(rng);
         HyperParams bestParams = null;
         double bestScore = -1;
@@ -139,13 +168,12 @@ public final class HyperparameterTuner {
         int threadsPerFoldLGB = totalCores; // Always use all cores for LightGBM
 
         if (parallelFolds) {
-            log.accept(String.format("  Parallel CV: %d folds × %d threads/fold (XGB), %d threads/fold (LGB) (%d cores)",
-                nFolds, threadsPerFoldXGB, threadsPerFoldLGB, totalCores));
+            log.accept(String.format(
+                    "  Parallel CV: %d folds × %d threads/fold (XGB), %d threads/fold (LGB) (%d cores)",
+                    nFolds, threadsPerFoldXGB, threadsPerFoldLGB, totalCores));
         }
 
-        ExecutorService foldPool = parallelFolds
-            ? Executors.newFixedThreadPool(nFolds)
-            : null;
+        ExecutorService foldPool = parallelFolds ? Executors.newFixedThreadPool(nFolds) : null;
 
         try {
             for (int trial = 0; trial < nTrials; trial++) {
@@ -166,13 +194,29 @@ public final class HyperparameterTuner {
                         float[] foldTestData = extractRows(flatData, testIdx, nFeatures);
                         int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
 
-                        futures.add(foldPool.submit(() ->
-                            "XGBoost".equals(modelName)
-                                ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldXGB)
-                                : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                                foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldLGB)
-                        ));
+                        futures.add(foldPool.submit(() -> "XGBoost".equals(modelName)
+                                ? evaluateXGBoostFold(
+                                        foldTrainData,
+                                        foldTrainLabels,
+                                        trainIdx.length,
+                                        foldTestData,
+                                        foldTestTruth,
+                                        testIdx.length,
+                                        nFeatures,
+                                        nClasses,
+                                        hp,
+                                        threadsPerFoldXGB)
+                                : evaluateLightGBMFold(
+                                        foldTrainData,
+                                        foldTrainLabels,
+                                        trainIdx.length,
+                                        foldTestData,
+                                        foldTestTruth,
+                                        testIdx.length,
+                                        nFeatures,
+                                        nClasses,
+                                        hp,
+                                        threadsPerFoldLGB)));
                     }
 
                     for (Future<Double> f : futures) {
@@ -198,10 +242,28 @@ public final class HyperparameterTuner {
                         int[] foldTestTruth = extractIntLabels(intLabels, testIdx);
 
                         double f1 = "XGBoost".equals(modelName)
-                            ? evaluateXGBoostFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                            foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldXGB)
-                            : evaluateLightGBMFold(foldTrainData, foldTrainLabels, trainIdx.length,
-                            foldTestData, foldTestTruth, testIdx.length, nFeatures, nClasses, hp, threadsPerFoldLGB);
+                                ? evaluateXGBoostFold(
+                                        foldTrainData,
+                                        foldTrainLabels,
+                                        trainIdx.length,
+                                        foldTestData,
+                                        foldTestTruth,
+                                        testIdx.length,
+                                        nFeatures,
+                                        nClasses,
+                                        hp,
+                                        threadsPerFoldXGB)
+                                : evaluateLightGBMFold(
+                                        foldTrainData,
+                                        foldTrainLabels,
+                                        trainIdx.length,
+                                        foldTestData,
+                                        foldTestTruth,
+                                        testIdx.length,
+                                        nFeatures,
+                                        nClasses,
+                                        hp,
+                                        threadsPerFoldLGB);
 
                         if (f1 >= 0) {
                             totalScore += f1;
@@ -214,8 +276,8 @@ public final class HyperparameterTuner {
                 sampler.observe(hp, meanScore);
 
                 String marker = meanScore > bestScore ? " ★" : "";
-                log.accept(String.format("  Trial %2d/%d: %s → F1 = %.4f%s",
-                        trial + 1, nTrials, hp, meanScore, marker));
+                log.accept(
+                        String.format("  Trial %2d/%d: %s → F1 = %.4f%s", trial + 1, nTrials, hp, meanScore, marker));
 
                 if (meanScore > bestScore) {
                     bestScore = meanScore;
@@ -258,7 +320,9 @@ public final class HyperparameterTuner {
         private final List<double[]> history = new ArrayList<>();
         private final List<Double> scores = new ArrayList<>();
 
-        TPESampler(Random rng) { this.rng = rng; }
+        TPESampler(Random rng) {
+            this.rng = rng;
+        }
 
         void observe(HyperParams hp, double score) {
             history.add(toTransformed(hp));
@@ -360,14 +424,14 @@ public final class HyperparameterTuner {
             int rounds = ROUNDS_MIN + rng.nextInt(ROUNDS_MAX - ROUNDS_MIN + 1);
             rounds = ((rounds + 5) / 10) * 10;
             int depth = DEPTH_MIN + rng.nextInt(DEPTH_MAX - DEPTH_MIN + 1);
-            float eta = (float) Math.exp(
-                    Math.log(ETA_MIN) + rng.nextDouble() * (Math.log(ETA_MAX) - Math.log(ETA_MIN)));
+            float eta =
+                    (float) Math.exp(Math.log(ETA_MIN) + rng.nextDouble() * (Math.log(ETA_MAX) - Math.log(ETA_MIN)));
             float sub = (float) (SUB_MIN + rng.nextDouble() * (SUB_MAX - SUB_MIN));
             return new HyperParams(rounds, depth, eta, sub);
         }
 
         private static double[] toTransformed(HyperParams hp) {
-            return new double[]{hp.numRounds(), hp.maxDepth(), Math.log(hp.eta()), hp.subsample()};
+            return new double[] {hp.numRounds(), hp.maxDepth(), Math.log(hp.eta()), hp.subsample()};
         }
 
         private HyperParams fromTransformed(double[] x) {
@@ -382,8 +446,7 @@ public final class HyperparameterTuner {
 
     // ── Stratified k-fold ───────────────────────────────────────────────────
 
-    private static List<int[][]> stratifiedKFold(int[] labels, int nClasses,
-                                                 int k, Random rng) {
+    private static List<int[][]> stratifiedKFold(int[] labels, int nClasses, int k, Random rng) {
         List<List<Integer>> classGroups = new ArrayList<>();
         for (int c = 0; c < nClasses; c++) classGroups.add(new ArrayList<>());
         for (int i = 0; i < labels.length; i++) classGroups.get(labels[i]).add(i);
@@ -407,8 +470,8 @@ public final class HyperparameterTuner {
                 if (g != f) trainList.addAll(foldLists.get(g));
             }
             folds.add(new int[][] {
-                    trainList.stream().mapToInt(Integer::intValue).toArray(),
-                    testList.stream().mapToInt(Integer::intValue).toArray()
+                trainList.stream().mapToInt(Integer::intValue).toArray(),
+                testList.stream().mapToInt(Integer::intValue).toArray()
             });
         }
 
@@ -418,9 +481,16 @@ public final class HyperparameterTuner {
     // ── XGBoost fold evaluation ─────────────────────────────────────────────
 
     private static double evaluateXGBoostFold(
-            float[] trainData, float[] trainLabels, int trainSize,
-            float[] testData, int[] testTruth, int testSize,
-            int nFeatures, int nClasses, HyperParams hp, int nThreads) {
+            float[] trainData,
+            float[] trainLabels,
+            int trainSize,
+            float[] testData,
+            int[] testTruth,
+            int testSize,
+            int nFeatures,
+            int nClasses,
+            HyperParams hp,
+            int nThreads) {
 
         DMatrix trainMat = null;
         DMatrix testMat = null;
@@ -442,8 +512,7 @@ public final class HyperparameterTuner {
             params.put("verbosity", 0);
             if (nClasses > 2) params.put("num_class", nClasses);
 
-            Booster booster = XGBoost.train(trainMat, params, hp.numRounds(),
-                    new LinkedHashMap<>(), null, null);
+            Booster booster = XGBoost.train(trainMat, params, hp.numRounds(), new LinkedHashMap<>(), null, null);
 
             testMat = new DMatrix(testData, testSize, nFeatures, Float.NaN);
             float[][] preds = booster.predict(testMat);
@@ -455,23 +524,35 @@ public final class HyperparameterTuner {
             logger.debug("XGBoost CV fold failed: {}", e.getMessage());
             return -1;
         } finally {
-            try { if (trainMat != null) trainMat.dispose(); } catch (Exception ignore) {}
-            try { if (testMat != null) testMat.dispose(); } catch (Exception ignore) {}
+            try {
+                if (trainMat != null) trainMat.dispose();
+            } catch (Exception ignore) {
+            }
+            try {
+                if (testMat != null) testMat.dispose();
+            } catch (Exception ignore) {
+            }
         }
     }
 
     // ── LightGBM fold evaluation ────────────────────────────────────────────
 
     private static double evaluateLightGBMFold(
-            float[] trainData, float[] trainLabels, int trainSize,
-            float[] testData, int[] testTruth, int testSize,
-            int nFeatures, int nClasses, HyperParams hp, int nThreads) {
+            float[] trainData,
+            float[] trainLabels,
+            int trainSize,
+            float[] testData,
+            int[] testTruth,
+            int testSize,
+            int nFeatures,
+            int nClasses,
+            HyperParams hp,
+            int nThreads) {
 
         LGBMDataset dataset = null;
         LGBMBooster booster = null;
         try {
-            dataset = LGBMDataset.createFromMat(
-                    trainData, trainSize, nFeatures, true, "", null);
+            dataset = LGBMDataset.createFromMat(trainData, trainSize, nFeatures, true, "", null);
             dataset.setField("label", trainLabels);
 
             StringBuilder sb = new StringBuilder();
@@ -479,7 +560,7 @@ public final class HyperparameterTuner {
                 sb.append("objective=binary metric=binary_logloss");
             } else {
                 sb.append("objective=multiclass metric=multi_logloss num_class=")
-                  .append(nClasses);
+                        .append(nClasses);
             }
             sb.append(" max_depth=").append(hp.maxDepth());
             sb.append(" learning_rate=").append(hp.eta());
@@ -495,9 +576,8 @@ public final class HyperparameterTuner {
                 booster.updateOneIter();
             }
 
-            double[] rawPreds = booster.predictForMat(
-                    testData, testSize, nFeatures, true,
-                    PredictionType.C_API_PREDICT_NORMAL);
+            double[] rawPreds =
+                    booster.predictForMat(testData, testSize, nFeatures, true, PredictionType.C_API_PREDICT_NORMAL);
 
             int[] predClasses = toLGBPredictedClasses(rawPreds, testSize, nClasses);
             return macroF1(predClasses, testTruth, nClasses);
@@ -506,8 +586,14 @@ public final class HyperparameterTuner {
             logger.debug("LightGBM CV fold failed: {}", e.getMessage());
             return -1;
         } finally {
-            try { if (booster != null) booster.close(); } catch (Exception ignore) {}
-            try { if (dataset != null) dataset.close(); } catch (Exception ignore) {}
+            try {
+                if (booster != null) booster.close();
+            } catch (Exception ignore) {
+            }
+            try {
+                if (dataset != null) dataset.close();
+            } catch (Exception ignore) {
+            }
         }
     }
 
@@ -570,11 +656,9 @@ public final class HyperparameterTuner {
         for (int c = 0; c < nClasses; c++) {
             int support = tp[c] + fn[c];
             if (support == 0) continue;
-            double precision = (tp[c] + fp[c]) > 0
-                    ? (double) tp[c] / (tp[c] + fp[c]) : 0;
+            double precision = (tp[c] + fp[c]) > 0 ? (double) tp[c] / (tp[c] + fp[c]) : 0;
             double recall = (double) tp[c] / (tp[c] + fn[c]);
-            double f1 = (precision + recall) > 0
-                    ? 2 * precision * recall / (precision + recall) : 0;
+            double f1 = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
             sumF1 += f1;
             counted++;
         }
@@ -587,8 +671,7 @@ public final class HyperparameterTuner {
     private static float[] extractRows(float[] flatData, int[] indices, int nFeatures) {
         float[] result = new float[indices.length * nFeatures];
         for (int i = 0; i < indices.length; i++) {
-            System.arraycopy(flatData, indices[i] * nFeatures,
-                    result, i * nFeatures, nFeatures);
+            System.arraycopy(flatData, indices[i] * nFeatures, result, i * nFeatures, nFeatures);
         }
         return result;
     }

@@ -1,5 +1,6 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
@@ -7,8 +8,6 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.lib.objects.classes.PathClass;
-
-import java.util.*;
 
 /**
  * A panel that lists all four {@link PopulationSet}s with per-class cell
@@ -40,9 +39,12 @@ public class PopulationPanel extends VBox {
      * @param predALL    combined predictions
      * @param classNames ordered class names
      */
-    public void update(PopulationSet predMDL1, PopulationSet predMDL2,
-                       PopulationSet predAVG, PopulationSet predALL,
-                       List<String> classNames) {
+    public void update(
+            PopulationSet predMDL1,
+            PopulationSet predMDL2,
+            PopulationSet predAVG,
+            PopulationSet predALL,
+            List<String> classNames) {
         populationSets.clear();
         content.getChildren().clear();
 

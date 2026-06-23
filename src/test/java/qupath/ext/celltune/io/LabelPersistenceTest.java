@@ -1,9 +1,10 @@
 package qupath.ext.celltune.io;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.lib.projects.Project;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -12,12 +13,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.lib.projects.Project;
 
 /**
  * Round-trip coverage for the per-image label persistence extracted into
@@ -61,8 +60,12 @@ class LabelPersistenceTest {
         ProjectStateManager.saveImageLabels(project, "CD4", "img", binary);
 
         // Same image name, different scope -> independent files.
-        assertEquals("Tumour", ProjectStateManager.loadImageLabels(project, null, "img").getLabel("c"));
-        assertEquals("CD4_pos", ProjectStateManager.loadImageLabels(project, "CD4", "img").getLabel("c"));
+        assertEquals(
+                "Tumour",
+                ProjectStateManager.loadImageLabels(project, null, "img").getLabel("c"));
+        assertEquals(
+                "CD4_pos",
+                ProjectStateManager.loadImageLabels(project, "CD4", "img").getLabel("c"));
 
         assertTrue(ProjectStateManager.hasImageLabels(project, "CD4", "img"));
         assertFalse(ProjectStateManager.hasImageLabels(project, "CD8", "img"));
@@ -88,11 +91,17 @@ class LabelPersistenceTest {
 
         List<Path> files = ProjectStateManager.listImageLabelFiles(project, null);
         assertEquals(2, files.size());
-        assertTrue(files.get(0).getFileName().toString().compareTo(files.get(1).getFileName().toString()) < 0,
+        assertTrue(
+                files.get(0)
+                                .getFileName()
+                                .toString()
+                                .compareTo(files.get(1).getFileName().toString())
+                        < 0,
                 "files should be sorted");
 
         // Empty/non-existent scope dir -> empty list.
-        assertTrue(ProjectStateManager.listImageLabelFiles(project, "no-such-scope").isEmpty());
+        assertTrue(ProjectStateManager.listImageLabelFiles(project, "no-such-scope")
+                .isEmpty());
     }
 
     @Test
@@ -142,15 +151,16 @@ class LabelPersistenceTest {
 
         return (Project<BufferedImage>) Proxy.newProxyInstance(
                 Project.class.getClassLoader(),
-                new Class[]{Project.class},
+                new Class[] {Project.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "getPath" -> projectFile;
                     case "toString" -> "FakeProject(" + projectFile + ")";
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
                     case "close" -> null;
-                    default -> throw new UnsupportedOperationException(
-                            "Method not implemented in fake project: " + method.getName());
+                    default ->
+                        throw new UnsupportedOperationException(
+                                "Method not implemented in fake project: " + method.getName());
                 });
     }
 }

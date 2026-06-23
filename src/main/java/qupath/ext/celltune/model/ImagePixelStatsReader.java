@@ -1,8 +1,5 @@
 package qupath.ext.celltune.model;
 
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.regions.RegionRequest;
-
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.Raster;
@@ -10,6 +7,8 @@ import java.awt.image.SampleModel;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.regions.RegionRequest;
 
 /**
  * Reads a low-resolution version of a (typically pyramidal) image from an
@@ -36,8 +35,7 @@ public final class ImagePixelStatsReader {
     /** Default target for the long edge of the low-resolution image, in pixels. */
     public static final int DEFAULT_MAX_LONG_EDGE = 2048;
 
-    private ImagePixelStatsReader() {
-    }
+    private ImagePixelStatsReader() {}
 
     /**
      * Read and analyse one image at the default long-edge target.
@@ -47,8 +45,8 @@ public final class ImagePixelStatsReader {
      * @return whole-image statistics
      * @throws IOException if the region cannot be read
      */
-    public static ImagePixelStats.ImageStats read(
-            String imageName, ImageServer<BufferedImage> server) throws IOException {
+    public static ImagePixelStats.ImageStats read(String imageName, ImageServer<BufferedImage> server)
+            throws IOException {
         return read(imageName, server, DEFAULT_MAX_LONG_EDGE);
     }
 
@@ -61,8 +59,7 @@ public final class ImagePixelStatsReader {
      * @return whole-image statistics
      * @throws IOException if the region cannot be read
      */
-    public static ImagePixelStats.ImageStats read(
-            String imageName, ImageServer<BufferedImage> server, int maxLongEdge)
+    public static ImagePixelStats.ImageStats read(String imageName, ImageServer<BufferedImage> server, int maxLongEdge)
             throws IOException {
 
         int fullWidth = server.getWidth();
@@ -70,8 +67,7 @@ public final class ImagePixelStatsReader {
         int longEdge = Math.max(fullWidth, fullHeight);
         double downsample = Math.max(1.0, (double) longEdge / Math.max(1, maxLongEdge));
 
-        RegionRequest request = RegionRequest.createInstance(
-                server.getPath(), downsample, 0, 0, fullWidth, fullHeight);
+        RegionRequest request = RegionRequest.createInstance(server.getPath(), downsample, 0, 0, fullWidth, fullHeight);
         BufferedImage img = server.readRegion(request);
         if (img == null) {
             throw new IOException("Image server returned no pixels for " + imageName);
@@ -94,8 +90,7 @@ public final class ImagePixelStatsReader {
         img = null;
         raster = null;
 
-        return ImagePixelStats.compute(
-                imageName, downsample, w, h, channelNames, channelValues, dtypeMax);
+        return ImagePixelStats.compute(imageName, downsample, w, h, channelNames, channelValues, dtypeMax);
     }
 
     /**

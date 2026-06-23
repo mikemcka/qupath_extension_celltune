@@ -1,9 +1,6 @@
 package qupath.ext.celltune.io;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import qupath.ext.celltune.model.CellTypeTable;
-import qupath.lib.projects.Project;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -11,8 +8,10 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import qupath.ext.celltune.model.CellTypeTable;
+import qupath.lib.projects.Project;
 
 class ProjectStateManagerMarkerTableTest {
 
@@ -98,9 +97,7 @@ class ProjectStateManagerMarkerTableTest {
         }
 
         return (Project<BufferedImage>) Proxy.newProxyInstance(
-                Project.class.getClassLoader(),
-                new Class[]{Project.class},
-                (proxy, method, args) -> {
+                Project.class.getClassLoader(), new Class[] {Project.class}, (proxy, method, args) -> {
                     String name = method.getName();
                     return switch (name) {
                         case "getPath" -> projectFile;
@@ -108,9 +105,9 @@ class ProjectStateManagerMarkerTableTest {
                         case "hashCode" -> System.identityHashCode(proxy);
                         case "equals" -> proxy == args[0];
                         case "close" -> null;
-                        default -> throw new UnsupportedOperationException("Method not implemented in fake project: " + name);
+                        default ->
+                            throw new UnsupportedOperationException("Method not implemented in fake project: " + name);
                     };
-                }
-        );
+                });
     }
 }

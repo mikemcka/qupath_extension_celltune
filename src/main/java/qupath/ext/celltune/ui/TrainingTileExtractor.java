@@ -1,5 +1,17 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.gui.QuPathGUI;
@@ -15,19 +27,6 @@ import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.ImageRegion;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.interfaces.ROI;
-
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.IntConsumer;
 
 /**
  * Pre-extracts small "training tiles" around sampled cells so the review UI
@@ -62,8 +61,8 @@ public final class TrainingTileExtractor implements AutoCloseable {
         final String imageName;
         final ImageData<BufferedImage> sourceImageData;
         final ImageRegion cropRegion;
-        final List<PathObject> contextObjects;   // already translated to tile coords
-        final PathObject highlightCell;          // member of contextObjects, in tile coords
+        final List<PathObject> contextObjects; // already translated to tile coords
+        final PathObject highlightCell; // member of contextObjects, in tile coords
         final ImageData.ImageType imageType;
         /**
          * Tile pixels pre-rendered at full resolution during extraction. Wrapping
@@ -84,15 +83,16 @@ public final class TrainingTileExtractor implements AutoCloseable {
          */
         final Map<PathObject, String> contextOriginalCellIds;
 
-        TilePrep(String cellId,
-                 String imageName,
-                 ImageData<BufferedImage> sourceImageData,
-                 ImageRegion cropRegion,
-                 List<PathObject> contextObjects,
-                 PathObject highlightCell,
-                 ImageData.ImageType imageType,
-                 BufferedImage tilePixels,
-                 Map<PathObject, String> contextOriginalCellIds) {
+        TilePrep(
+                String cellId,
+                String imageName,
+                ImageData<BufferedImage> sourceImageData,
+                ImageRegion cropRegion,
+                List<PathObject> contextObjects,
+                PathObject highlightCell,
+                ImageData.ImageType imageType,
+                BufferedImage tilePixels,
+                Map<PathObject, String> contextOriginalCellIds) {
             this.cellId = cellId;
             this.imageName = imageName;
             this.sourceImageData = sourceImageData;
@@ -104,15 +104,41 @@ public final class TrainingTileExtractor implements AutoCloseable {
             this.contextOriginalCellIds = contextOriginalCellIds;
         }
 
-        public String cellId() { return cellId; }
-        public String imageName() { return imageName; }
-        public ImageRegion cropRegion() { return cropRegion; }
-        public PathObject highlightCell() { return highlightCell; }
-        public List<PathObject> contextObjects() { return contextObjects; }
-        public ImageData<BufferedImage> sourceImageData() { return sourceImageData; }
-        public ImageData.ImageType imageType() { return imageType; }
-        public BufferedImage tilePixels() { return tilePixels; }
-        public Map<PathObject, String> contextOriginalCellIds() { return contextOriginalCellIds; }
+        public String cellId() {
+            return cellId;
+        }
+
+        public String imageName() {
+            return imageName;
+        }
+
+        public ImageRegion cropRegion() {
+            return cropRegion;
+        }
+
+        public PathObject highlightCell() {
+            return highlightCell;
+        }
+
+        public List<PathObject> contextObjects() {
+            return contextObjects;
+        }
+
+        public ImageData<BufferedImage> sourceImageData() {
+            return sourceImageData;
+        }
+
+        public ImageData.ImageType imageType() {
+            return imageType;
+        }
+
+        public BufferedImage tilePixels() {
+            return tilePixels;
+        }
+
+        public Map<PathObject, String> contextOriginalCellIds() {
+            return contextOriginalCellIds;
+        }
     }
 
     private final Map<String, TilePrep> preps = new LinkedHashMap<>();
@@ -129,10 +155,8 @@ public final class TrainingTileExtractor implements AutoCloseable {
      * @param progress        optional progress callback (0..total); may be null
      * @return populated extractor; caller must close() when done
      */
-    public static TrainingTileExtractor extract(QuPathGUI qupath,
-                                                List<String> cellIds,
-                                                Map<String, String> cellImageMap,
-                                                IntConsumer progress) {
+    public static TrainingTileExtractor extract(
+            QuPathGUI qupath, List<String> cellIds, Map<String, String> cellImageMap, IntConsumer progress) {
         var extractor = new TrainingTileExtractor();
         try {
             extractor.run(qupath, cellIds, cellImageMap, progress);
@@ -143,10 +167,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
         return extractor;
     }
 
-    private void run(QuPathGUI qupath,
-                     List<String> cellIds,
-                     Map<String, String> cellImageMap,
-                     IntConsumer progress) {
+    private void run(QuPathGUI qupath, List<String> cellIds, Map<String, String> cellImageMap, IntConsumer progress) {
         Project<BufferedImage> project = qupath.getProject();
         if (project == null) {
             logger.warn("No project open; cannot extract training tiles");
@@ -206,8 +227,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
                 List<String> ids = groupEntry.getValue();
                 ProjectImageEntry<BufferedImage> entry = entryByName.get(imageName);
                 if (entry == null) {
-                    logger.warn("Project entry not found for image '{}'; skipping {} cell(s)",
-                            imageName, ids.size());
+                    logger.warn("Project entry not found for image '{}'; skipping {} cell(s)", imageName, ids.size());
                     processed.addAndGet(ids.size());
                     if (progress != null) progress.accept(Math.min(processed.get(), total));
                     continue;
@@ -238,10 +258,15 @@ public final class TrainingTileExtractor implements AutoCloseable {
                     serverW = server.getWidth();
                     serverH = server.getHeight();
                 } catch (Exception ex) {
-                    logger.warn("Could not open ImageServer for '{}' (file moved or deleted?): {}",
-                            imageName, ex.getMessage());
+                    logger.warn(
+                            "Could not open ImageServer for '{}' (file moved or deleted?): {}",
+                            imageName,
+                            ex.getMessage());
                     if (!isLive) {
-                        try { imageData.close(); } catch (Exception ignored) {}
+                        try {
+                            imageData.close();
+                        } catch (Exception ignored) {
+                        }
                     }
                     processed.addAndGet(ids.size());
                     if (progress != null) progress.accept(Math.min(processed.get(), total));
@@ -269,14 +294,13 @@ public final class TrainingTileExtractor implements AutoCloseable {
                     futures.add(pool.submit(() -> {
                         try {
                             TilePrep prep = buildPrepForCell(
-                                    cellId, imageName, imageData, hierarchy,
-                                    detById, server, serverW, serverH, imageType);
+                                    cellId, imageName, imageData, hierarchy, detById, server, serverW, serverH,
+                                    imageType);
                             if (prep != null && outputIndex >= 0 && outputIndex < flatPreps.length) {
                                 flatPreps[outputIndex] = prep;
                             }
                         } catch (Throwable t) {
-                            logger.warn("Tile prep failed for cell {} in '{}': {}",
-                                    cellId, imageName, t.toString());
+                            logger.warn("Tile prep failed for cell {} in '{}': {}", cellId, imageName, t.toString());
                         } finally {
                             int done = processed.incrementAndGet();
                             if (progress != null) progress.accept(Math.min(done, total));
@@ -286,7 +310,10 @@ public final class TrainingTileExtractor implements AutoCloseable {
                 // Wait for this image's cells to finish before moving on — keeps
                 // the active hierarchy/server scoped per image.
                 for (Future<?> f : futures) {
-                    try { f.get(); } catch (Exception ignored) {}
+                    try {
+                        f.get();
+                    } catch (Exception ignored) {
+                    }
                 }
             }
         } finally {
@@ -304,8 +331,8 @@ public final class TrainingTileExtractor implements AutoCloseable {
             if (p != null) preps.put(p.cellId, p);
         }
 
-        logger.info("TrainingTileExtractor: built {} tile(s) from {} source image(s)",
-                preps.size(), openImageData.size());
+        logger.info(
+                "TrainingTileExtractor: built {} tile(s) from {} source image(s)", preps.size(), openImageData.size());
     }
 
     /**
@@ -316,15 +343,16 @@ public final class TrainingTileExtractor implements AutoCloseable {
      * QuPath 0.7 (the tile cache is concurrent), so pixel reads run truly in
      * parallel.
      */
-    private static TilePrep buildPrepForCell(String cellId,
-                                              String imageName,
-                                              ImageData<BufferedImage> imageData,
-                                              qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
-                                              Map<String, PathObject> detById,
-                                              ImageServer<BufferedImage> server,
-                                              int serverW,
-                                              int serverH,
-                                              ImageData.ImageType imageType) {
+    private static TilePrep buildPrepForCell(
+            String cellId,
+            String imageName,
+            ImageData<BufferedImage> imageData,
+            qupath.lib.objects.hierarchy.PathObjectHierarchy hierarchy,
+            Map<String, PathObject> detById,
+            ImageServer<BufferedImage> server,
+            int serverW,
+            int serverH,
+            ImageData.ImageType imageType) {
         PathObject originalCell = detById.get(cellId);
         if (originalCell == null) {
             logger.warn("Cell {} not found in image '{}'", cellId, imageName);
@@ -394,8 +422,7 @@ public final class TrainingTileExtractor implements AutoCloseable {
             RegionRequest req = RegionRequest.createInstance(server.getPath(), 1.0, region);
             tilePixels = server.readRegion(req);
         } catch (Exception ex) {
-            logger.warn("Could not pre-render tile pixels for cell {} in '{}': {}",
-                    cellId, imageName, ex.getMessage());
+            logger.warn("Could not pre-render tile pixels for cell {} in '{}': {}", cellId, imageName, ex.getMessage());
         }
 
         return new TilePrep(cellId, imageName, imageData, region, ctx, highlight, imageType, tilePixels, ctxToOrig);
@@ -444,10 +471,13 @@ public final class TrainingTileExtractor implements AutoCloseable {
         ImageServer<BufferedImage> tileServer;
         if (prep.tilePixels != null) {
             // Cheap path: pixels already in memory.
-            String name = String.format("%s @ (%d,%d,%dx%d)",
+            String name = String.format(
+                    "%s @ (%d,%d,%dx%d)",
                     prep.imageName,
-                    prep.cropRegion.getX(), prep.cropRegion.getY(),
-                    prep.cropRegion.getWidth(), prep.cropRegion.getHeight());
+                    prep.cropRegion.getX(),
+                    prep.cropRegion.getY(),
+                    prep.cropRegion.getWidth(),
+                    prep.cropRegion.getHeight());
             // Preserve the source server's channel metadata so the channel
             // selector shows real biomarker names (DAPI, CD3, ...) instead of
             // generic "Channel 1..N" labels.

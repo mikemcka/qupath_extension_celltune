@@ -1,5 +1,10 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.Locale;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -25,12 +30,6 @@ import qupath.ext.celltune.model.PixelCohortReport;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.util.List;
-import java.util.Locale;
 
 /**
  * Dialog summarising whole-image pixel statistics across a project: a verdict,
@@ -59,56 +58,58 @@ public class PixelPrescreenView {
         this.qupath = qupath;
         this.report = report == null ? new PixelCohortReport(List.of()) : report;
 
-        ObservableList<PixelCohortReport.ImageReport> backing =
-                FXCollections.observableArrayList(this.report.images());
+        ObservableList<PixelCohortReport.ImageReport> backing = FXCollections.observableArrayList(this.report.images());
         filteredRows = new FilteredList<>(backing, row -> true);
         table = new TableView<>(filteredRows);
 
         TableColumn<PixelCohortReport.ImageReport, String> imageCol = new TableColumn<>("Image");
-        imageCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().imageName()));
+        imageCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(cd.getValue().imageName()));
         imageCol.setMinWidth(240);
 
         TableColumn<PixelCohortReport.ImageReport, String> verdictCol = new TableColumn<>("Verdict");
-        verdictCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().verdict()));
+        verdictCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(cd.getValue().verdict()));
         verdictCol.setMinWidth(120);
 
         TableColumn<PixelCohortReport.ImageReport, Number> scoreCol = new TableColumn<>("Score");
-        scoreCol.setCellValueFactory(cd -> new SimpleObjectProperty<>(cd.getValue().score()));
+        scoreCol.setCellValueFactory(
+                cd -> new SimpleObjectProperty<>(cd.getValue().score()));
         scoreCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> fgCol = new TableColumn<>("Foreground %");
-        fgCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(pct(cd.getValue().meanForegroundCoverage())));
+        fgCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(pct(cd.getValue().meanForegroundCoverage())));
         fgCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> emptyCol = new TableColumn<>("Empty %");
-        emptyCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(pct(cd.getValue().emptyFraction())));
+        emptyCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(pct(cd.getValue().emptyFraction())));
         emptyCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> satCol = new TableColumn<>("Max sat %");
-        satCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(pct(cd.getValue().maxSaturationFraction())));
+        satCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(pct(cd.getValue().maxSaturationFraction())));
         satCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> dynCol = new TableColumn<>("Dyn. range");
-        dynCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(num(cd.getValue().medianDynamicRange())));
+        dynCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(num(cd.getValue().medianDynamicRange())));
         dynCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> focusCol = new TableColumn<>("Focus");
-        focusCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(num(cd.getValue().maxFocus())));
+        focusCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(num(cd.getValue().maxFocus())));
         focusCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> intensityCol = new TableColumn<>("Intensity z");
-        intensityCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(num(cd.getValue().maxIntensityZ())));
+        intensityCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(num(cd.getValue().maxIntensityZ())));
         intensityCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<PixelCohortReport.ImageReport, String> flaggedCol = new TableColumn<>("Flagged");
-        flaggedCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().flagged() ? "Yes" : "No"));
+        flaggedCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(cd.getValue().flagged() ? "Yes" : "No"));
         flaggedCol.setStyle("-fx-alignment: CENTER;");
 
         table.getColumns().add(imageCol);
@@ -133,8 +134,7 @@ public class PixelPrescreenView {
         detailsArea.setWrapText(true);
         detailsArea.setPrefRowCount(10);
 
-        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) ->
-                showDetailsFor(newRow));
+        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> showDetailsFor(newRow));
 
         flaggedOnlyBox = new CheckBox("Flagged only");
         flaggedOnlyBox.selectedProperty().addListener((obs, oldVal, newVal) -> applyFilters());
@@ -188,10 +188,15 @@ public class PixelPrescreenView {
     }
 
     private void updateSummaryLabel() {
-        long flaggedCount = report.images().stream().filter(PixelCohortReport.ImageReport::flagged).count();
-        summaryLabel.setText(String.format(Locale.ROOT,
+        long flaggedCount = report.images().stream()
+                .filter(PixelCohortReport.ImageReport::flagged)
+                .count();
+        summaryLabel.setText(String.format(
+                Locale.ROOT,
                 "Displayed: %d / %d images | flagged: %d",
-                filteredRows.size(), report.images().size(), flaggedCount));
+                filteredRows.size(),
+                report.images().size(),
+                flaggedCount));
     }
 
     private void showDetailsFor(PixelCohortReport.ImageReport row) {
@@ -204,11 +209,16 @@ public class PixelPrescreenView {
         sb.append("Per-channel (median | p99 | foreground% | dyn.range | sat% | focus):\n");
         for (var cc : row.channels()) {
             var s = cc.stats();
-            sb.append(String.format(Locale.ROOT,
+            sb.append(String.format(
+                    Locale.ROOT,
                     "  %-16s %8s | %8s | %7s | %8s | %6s | %8s%n",
                     truncate(cc.channel(), 16),
-                    num(s.median()), num(s.p99()), pct(s.foregroundCoverage()),
-                    num(s.dynamicRange()), pct(s.saturationFraction()), num(s.laplacianVariance())));
+                    num(s.median()),
+                    num(s.p99()),
+                    pct(s.foregroundCoverage()),
+                    num(s.dynamicRange()),
+                    pct(s.saturationFraction()),
+                    num(s.laplacianVariance())));
         }
         detailsArea.setText(sb.toString());
     }
@@ -225,7 +235,8 @@ public class PixelPrescreenView {
         }
 
         @SuppressWarnings("unchecked")
-        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+        var entries = (List<ProjectImageEntry<BufferedImage>>)
+                (List<?>) qupath.getProject().getImageList();
         var entryOpt = entries.stream()
                 .filter(e -> e != null && selected.imageName().equals(e.getImageName()))
                 .findFirst();
@@ -279,9 +290,7 @@ public class PixelPrescreenView {
         if (Double.isNaN(v)) {
             return "-";
         }
-        return Math.abs(v) >= 1000.0
-                ? String.format(Locale.ROOT, "%.0f", v)
-                : String.format(Locale.ROOT, "%.2f", v);
+        return Math.abs(v) >= 1000.0 ? String.format(Locale.ROOT, "%.0f", v) : String.format(Locale.ROOT, "%.2f", v);
     }
 
     private static String truncate(String s, int max) {

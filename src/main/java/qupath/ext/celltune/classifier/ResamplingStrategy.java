@@ -5,7 +5,6 @@ package qupath.ext.celltune.classifier;
  * in the training data before model fitting.
  */
 public enum ResamplingStrategy {
-
     NONE("None"),
     SMOTE("SMOTE"),
     ADASYN("ADASYN"),

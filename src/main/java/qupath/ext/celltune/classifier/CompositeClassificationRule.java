@@ -1,11 +1,10 @@
 package qupath.ext.celltune.classifier;
 
-import qupath.ext.celltune.io.BinaryClassifierRegistry;
-
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import qupath.ext.celltune.io.BinaryClassifierRegistry;
 
 /**
  * Immutable named composite rule composed of ordered marker polarity conditions.

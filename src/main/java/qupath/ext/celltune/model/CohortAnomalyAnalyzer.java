@@ -1,7 +1,5 @@
 package qupath.ext.celltune.model;
 
-import qupath.ext.celltune.util.RobustStats;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -10,22 +8,21 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import qupath.ext.celltune.util.RobustStats;
 
 /**
  * Cohort-level scoring for rare-type enrichment and image anomaly detection.
  */
 public final class CohortAnomalyAnalyzer {
 
-    private CohortAnomalyAnalyzer() {
-    }
+    private CohortAnomalyAnalyzer() {}
 
     public static CohortAnomalyReport analyze(List<CohortAnomalyReport.ImageInput> inputs) {
         return analyze(inputs, CohortAnomalyReport.DEFAULT_THRESHOLDS);
     }
 
     public static CohortAnomalyReport analyze(
-            List<CohortAnomalyReport.ImageInput> inputs,
-            CohortAnomalyReport.Thresholds thresholds) {
+            List<CohortAnomalyReport.ImageInput> inputs, CohortAnomalyReport.Thresholds thresholds) {
 
         if (thresholds == null) {
             thresholds = CohortAnomalyReport.DEFAULT_THRESHOLDS;
@@ -60,8 +57,7 @@ public final class CohortAnomalyAnalyzer {
                         disagreementRate(input),
                         0.0,
                         0.0,
-                        List.of()
-                ));
+                        List.of()));
             }
             rows.sort(Comparator.comparing(CohortAnomalyReport.ImageAnomaly::imageName));
             return new CohortAnomalyReport(rows);
@@ -96,15 +92,10 @@ public final class CohortAnomalyAnalyzer {
                 if (highlighted) {
                     highlightedClasses.add(className);
                 }
-                enrichments.put(className, new CohortAnomalyReport.ClassEnrichment(
+                enrichments.put(
                         className,
-                        count,
-                        baseline,
-                        image,
-                        fold,
-                        rareCandidate,
-                        highlighted
-                ));
+                        new CohortAnomalyReport.ClassEnrichment(
+                                className, count, baseline, image, fold, rareCandidate, highlighted));
             }
 
             double compositionDistance = jensenShannonDistance(imageFractions, baselineFractions, orderedClasses);
@@ -113,12 +104,7 @@ public final class CohortAnomalyAnalyzer {
             disagreementValues[idx] = disagreementRate;
 
             rows.add(new Intermediate(
-                    input.imageName(),
-                    enrichments,
-                    highlightedClasses,
-                    compositionDistance,
-                    disagreementRate
-            ));
+                    input.imageName(), enrichments, highlightedClasses, compositionDistance, disagreementRate));
             idx++;
         }
 
@@ -133,8 +119,8 @@ public final class CohortAnomalyAnalyzer {
             var row = rows.get(i);
             double compositionPos = Math.max(0.0, compositionZ[i]);
             double disagreementPos = Math.max(0.0, disagreementZ[i]);
-            double anomalyScore = thresholds.compositionWeight() * compositionPos
-                    + thresholds.disagreementWeight() * disagreementPos;
+            double anomalyScore =
+                    thresholds.compositionWeight() * compositionPos + thresholds.disagreementWeight() * disagreementPos;
 
             var reasons = new ArrayList<String>(3);
             if (!row.highlightedClasses.isEmpty()) {
@@ -157,15 +143,14 @@ public final class CohortAnomalyAnalyzer {
                     row.disagreementRate,
                     compositionZ[i],
                     disagreementZ[i],
-                    row.highlightedClasses
-            ));
+                    row.highlightedClasses));
         }
 
-        output.sort(
-                Comparator.comparingDouble(CohortAnomalyReport.ImageAnomaly::anomalyScore).reversed()
-                        .thenComparing(Comparator.comparingDouble(CohortAnomalyReport.ImageAnomaly::disagreementRate).reversed())
-                        .thenComparing(CohortAnomalyReport.ImageAnomaly::imageName)
-        );
+        output.sort(Comparator.comparingDouble(CohortAnomalyReport.ImageAnomaly::anomalyScore)
+                .reversed()
+                .thenComparing(Comparator.comparingDouble(CohortAnomalyReport.ImageAnomaly::disagreementRate)
+                        .reversed())
+                .thenComparing(CohortAnomalyReport.ImageAnomaly::imageName));
 
         return new CohortAnomalyReport(output);
     }
@@ -211,9 +196,7 @@ public final class CohortAnomalyAnalyzer {
     }
 
     private static Map<String, Double> imageFractions(
-            Map<String, Long> classCounts,
-            List<String> orderedClasses,
-            double smoothingAlpha) {
+            Map<String, Long> classCounts, List<String> orderedClasses, double smoothingAlpha) {
 
         classCounts = classCounts == null ? Map.of() : classCounts;
 
@@ -232,9 +215,7 @@ public final class CohortAnomalyAnalyzer {
     }
 
     private static double jensenShannonDistance(
-            Map<String, Double> image,
-            Map<String, Double> baseline,
-            List<String> orderedClasses) {
+            Map<String, Double> image, Map<String, Double> baseline, List<String> orderedClasses) {
 
         double klImage = 0.0;
         double klBaseline = 0.0;

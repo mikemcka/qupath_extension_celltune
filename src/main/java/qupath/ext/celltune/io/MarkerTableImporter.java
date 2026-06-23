@@ -1,11 +1,10 @@
 package qupath.ext.celltune.io;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellTypeTable;
-
-import java.io.IOException;
-import java.nio.file.Path;
 
 /**
  * Imports a marker channel table from a CSV file.

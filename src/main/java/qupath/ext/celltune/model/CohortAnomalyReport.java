@@ -13,16 +13,7 @@ public final class CohortAnomalyReport {
     public static final String OUTLIER_COMPOSITION = "COMPOSITION_OUTLIER";
     public static final String OUTLIER_DISAGREEMENT = "HIGH_DISAGREEMENT";
 
-    public static final Thresholds DEFAULT_THRESHOLDS = new Thresholds(
-            0.01,
-            20L,
-            3.0,
-            3.0,
-            1.0,
-            0.65,
-            0.35,
-            0.5
-    );
+    public static final Thresholds DEFAULT_THRESHOLDS = new Thresholds(0.01, 20L, 3.0, 3.0, 1.0, 0.65, 0.35, 0.5);
 
     private final List<ImageAnomaly> images;
 
@@ -80,11 +71,7 @@ public final class CohortAnomalyReport {
         }
     }
 
-    public record ImageInput(
-            String imageName,
-            long predictedCells,
-            long disagreements,
-            Map<String, Long> classCounts) {
+    public record ImageInput(String imageName, long predictedCells, long disagreements, Map<String, Long> classCounts) {
 
         public ImageInput {
             imageName = imageName == null ? "" : imageName;
@@ -101,8 +88,7 @@ public final class CohortAnomalyReport {
             double imageFraction,
             double enrichmentFold,
             boolean rareCandidate,
-            boolean highlighted) {
-    }
+            boolean highlighted) {}
 
     public record ImageAnomaly(
             String imageName,

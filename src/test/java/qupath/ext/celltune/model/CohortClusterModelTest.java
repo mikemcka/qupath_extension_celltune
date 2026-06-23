@@ -1,12 +1,11 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Arrays;
 import java.util.Random;
 import java.util.stream.IntStream;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests the deterministic core of the cohort clustering backend: distinct-index
@@ -20,23 +19,23 @@ class CohortClusterModelTest {
     @Test
     void nearestCentroidPicksClosestBySquaredEuclidean() {
         double[][] cents = {{0, 0}, {10, 10}};
-        assertEquals(0, CohortClusterModel.nearestCentroid(new double[]{1, 1}, cents));
-        assertEquals(1, CohortClusterModel.nearestCentroid(new double[]{9, 9}, cents));
-        assertEquals(0, CohortClusterModel.nearestCentroid(new double[]{4.9, 4.9}, cents));
-        assertEquals(1, CohortClusterModel.nearestCentroid(new double[]{5.1, 5.1}, cents));
+        assertEquals(0, CohortClusterModel.nearestCentroid(new double[] {1, 1}, cents));
+        assertEquals(1, CohortClusterModel.nearestCentroid(new double[] {9, 9}, cents));
+        assertEquals(0, CohortClusterModel.nearestCentroid(new double[] {4.9, 4.9}, cents));
+        assertEquals(1, CohortClusterModel.nearestCentroid(new double[] {5.1, 5.1}, cents));
     }
 
     @Test
     void nearestCentroidBreaksTiesToFirst() {
         double[][] cents = {{0, 0}, {2, 2}};
         // Equidistant point → the first centroid wins (strict < comparison).
-        assertEquals(0, CohortClusterModel.nearestCentroid(new double[]{1, 1}, cents));
+        assertEquals(0, CohortClusterModel.nearestCentroid(new double[] {1, 1}, cents));
     }
 
     @Test
     void nearestCentroidWorksWithSingleCluster() {
         double[][] cents = {{3, 3, 3}};
-        assertEquals(0, CohortClusterModel.nearestCentroid(new double[]{-5, 100, 0}, cents));
+        assertEquals(0, CohortClusterModel.nearestCentroid(new double[] {-5, 100, 0}, cents));
     }
 
     // ── sampleIndices ────────────────────────────────────────────────────────
@@ -44,10 +43,10 @@ class CohortClusterModelTest {
     @Test
     void sampleIndicesReturnsAllWhenCountAtLeastN() {
         int[] all = CohortClusterModel.sampleIndices(5, 5, new Random(1));
-        assertArrayEquals(new int[]{0, 1, 2, 3, 4}, all);
+        assertArrayEquals(new int[] {0, 1, 2, 3, 4}, all);
 
         int[] capped = CohortClusterModel.sampleIndices(3, 10, new Random(1));
-        assertArrayEquals(new int[]{0, 1, 2}, capped);
+        assertArrayEquals(new int[] {0, 1, 2}, capped);
     }
 
     @Test

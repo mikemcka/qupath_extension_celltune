@@ -1,11 +1,10 @@
 package qupath.ext.celltune.classifier;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class ResamplerTest {
 
@@ -14,7 +13,7 @@ class ResamplerTest {
     /** Build a list of n identical 2-feature rows for a given label value. */
     private static List<float[]> rows(int n, float f1, float f2) {
         List<float[]> list = new ArrayList<>();
-        for (int i = 0; i < n; i++) list.add(new float[]{f1 + i * 0.001f, f2 + i * 0.001f});
+        for (int i = 0; i < n; i++) list.add(new float[] {f1 + i * 0.001f, f2 + i * 0.001f});
         return list;
     }
 
@@ -50,8 +49,10 @@ class ResamplerTest {
     void noneStrategyLeavesLabelsIntact() {
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.add(new float[]{1f, 2f}); l.add(0);
-        r.add(new float[]{3f, 4f}); l.add(1);
+        r.add(new float[] {1f, 2f});
+        l.add(0);
+        r.add(new float[] {3f, 4f});
+        l.add(1);
 
         Resampler.Result result = Resampler.apply(r, l, 2, ResamplingStrategy.NONE, null);
 
@@ -66,8 +67,10 @@ class ResamplerTest {
         // 10 majority (class 0), 3 minority (class 1)
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(10, 0f, 0f)); for (int i = 0; i < 10; i++) l.add(0);
-        r.addAll(rows(3, 5f, 5f));  for (int i = 0; i < 3; i++) l.add(1);
+        r.addAll(rows(10, 0f, 0f));
+        for (int i = 0; i < 10; i++) l.add(0);
+        r.addAll(rows(3, 5f, 5f));
+        for (int i = 0; i < 3; i++) l.add(1);
 
         Resampler.Result result = Resampler.apply(r, l, 2, ResamplingStrategy.SMOTE, null);
 
@@ -76,18 +79,18 @@ class ResamplerTest {
 
         // After SMOTE minority should be brought up toward majority count
         assertTrue(count1 >= 3, "Minority class should not shrink");
-        assertTrue(count1 >= count0 * 0.5,
-                "Minority class should be substantially upsampled");
-        assertEquals(result.rows().size(), result.labels().size(),
-                "Rows and labels must stay parallel");
+        assertTrue(count1 >= count0 * 0.5, "Minority class should be substantially upsampled");
+        assertEquals(result.rows().size(), result.labels().size(), "Rows and labels must stay parallel");
     }
 
     @Test
     void smoteDoesNotModifyOriginalLists() {
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(6, 0f, 0f)); for (int i = 0; i < 6; i++) l.add(0);
-        r.addAll(rows(2, 5f, 5f)); for (int i = 0; i < 2; i++) l.add(1);
+        r.addAll(rows(6, 0f, 0f));
+        for (int i = 0; i < 6; i++) l.add(0);
+        r.addAll(rows(2, 5f, 5f));
+        for (int i = 0; i < 2; i++) l.add(1);
 
         int origSize = r.size();
         Resampler.apply(r, l, 2, ResamplingStrategy.SMOTE, null);
@@ -99,8 +102,10 @@ class ResamplerTest {
     void smoteRowsAndLabelsAlwaysParallel() {
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(8, 0f, 0f)); for (int i = 0; i < 8; i++) l.add(0);
-        r.addAll(rows(2, 5f, 5f)); for (int i = 0; i < 2; i++) l.add(1);
+        r.addAll(rows(8, 0f, 0f));
+        for (int i = 0; i < 8; i++) l.add(0);
+        r.addAll(rows(2, 5f, 5f));
+        for (int i = 0; i < 2; i++) l.add(1);
 
         Resampler.Result result = Resampler.apply(r, l, 2, ResamplingStrategy.SMOTE, null);
 
@@ -114,8 +119,10 @@ class ResamplerTest {
         // 5 per class — Tomek can only remove, never add
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(5, 0f, 0f)); for (int i = 0; i < 5; i++) l.add(0);
-        r.addAll(rows(5, 5f, 5f)); for (int i = 0; i < 5; i++) l.add(1);
+        r.addAll(rows(5, 0f, 0f));
+        for (int i = 0; i < 5; i++) l.add(0);
+        r.addAll(rows(5, 5f, 5f));
+        for (int i = 0; i < 5; i++) l.add(1);
 
         Resampler.Result result = Resampler.apply(r, l, 2, ResamplingStrategy.TOMEK, null);
 
@@ -129,8 +136,10 @@ class ResamplerTest {
     void smoteTomekOutputIsParallelAndNonEmpty() {
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(8, 0f, 0f)); for (int i = 0; i < 8; i++) l.add(0);
-        r.addAll(rows(2, 9f, 9f)); for (int i = 0; i < 2; i++) l.add(1);
+        r.addAll(rows(8, 0f, 0f));
+        for (int i = 0; i < 8; i++) l.add(0);
+        r.addAll(rows(2, 9f, 9f));
+        for (int i = 0; i < 2; i++) l.add(1);
 
         Resampler.Result result = Resampler.apply(r, l, 2, ResamplingStrategy.SMOTE_TOMEK, null);
 
@@ -144,8 +153,10 @@ class ResamplerTest {
     void logCallbackReceivesMessages() {
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(6, 0f, 0f)); for (int i = 0; i < 6; i++) l.add(0);
-        r.addAll(rows(2, 5f, 5f)); for (int i = 0; i < 2; i++) l.add(1);
+        r.addAll(rows(6, 0f, 0f));
+        for (int i = 0; i < 6; i++) l.add(0);
+        r.addAll(rows(2, 5f, 5f));
+        for (int i = 0; i < 2; i++) l.add(1);
 
         List<String> messages = new ArrayList<>();
         Resampler.apply(r, l, 2, ResamplingStrategy.SMOTE, messages::add);
@@ -158,9 +169,12 @@ class ResamplerTest {
         // 3 classes: 10 / 3 / 3
         List<float[]> r = new ArrayList<>();
         List<Integer> l = new ArrayList<>();
-        r.addAll(rows(10, 0f, 0f)); for (int i = 0; i < 10; i++) l.add(0);
-        r.addAll(rows(3, 5f, 0f)); for (int i = 0; i < 3; i++) l.add(1);
-        r.addAll(rows(3, 0f, 5f)); for (int i = 0; i < 3; i++) l.add(2);
+        r.addAll(rows(10, 0f, 0f));
+        for (int i = 0; i < 10; i++) l.add(0);
+        r.addAll(rows(3, 5f, 0f));
+        for (int i = 0; i < 3; i++) l.add(1);
+        r.addAll(rows(3, 0f, 5f));
+        for (int i = 0; i < 3; i++) l.add(2);
 
         Resampler.Result result = Resampler.apply(r, l, 3, ResamplingStrategy.SMOTE, null);
 
@@ -180,8 +194,8 @@ class ResamplerTest {
     void labelOutOfRangeThrowsClearMessage() {
         List<float[]> r = rows(4, 0f, 0f);
         List<Integer> l = new ArrayList<>(List.of(0, 1, 2, 5)); // 5 invalid when nClasses=3
-        var ex = assertThrows(IllegalArgumentException.class,
-                () -> Resampler.apply(r, l, 3, ResamplingStrategy.SMOTE, null));
+        var ex = assertThrows(
+                IllegalArgumentException.class, () -> Resampler.apply(r, l, 3, ResamplingStrategy.SMOTE, null));
         assertTrue(ex.getMessage().contains("index 3"), "Message should name the offending index");
         assertTrue(ex.getMessage().contains("[0, 3)"), "Message should state the valid range");
     }
@@ -190,16 +204,14 @@ class ResamplerTest {
     void negativeLabelThrows() {
         List<float[]> r = rows(3, 0f, 0f);
         List<Integer> l = new ArrayList<>(List.of(0, -1, 1));
-        assertThrows(IllegalArgumentException.class,
-                () -> Resampler.apply(r, l, 2, ResamplingStrategy.NONE, null));
+        assertThrows(IllegalArgumentException.class, () -> Resampler.apply(r, l, 2, ResamplingStrategy.NONE, null));
     }
 
     @Test
     void nClassesBelowOneThrows() {
         List<float[]> r = rows(2, 0f, 0f);
         List<Integer> l = new ArrayList<>(List.of(0, 0));
-        assertThrows(IllegalArgumentException.class,
-                () -> Resampler.apply(r, l, 0, ResamplingStrategy.NONE, null));
+        assertThrows(IllegalArgumentException.class, () -> Resampler.apply(r, l, 0, ResamplingStrategy.NONE, null));
     }
 
     @Test

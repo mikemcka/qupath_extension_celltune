@@ -1,10 +1,9 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class IntensityHeatmapTest {
 
@@ -12,12 +11,8 @@ class IntensityHeatmapTest {
 
     @Test
     void discoverMarkerFeaturesKeepsOnlyCellMeanColumns() {
-        List<String> features = List.of(
-                "CD8: Cell: Mean",
-                "DAPI: Cell: Mean",
-                "Cell: Area µm^2",
-                "CD8: Nucleus: Mean",
-                ": Cell: Mean");
+        List<String> features =
+                List.of("CD8: Cell: Mean", "DAPI: Cell: Mean", "Cell: Area µm^2", "CD8: Nucleus: Mean", ": Cell: Mean");
         List<String> markers = IntensityHeatmap.discoverMarkerFeatures(features);
         assertEquals(List.of("CD8: Cell: Mean", "DAPI: Cell: Mean"), markers);
     }
@@ -51,9 +46,7 @@ class IntensityHeatmapTest {
     @Test
     void zScoreByColumnStandardisesAcrossRows() {
         double[][] means = {
-                {1.0},
-                {2.0},
-                {3.0},
+            {1.0}, {2.0}, {3.0},
         };
         // population mean = 2, population std = sqrt(2/3)
         double std = Math.sqrt(2.0 / 3.0);
@@ -68,9 +61,7 @@ class IntensityHeatmapTest {
     @Test
     void zScoreByColumnZeroVarianceYieldsZero() {
         double[][] means = {
-                {5.0},
-                {5.0},
-                {5.0},
+            {5.0}, {5.0}, {5.0},
         };
         double[][] z = IntensityHeatmap.zScoreByColumn(means);
         assertEquals(0.0, z[0][0], DELTA);
@@ -81,8 +72,8 @@ class IntensityHeatmapTest {
     @Test
     void zScoreByColumnNaNStaysNaN() {
         double[][] means = {
-                {1.0, Double.NaN},
-                {3.0, 4.0},
+            {1.0, Double.NaN},
+            {3.0, 4.0},
         };
         double[][] z = IntensityHeatmap.zScoreByColumn(means);
         assertTrue(Double.isNaN(z[0][1]));
@@ -92,8 +83,7 @@ class IntensityHeatmapTest {
 
     @Test
     void accumulatorComputesPooledMeans() {
-        var acc = new IntensityHeatmap.Accumulator(
-                List.of("CD8: Cell: Mean", "FOXP3: Cell: Mean"));
+        var acc = new IntensityHeatmap.Accumulator(List.of("CD8: Cell: Mean", "FOXP3: Cell: Mean"));
         assertEquals(2, acc.markerCount());
 
         acc.addRow("Tumour", new double[] {10.0, 2.0});
@@ -142,8 +132,6 @@ class IntensityHeatmapTest {
         acc.addRow(null, new double[] {2.0});
         acc.addRow("Alpha", new double[] {3.0});
         IntensityHeatmap.Result r = acc.build();
-        assertEquals(
-                List.of("Alpha", "Zeta", IntensityHeatmap.UNCLASSIFIED),
-                r.classNames());
+        assertEquals(List.of("Alpha", "Zeta", IntensityHeatmap.UNCLASSIFIED), r.classNames());
     }
 }

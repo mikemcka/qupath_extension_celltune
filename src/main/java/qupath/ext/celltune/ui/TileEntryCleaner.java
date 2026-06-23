@@ -1,16 +1,15 @@
 package qupath.ext.celltune.ui;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.projects.ProjectImageEntry;
-
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Cleans up the temporary project entries QuPath's ProjectBrowser auto-adds when
@@ -43,7 +42,8 @@ final class TileEntryCleaner {
         this.qupath = qupath;
         if (qupath.getProject() != null) {
             @SuppressWarnings("unchecked")
-            var allEntries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            var allEntries = (List<ProjectImageEntry<BufferedImage>>)
+                    (List<?>) qupath.getProject().getImageList();
             initialSnapshot.addAll(allEntries);
         }
     }
@@ -64,7 +64,8 @@ final class TileEntryCleaner {
             try {
                 var activeData = qupath.getImageData();
                 if (activeData != null) activeEntry = project.getEntry(activeData);
-            } catch (Exception ignored) { }
+            } catch (Exception ignored) {
+            }
 
             @SuppressWarnings("unchecked")
             var current = (List<ProjectImageEntry<BufferedImage>>) (List<?>) project.getImageList();
@@ -82,14 +83,17 @@ final class TileEntryCleaner {
                 // it if QuPath's move-to-trash fallback fails (common on network
                 // mounts where no system trash is available).
                 java.nio.file.Path entryPath = null;
-                try { entryPath = entry.getEntryPath(); } catch (Exception ignored) { }
+                try {
+                    entryPath = entry.getEntryPath();
+                } catch (Exception ignored) {
+                }
 
                 try {
                     project.removeImage(entry, true);
                     logger.info("Removed auto-added tile project entry: {}", entry.getImageName());
                 } catch (Exception ex) {
-                    logger.warn("Failed to remove auto-added tile entry '{}': {}",
-                            entry.getImageName(), ex.getMessage());
+                    logger.warn(
+                            "Failed to remove auto-added tile entry '{}': {}", entry.getImageName(), ex.getMessage());
                 }
 
                 // Force-delete the data folder if QuPath left it behind.
@@ -97,8 +101,7 @@ final class TileEntryCleaner {
                     try {
                         deleteRecursively(entryPath);
                     } catch (Exception ex) {
-                        logger.warn("Failed to force-delete tile entry path '{}': {}",
-                                entryPath, ex.getMessage());
+                        logger.warn("Failed to force-delete tile entry path '{}': {}", entryPath, ex.getMessage());
                     }
                 }
             }
@@ -109,7 +112,10 @@ final class TileEntryCleaner {
             }
             // Refresh the project browser so removed entries disappear from the UI.
             javafx.application.Platform.runLater(() -> {
-                try { qupath.refreshProject(); } catch (Exception ignored) { }
+                try {
+                    qupath.refreshProject();
+                } catch (Exception ignored) {
+                }
             });
         } catch (Exception ex) {
             logger.warn("Failed to scan project for auto-added tile entries: {}", ex.getMessage());
@@ -119,13 +125,13 @@ final class TileEntryCleaner {
     private static void deleteRecursively(java.nio.file.Path path) throws java.io.IOException {
         if (!java.nio.file.Files.exists(path)) return;
         try (var stream = java.nio.file.Files.walk(path)) {
-            stream.sorted(java.util.Comparator.reverseOrder())
-                    .forEach(p -> {
-                        try { java.nio.file.Files.deleteIfExists(p); }
-                        catch (java.io.IOException ex) {
-                            logger.debug("Could not delete {}: {}", p, ex.getMessage());
-                        }
-                    });
+            stream.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    java.nio.file.Files.deleteIfExists(p);
+                } catch (java.io.IOException ex) {
+                    logger.debug("Could not delete {}: {}", p, ex.getMessage());
+                }
+            });
         }
     }
 }

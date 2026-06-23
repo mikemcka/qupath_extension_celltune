@@ -19,7 +19,7 @@ public class GatingRule {
     private final String cellType;
     private final String primaryExpression;
     private final String secondaryMarkers; // pipe-separated
-    private final String tertiaryMarkers;  // pipe-separated
+    private final String tertiaryMarkers; // pipe-separated
 
     /** Parsed marker encoding: marker name → numeric code. */
     private final Map<String, Integer> markerEncoding;
@@ -31,9 +31,12 @@ public class GatingRule {
      * @param tertiaryMarkers    pipe-separated marker list (may be null)
      * @param allChannels        full ordered list of available channels
      */
-    public GatingRule(String cellType, String primaryExpression,
-                      String secondaryMarkers, String tertiaryMarkers,
-                      List<String> allChannels) {
+    public GatingRule(
+            String cellType,
+            String primaryExpression,
+            String secondaryMarkers,
+            String tertiaryMarkers,
+            List<String> allChannels) {
         this.cellType = cellType;
         this.primaryExpression = primaryExpression;
         this.secondaryMarkers = secondaryMarkers;
@@ -43,8 +46,13 @@ public class GatingRule {
 
     // ── Public API ──────────────────────────────────────────────────────────
 
-    public String getCellType() { return cellType; }
-    public String getPrimaryExpression() { return primaryExpression; }
+    public String getCellType() {
+        return cellType;
+    }
+
+    public String getPrimaryExpression() {
+        return primaryExpression;
+    }
 
     /**
      * @return the numeric encoding for each channel. Keys are channel names,
@@ -101,7 +109,10 @@ public class GatingRule {
         // Check if there's overlap in primary markers
         boolean sharesPrimary = false;
         for (String m : ourPrimary) {
-            if (theirPrimary.contains(m)) { sharesPrimary = true; break; }
+            if (theirPrimary.contains(m)) {
+                sharesPrimary = true;
+                break;
+            }
         }
         if (!sharesPrimary) return;
 

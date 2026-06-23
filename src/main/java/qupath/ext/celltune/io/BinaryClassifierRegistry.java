@@ -2,16 +2,15 @@ package qupath.ext.celltune.io;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.projects.Project;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.projects.Project;
 
 /**
  * Tracks all named binary classifiers in a QuPath project.
@@ -53,8 +52,7 @@ public class BinaryClassifierRegistry {
             throw new IllegalArgumentException("Marker name must not be blank");
         String sanitized = markerName.trim().replaceAll("[^A-Za-z0-9._-]", "_");
         if (sanitized.startsWith(".") || sanitized.startsWith("-"))
-            throw new IllegalArgumentException(
-                    "Marker name must not start with '.' or '-': " + markerName);
+            throw new IllegalArgumentException("Marker name must not start with '.' or '-': " + markerName);
         return sanitized;
     }
 
@@ -72,9 +70,7 @@ public class BinaryClassifierRegistry {
         if (!Files.exists(regPath)) return new LinkedHashMap<>();
         String json = Files.readString(regPath, StandardCharsets.UTF_8);
         RegistryData data = GSON.fromJson(json, RegistryData.class);
-        return (data != null && data.markers != null)
-                ? new LinkedHashMap<>(data.markers)
-                : new LinkedHashMap<>();
+        return (data != null && data.markers != null) ? new LinkedHashMap<>(data.markers) : new LinkedHashMap<>();
     }
 
     /**
@@ -106,9 +102,8 @@ public class BinaryClassifierRegistry {
      * @throws IllegalArgumentException if the marker name is invalid
      * @throws IOException              if saving fails
      */
-    public static String register(Project<?> project,
-                                  Map<String, String> registry,
-                                  String markerName) throws IOException {
+    public static String register(Project<?> project, Map<String, String> registry, String markerName)
+            throws IOException {
         String safe = sanitizeMarkerName(markerName);
         String relPath = "binary/" + safe + ".json";
         registry.put(safe, relPath);
@@ -127,9 +122,7 @@ public class BinaryClassifierRegistry {
      * @param markerName the sanitized marker name to remove
      * @throws IOException if saving or deleting fails
      */
-    public static void remove(Project<?> project,
-                               Map<String, String> registry,
-                               String markerName) throws IOException {
+    public static void remove(Project<?> project, Map<String, String> registry, String markerName) throws IOException {
         String safe = sanitizeMarkerName(markerName);
         String relPath = registry.remove(safe);
         save(project, registry);

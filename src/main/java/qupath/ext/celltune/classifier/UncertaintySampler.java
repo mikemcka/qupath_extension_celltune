@@ -1,11 +1,10 @@
 package qupath.ext.celltune.classifier;
 
+import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellPrediction;
 import qupath.ext.celltune.model.PopulationSet;
-
-import java.util.*;
 
 /**
  * Multi-tier cell sampling for human review, matching the Python CellTune approach.
@@ -35,11 +34,11 @@ public class UncertaintySampler {
     private static final Logger logger = LoggerFactory.getLogger(UncertaintySampler.class);
 
     // Base per-tier budgets (calibrated for sampleSize = 256, matching Python CellTune)
-    private static final int BASE_FOV_BUDGET     = 84;   // FOV-balanced tier
-    private static final int BASE_TYPE_BUDGET    = 112;  // cell-type disagreement tier
-    private static final int BASE_RARE_BUDGET    = 60;   // rare cell-type tier
-    private static final int BASE_PREF_BUDGET    = 40;   // preferred confusions tier
-    private static final int BASE_CELLS_PER_FOV  = 14;
+    private static final int BASE_FOV_BUDGET = 84; // FOV-balanced tier
+    private static final int BASE_TYPE_BUDGET = 112; // cell-type disagreement tier
+    private static final int BASE_RARE_BUDGET = 60; // rare cell-type tier
+    private static final int BASE_PREF_BUDGET = 40; // preferred confusions tier
+    private static final int BASE_CELLS_PER_FOV = 14;
     private static final int BASE_CELLS_PER_TYPE = 16;
     private static final int BASE_CELLS_PER_RARE = 10;
     private static final int BASE_CELLS_PER_PREF = 8;
@@ -61,16 +60,25 @@ public class UncertaintySampler {
      * @param rng                  random number generator
      * @return list of sampled cell IDs in tier order
      */
-    public static List<String> sample(PopulationSet predALL,
-                                      List<String> classNames,
-                                      double[] agreementRates,
-                                      int sampleSize,
-                                      List<String> preferredConfusions,
-                                      List<String> preferredTypes,
-                                      Map<String, String> fovMap,
-                                      Random rng) {
-        return sample(predALL, classNames, agreementRates, sampleSize,
-                preferredConfusions, preferredTypes, fovMap, Set.of(), rng);
+    public static List<String> sample(
+            PopulationSet predALL,
+            List<String> classNames,
+            double[] agreementRates,
+            int sampleSize,
+            List<String> preferredConfusions,
+            List<String> preferredTypes,
+            Map<String, String> fovMap,
+            Random rng) {
+        return sample(
+                predALL,
+                classNames,
+                agreementRates,
+                sampleSize,
+                preferredConfusions,
+                preferredTypes,
+                fovMap,
+                Set.of(),
+                rng);
     }
 
     /**
@@ -78,15 +86,16 @@ public class UncertaintySampler {
      *
      * @param reviewedCellIds already-reviewed cell IDs to exclude from sampling
      */
-    public static List<String> sample(PopulationSet predALL,
-                                      List<String> classNames,
-                                      double[] agreementRates,
-                                      int sampleSize,
-                                      List<String> preferredConfusions,
-                                      List<String> preferredTypes,
-                                      Map<String, String> fovMap,
-                                      Set<String> reviewedCellIds,
-                                      Random rng) {
+    public static List<String> sample(
+            PopulationSet predALL,
+            List<String> classNames,
+            double[] agreementRates,
+            int sampleSize,
+            List<String> preferredConfusions,
+            List<String> preferredTypes,
+            Map<String, String> fovMap,
+            Set<String> reviewedCellIds,
+            Random rng) {
         if (preferredConfusions == null) preferredConfusions = List.of();
         if (preferredTypes == null) preferredTypes = List.of();
         if (reviewedCellIds == null) reviewedCellIds = Set.of();
@@ -144,13 +153,12 @@ public class UncertaintySampler {
         // proportions intact for smaller (or larger) review batches, so lower
         // tiers still get representation instead of being truncated away.
         double scale = sampleSize / 256.0;
-        int fovBudget    = (fovMap == null || fovMap.isEmpty())
-                ? 0 : scaleBudget(BASE_FOV_BUDGET, scale);
-        int cellsPerFov  = scaleBudget(BASE_CELLS_PER_FOV, scale);
-        int typeBudget   = scaleBudget(BASE_TYPE_BUDGET, scale);
-        int rareBudget   = scaleBudget(BASE_RARE_BUDGET, scale);
-        int prefBudget   = (preferredConfusions.isEmpty() && preferredTypes.isEmpty())
-                ? 0 : scaleBudget(BASE_PREF_BUDGET, scale);
+        int fovBudget = (fovMap == null || fovMap.isEmpty()) ? 0 : scaleBudget(BASE_FOV_BUDGET, scale);
+        int cellsPerFov = scaleBudget(BASE_CELLS_PER_FOV, scale);
+        int typeBudget = scaleBudget(BASE_TYPE_BUDGET, scale);
+        int rareBudget = scaleBudget(BASE_RARE_BUDGET, scale);
+        int prefBudget =
+                (preferredConfusions.isEmpty() && preferredTypes.isEmpty()) ? 0 : scaleBudget(BASE_PREF_BUDGET, scale);
         int cellsPerType = scaleBudget(BASE_CELLS_PER_TYPE, scale);
         int cellsPerRare = scaleBudget(BASE_CELLS_PER_RARE, scale);
         int cellsPerPref = scaleBudget(BASE_CELLS_PER_PREF, scale);
@@ -183,41 +191,33 @@ public class UncertaintySampler {
                     classFraction(disagreeCountByFov, totalByFov, b),
                     classFraction(disagreeCountByFov, totalByFov, a)));
 
-            tier0 = sampleTier(fovsByFraction, disagreeByFov,
-                    used, result, cellsPerFov, fovBudget, rng);
+            tier0 = sampleTier(fovsByFraction, disagreeByFov, used, result, cellsPerFov, fovBudget, rng);
         }
 
         // ── 4. Tier 1: Cell-type disagreement (highest disagreement fraction first)
         List<String> byDisagreeFraction = new ArrayList<>(classNames);
         byDisagreeFraction.sort((a, b) -> Double.compare(
-                classFraction(disagreePerClass, totalPerClass, b),
-                classFraction(disagreePerClass, totalPerClass, a)));
+                classFraction(disagreePerClass, totalPerClass, b), classFraction(disagreePerClass, totalPerClass, a)));
 
-        int tier1 = sampleTier(byDisagreeFraction, disagreeByClass,
-                used, result, cellsPerType, typeBudget, rng);
+        int tier1 = sampleTier(byDisagreeFraction, disagreeByClass, used, result, cellsPerType, typeBudget, rng);
 
         // ── 5. Tier 2: Rare cell types (rarest first by total count) ────────
         List<String> byRarity = new ArrayList<>(classNames);
-        byRarity.sort((a, b) -> Long.compare(
-                totalPerClass.getOrDefault(a, 0L),
-                totalPerClass.getOrDefault(b, 0L)));
+        byRarity.sort((a, b) -> Long.compare(totalPerClass.getOrDefault(a, 0L), totalPerClass.getOrDefault(b, 0L)));
 
-        int tier2 = sampleTier(byRarity, disagreeByClass,
-                used, result, cellsPerRare, rareBudget, rng);
+        int tier2 = sampleTier(byRarity, disagreeByClass, used, result, cellsPerRare, rareBudget, rng);
 
         // ── 6. Tier 3: Preferred confusions and types ───────────────────────
         int tier3 = 0;
         if (prefBudget > 0) {
-            Map<String, List<String>> prefPools = buildPreferredPools(
-                    preferredConfusions, preferredTypes,
-                    disagreementIds, predMap, used);
+            Map<String, List<String>> prefPools =
+                    buildPreferredPools(preferredConfusions, preferredTypes, disagreementIds, predMap, used);
 
             for (var pool : prefPools.values()) {
                 if (tier3 >= prefBudget) break;
                 pool.removeIf(used::contains);
                 Collections.shuffle(pool, rng);
-                int take = Math.min(cellsPerPref,
-                        Math.min(pool.size(), prefBudget - tier3));
+                int take = Math.min(cellsPerPref, Math.min(pool.size(), prefBudget - tier3));
                 for (int i = 0; i < take; i++) {
                     result.add(pool.get(i));
                     used.add(pool.get(i));
@@ -230,8 +230,7 @@ public class UncertaintySampler {
         List<String> remaining = new ArrayList<>(disagreementIds);
         remaining.removeIf(used::contains);
         Collections.shuffle(remaining, rng);
-        int fillCount = Math.min(Math.max(0, sampleSize - result.size()),
-                remaining.size());
+        int fillCount = Math.min(Math.max(0, sampleSize - result.size()), remaining.size());
         for (int i = 0; i < fillCount; i++) {
             result.add(remaining.get(i));
         }
@@ -241,34 +240,47 @@ public class UncertaintySampler {
             result = new ArrayList<>(result.subList(0, sampleSize));
         }
 
-        logger.info("Sampled {} cells: fov={}, type={}, rare={}, preferred={}, random={}",
-                result.size(), tier0, tier1, tier2, tier3, fillCount);
+        logger.info(
+                "Sampled {} cells: fov={}, type={}, rare={}, preferred={}, random={}",
+                result.size(),
+                tier0,
+                tier1,
+                tier2,
+                tier3,
+                fillCount);
         return result;
     }
 
     /**
      * Overload without FOV map — no FOV-balanced sampling.
      */
-    public static List<String> sample(PopulationSet predALL,
-                                      List<String> classNames,
-                                      double[] agreementRates,
-                                      int sampleSize,
-                                      List<String> preferredConfusions,
-                                      List<String> preferredTypes,
-                                      Random rng) {
-        return sample(predALL, classNames, agreementRates, sampleSize,
-                preferredConfusions, preferredTypes, null, Set.of(), rng);
+    public static List<String> sample(
+            PopulationSet predALL,
+            List<String> classNames,
+            double[] agreementRates,
+            int sampleSize,
+            List<String> preferredConfusions,
+            List<String> preferredTypes,
+            Random rng) {
+        return sample(
+                predALL,
+                classNames,
+                agreementRates,
+                sampleSize,
+                preferredConfusions,
+                preferredTypes,
+                null,
+                Set.of(),
+                rng);
     }
 
     /**
      * Convenience overload — no preferred confusions/types, no FOV map, default RNG.
      */
-    public static List<String> sample(PopulationSet predALL,
-                                      List<String> classNames,
-                                      double[] agreementRates,
-                                      int sampleSize) {
-        return sample(predALL, classNames, agreementRates, sampleSize,
-                List.of(), List.of(), null, Set.of(), new Random());
+    public static List<String> sample(
+            PopulationSet predALL, List<String> classNames, double[] agreementRates, int sampleSize) {
+        return sample(
+                predALL, classNames, agreementRates, sampleSize, List.of(), List.of(), null, Set.of(), new Random());
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────────
@@ -288,19 +300,21 @@ public class UncertaintySampler {
      *
      * @return number of cells actually sampled by this tier
      */
-    private static int sampleTier(List<String> sortedClasses,
-                                  Map<String, List<String>> poolByClass,
-                                  Set<String> used, List<String> result,
-                                  int perGroup, int maxBudget, Random rng) {
+    private static int sampleTier(
+            List<String> sortedClasses,
+            Map<String, List<String>> poolByClass,
+            Set<String> used,
+            List<String> result,
+            int perGroup,
+            int maxBudget,
+            Random rng) {
         int count = 0;
         for (String cn : sortedClasses) {
             if (count >= maxBudget) break;
-            List<String> pool = new ArrayList<>(
-                    poolByClass.getOrDefault(cn, List.of()));
+            List<String> pool = new ArrayList<>(poolByClass.getOrDefault(cn, List.of()));
             pool.removeIf(used::contains);
             Collections.shuffle(pool, rng);
-            int take = Math.min(perGroup,
-                    Math.min(pool.size(), maxBudget - count));
+            int take = Math.min(perGroup, Math.min(pool.size(), maxBudget - count));
             for (int i = 0; i < take; i++) {
                 result.add(pool.get(i));
                 used.add(pool.get(i));
@@ -316,7 +330,8 @@ public class UncertaintySampler {
      * A preferred type {@code T} matches cells where pred1=T or pred2=T.
      */
     private static Map<String, List<String>> buildPreferredPools(
-            List<String> confusions, List<String> types,
+            List<String> confusions,
+            List<String> types,
             List<String> disagreementIds,
             Map<String, CellPrediction> predMap,
             Set<String> used) {
@@ -330,8 +345,8 @@ public class UncertaintySampler {
             for (String id : disagreementIds) {
                 if (used.contains(id)) continue;
                 CellPrediction p = predMap.get(id);
-                if ((a.equals(p.getModel1Label()) && b.equals(p.getModel2Label())) ||
-                    (b.equals(p.getModel1Label()) && a.equals(p.getModel2Label()))) {
+                if ((a.equals(p.getModel1Label()) && b.equals(p.getModel2Label()))
+                        || (b.equals(p.getModel1Label()) && a.equals(p.getModel2Label()))) {
                     pool.add(id);
                 }
             }
@@ -354,9 +369,7 @@ public class UncertaintySampler {
     }
 
     /** Safe fraction: disagreement count / total count for a class. */
-    private static double classFraction(Map<String, Long> numerator,
-                                        Map<String, Long> denominator,
-                                        String key) {
+    private static double classFraction(Map<String, Long> numerator, Map<String, Long> denominator, String key) {
         long num = numerator.getOrDefault(key, 0L);
         long den = denominator.getOrDefault(key, 1L);
         return den == 0 ? 0 : (double) num / den;

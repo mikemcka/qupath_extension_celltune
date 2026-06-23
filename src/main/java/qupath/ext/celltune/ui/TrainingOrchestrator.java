@@ -1,16 +1,5 @@
 package qupath.ext.celltune.ui;
 
-import javafx.application.Platform;
-import qupath.ext.celltune.classifier.DualModelClassifier;
-import qupath.ext.celltune.io.ProjectStateManager;
-import qupath.ext.celltune.model.CellFeatureExtractor;
-import qupath.ext.celltune.model.FeatureNormalizer;
-import qupath.ext.celltune.model.LabelStore;
-import qupath.lib.images.ImageData;
-import qupath.lib.objects.PathObject;
-import qupath.lib.projects.Project;
-import qupath.lib.projects.ProjectImageEntry;
-
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,6 +10,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import javafx.application.Platform;
+import qupath.ext.celltune.classifier.DualModelClassifier;
+import qupath.ext.celltune.io.ProjectStateManager;
+import qupath.ext.celltune.model.CellFeatureExtractor;
+import qupath.ext.celltune.model.FeatureNormalizer;
+import qupath.ext.celltune.model.LabelStore;
+import qupath.lib.images.ImageData;
+import qupath.lib.objects.PathObject;
+import qupath.lib.projects.Project;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Background training-pipeline helpers extracted from {@code ClassificationPanel.doTrain}.
@@ -83,8 +82,7 @@ final class TrainingOrchestrator {
                 // Load saved labels first (no image I/O required)
                 LabelStore otherLabels = new LabelStore("temp");
                 try {
-                    var savedLabels = ProjectStateManager.loadImageLabels(
-                            project, scope, entry.getImageName());
+                    var savedLabels = ProjectStateManager.loadImageLabels(project, scope, entry.getImageName());
                     if (savedLabels != null) {
                         otherLabels.mergeFrom(savedLabels);
                     }
@@ -113,18 +111,15 @@ final class TrainingOrchestrator {
                     if (cell == null) continue;
                     supplementaryRows.add(otherExtractor.extractRow(cell));
                     // Strip merge-history annotation so training sees the effective class
-                    supplementaryLabels.add(
-                            LabelStore.effectiveClassName(labelEntry.getValue()));
+                    supplementaryLabels.add(LabelStore.effectiveClassName(labelEntry.getValue()));
                     added++;
                 }
                 if (added > 0) {
                     int addedFinal = added;
-                    trainLog.accept("  + " + addedFinal + " labelled cells from "
-                            + entry.getImageName());
+                    trainLog.accept("  + " + addedFinal + " labelled cells from " + entry.getImageName());
                 }
             } catch (Exception ex) {
-                trainLog.accept("  ! Could not read " + entry.getImageName()
-                        + " (" + ex.getMessage() + ")");
+                trainLog.accept("  ! Could not read " + entry.getImageName() + " (" + ex.getMessage() + ")");
             }
         }
         trainLog.accept("Pooled total: " + supplementaryRows.size() + " rows.");
@@ -165,8 +160,8 @@ final class TrainingOrchestrator {
         // and predictOnly(populateSets=false) does not mutate shared state.
         int parallelism = Math.min(workers, targetImages.size());
         parallelism = Math.max(1, parallelism);
-        trainLog.accept("Applying classifier to " + targetImages.size()
-                + " target image(s) using " + parallelism + " worker(s)…");
+        trainLog.accept("Applying classifier to " + targetImages.size() + " target image(s) using " + parallelism
+                + " worker(s)…");
 
         var poolExec = Executors.newFixedThreadPool(parallelism, r -> {
             Thread t = new Thread(r, "CellTune-BatchPredict");
@@ -199,8 +194,8 @@ final class TrainingOrchestrator {
 
                     var otherExtractor = new CellFeatureExtractor(featureNames);
                     otherExtractor.setNormalizer(normalizer);
-                    var otherPredAll = classifier.predictAndCollect(otherDetections, otherExtractor,
-                            m -> trainLog.accept("[" + imgNameFinal + "] " + m));
+                    var otherPredAll = classifier.predictAndCollect(
+                            otherDetections, otherExtractor, m -> trainLog.accept("[" + imgNameFinal + "] " + m));
 
                     var saveReady = new CountDownLatch(1);
                     Platform.runLater(() -> {
@@ -219,15 +214,13 @@ final class TrainingOrchestrator {
                     // Prediction Summary and review-mode sampling can pull
                     // disagreements from this image.
                     try {
-                        ProjectStateManager.saveImagePredictions(
-                                project, imgNameFinal, otherPredAll);
+                        ProjectStateManager.saveImagePredictions(project, imgNameFinal, otherPredAll);
                     } catch (Exception persistEx) {
                         trainLog.accept("[" + imgNameFinal + "] WARN: could not save predictions JSON: "
                                 + persistEx.getMessage());
                     }
                     int n = appliedCounter.incrementAndGet();
-                    trainLog.accept("[" + imgNameFinal + "] Saved (" + n + "/"
-                            + targetImages.size() + ")");
+                    trainLog.accept("[" + imgNameFinal + "] Saved (" + n + "/" + targetImages.size() + ")");
                 } catch (Exception ex) {
                     trainLog.accept("[" + imgNameFinal + "] ERROR: " + ex.getMessage());
                 }

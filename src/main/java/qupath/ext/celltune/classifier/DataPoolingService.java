@@ -1,9 +1,8 @@
 package qupath.ext.celltune.classifier;
 
-import qupath.ext.celltune.io.GroundTruthIO;
-
 import java.util.ArrayList;
 import java.util.List;
+import qupath.ext.celltune.io.GroundTruthIO;
 
 /**
  * Pure helpers for assembling supplementary training data from explicitly imported
@@ -31,8 +30,7 @@ public final class DataPoolingService {
      * @param mappedFeatureCount how many target columns had an imported counterpart
      * @param addedCount         number of rows actually emitted ({@code == rows.size()})
      */
-    public record PooledRows(List<float[]> rows, List<String> labels,
-                             int mappedFeatureCount, int addedCount) {}
+    public record PooledRows(List<float[]> rows, List<String> labels, int mappedFeatureCount, int addedCount) {}
 
     /**
      * Align and collect imported training rows into the current model's feature layout.
@@ -46,14 +44,17 @@ public final class DataPoolingService {
      * @param targetFeatureNames   the current model's feature column ordering
      * @return the aligned rows/labels and the mapped/added counts
      */
-    public static PooledRows poolImportedRows(List<GroundTruthIO.TrainingRow> importedRows,
-                                              List<String> importedFeatureNames,
-                                              List<String> targetFeatureNames) {
+    public static PooledRows poolImportedRows(
+            List<GroundTruthIO.TrainingRow> importedRows,
+            List<String> importedFeatureNames,
+            List<String> targetFeatureNames) {
         List<float[]> rows = new ArrayList<>();
         List<String> labels = new ArrayList<>();
 
-        if (importedRows == null || importedRows.isEmpty()
-                || importedFeatureNames == null || importedFeatureNames.isEmpty()) {
+        if (importedRows == null
+                || importedRows.isEmpty()
+                || importedFeatureNames == null
+                || importedFeatureNames.isEmpty()) {
             return new PooledRows(rows, labels, 0, 0);
         }
 

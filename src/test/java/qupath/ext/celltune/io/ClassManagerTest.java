@@ -1,10 +1,9 @@
 package qupath.ext.celltune.io;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,8 +11,8 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tests the GUI-free merge / undo / purge file logic of {@link ClassManager}.
@@ -110,9 +109,9 @@ class ClassManagerTest {
     void undoRestoresOnlySuffixMatchingEntries() {
         Map<String, String> labels = map(
                 "c1", "A-mergedInto(Z)",
-                "c2", "Z",                       // natural Z, no history → keep
+                "c2", "Z", // natural Z, no history → keep
                 "c3", "B-mergedInto(Z)",
-                "c4", "C-mergedInto(W)");        // merged into a different target → keep
+                "c4", "C-mergedInto(W)"); // merged into a different target → keep
 
         List<String> restored = ClassManager.restoreMergedInMap(labels, "Z");
 

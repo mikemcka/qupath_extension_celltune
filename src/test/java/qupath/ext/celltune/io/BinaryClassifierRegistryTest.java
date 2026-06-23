@@ -1,8 +1,8 @@
 package qupath.ext.celltune.io;
 
-import org.junit.jupiter.api.Test;
-
 import static org.junit.jupiter.api.Assertions.*;
+
+import org.junit.jupiter.api.Test;
 
 /**
  * Covers {@link BinaryClassifierRegistry#sanitizeMarkerName(String)} — the
@@ -39,20 +39,17 @@ class BinaryClassifierRegistryTest {
     @Test
     void leadingDotOrHyphenIsRejected() {
         // "../" style or hidden-file names must not be accepted.
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> BinaryClassifierRegistry.sanitizeMarkerName("..")); // ".." stays "..", starts with '.'
-        assertThrows(IllegalArgumentException.class,
-                () -> BinaryClassifierRegistry.sanitizeMarkerName(".hidden"));
-        assertThrows(IllegalArgumentException.class,
-                () -> BinaryClassifierRegistry.sanitizeMarkerName("-flag"));
+        assertThrows(IllegalArgumentException.class, () -> BinaryClassifierRegistry.sanitizeMarkerName(".hidden"));
+        assertThrows(IllegalArgumentException.class, () -> BinaryClassifierRegistry.sanitizeMarkerName("-flag"));
     }
 
     @Test
     void blankOrNullIsRejected() {
-        assertThrows(IllegalArgumentException.class,
-                () -> BinaryClassifierRegistry.sanitizeMarkerName(null));
-        assertThrows(IllegalArgumentException.class,
-                () -> BinaryClassifierRegistry.sanitizeMarkerName("   "));
+        assertThrows(IllegalArgumentException.class, () -> BinaryClassifierRegistry.sanitizeMarkerName(null));
+        assertThrows(IllegalArgumentException.class, () -> BinaryClassifierRegistry.sanitizeMarkerName("   "));
     }
 
     @Test

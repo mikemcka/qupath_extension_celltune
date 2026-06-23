@@ -1,7 +1,5 @@
 package qupath.ext.celltune.io;
 
-import qupath.ext.celltune.model.PixelCohortReport;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -10,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import qupath.ext.celltune.model.PixelCohortReport;
 
 /**
  * CSV writer for the whole-image pixel-prescreen report.
@@ -23,12 +22,19 @@ public final class PixelStatsCsvExporter {
 
     /** Per-channel statistic columns, in output order. */
     private static final List<String> CHANNEL_METRICS = List.of(
-            "Median", "Mean", "Std", "P1", "P99", "Max",
-            "ForegroundCoverage", "BackgroundFraction", "DynamicRange",
-            "SaturationFraction", "LaplacianVariance");
+            "Median",
+            "Mean",
+            "Std",
+            "P1",
+            "P99",
+            "Max",
+            "ForegroundCoverage",
+            "BackgroundFraction",
+            "DynamicRange",
+            "SaturationFraction",
+            "LaplacianVariance");
 
-    private PixelStatsCsvExporter() {
-    }
+    private PixelStatsCsvExporter() {}
 
     /** Serialise the report to CSV text. */
     public static String toCsv(PixelCohortReport report) {
@@ -61,22 +67,38 @@ public final class PixelStatsCsvExporter {
 
         // Rows.
         for (var img : images) {
-            sb.append(csvEscape(img.imageName())).append(',')
-                    .append(csvEscape(img.verdict())).append(',')
-                    .append(csvEscape(String.join("; ", img.flags()))).append(',')
-                    .append(num(img.score())).append(',')
-                    .append(num(img.emptyFraction())).append(',')
-                    .append(num(img.emptyFractionZ())).append(',')
-                    .append(num(img.meanForegroundCoverage())).append(',')
-                    .append(num(img.meanForegroundCoverageZ())).append(',')
-                    .append(num(img.maxSaturationFraction())).append(',')
-                    .append(csvEscape(img.maxSaturationChannel())).append(',')
-                    .append(num(img.maxSaturationFractionZ())).append(',')
-                    .append(num(img.medianDynamicRange())).append(',')
-                    .append(num(img.medianDynamicRangeZ())).append(',')
-                    .append(num(img.maxFocus())).append(',')
-                    .append(num(img.maxFocusZ())).append(',')
-                    .append(num(img.maxIntensityZ())).append(',')
+            sb.append(csvEscape(img.imageName()))
+                    .append(',')
+                    .append(csvEscape(img.verdict()))
+                    .append(',')
+                    .append(csvEscape(String.join("; ", img.flags())))
+                    .append(',')
+                    .append(num(img.score()))
+                    .append(',')
+                    .append(num(img.emptyFraction()))
+                    .append(',')
+                    .append(num(img.emptyFractionZ()))
+                    .append(',')
+                    .append(num(img.meanForegroundCoverage()))
+                    .append(',')
+                    .append(num(img.meanForegroundCoverageZ()))
+                    .append(',')
+                    .append(num(img.maxSaturationFraction()))
+                    .append(',')
+                    .append(csvEscape(img.maxSaturationChannel()))
+                    .append(',')
+                    .append(num(img.maxSaturationFractionZ()))
+                    .append(',')
+                    .append(num(img.medianDynamicRange()))
+                    .append(',')
+                    .append(num(img.medianDynamicRangeZ()))
+                    .append(',')
+                    .append(num(img.maxFocus()))
+                    .append(',')
+                    .append(num(img.maxFocusZ()))
+                    .append(',')
+                    .append(num(img.maxIntensityZ()))
+                    .append(',')
                     .append(csvEscape(img.maxIntensityChannel()));
 
             for (String ch : orderedChannels) {
@@ -88,17 +110,28 @@ public final class PixelStatsCsvExporter {
                     continue;
                 }
                 var s = cc.stats();
-                sb.append(',').append(num(s.median()))
-                        .append(',').append(num(s.mean()))
-                        .append(',').append(num(s.std()))
-                        .append(',').append(num(s.p1()))
-                        .append(',').append(num(s.p99()))
-                        .append(',').append(num(s.max()))
-                        .append(',').append(num(s.foregroundCoverage()))
-                        .append(',').append(num(s.backgroundFraction()))
-                        .append(',').append(num(s.dynamicRange()))
-                        .append(',').append(num(s.saturationFraction()))
-                        .append(',').append(num(s.laplacianVariance()));
+                sb.append(',')
+                        .append(num(s.median()))
+                        .append(',')
+                        .append(num(s.mean()))
+                        .append(',')
+                        .append(num(s.std()))
+                        .append(',')
+                        .append(num(s.p1()))
+                        .append(',')
+                        .append(num(s.p99()))
+                        .append(',')
+                        .append(num(s.max()))
+                        .append(',')
+                        .append(num(s.foregroundCoverage()))
+                        .append(',')
+                        .append(num(s.backgroundFraction()))
+                        .append(',')
+                        .append(num(s.dynamicRange()))
+                        .append(',')
+                        .append(num(s.saturationFraction()))
+                        .append(',')
+                        .append(num(s.laplacianVariance()));
             }
             sb.append('\n');
         }
@@ -111,8 +144,7 @@ public final class PixelStatsCsvExporter {
         Files.writeString(outputPath, toCsv(report), StandardCharsets.UTF_8);
     }
 
-    private static PixelCohortReport.ChannelContext findChannel(
-            PixelCohortReport.ImageReport img, String channel) {
+    private static PixelCohortReport.ChannelContext findChannel(PixelCohortReport.ImageReport img, String channel) {
         for (var cc : img.channels()) {
             if (channel.equals(cc.channel())) {
                 return cc;

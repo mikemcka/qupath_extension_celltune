@@ -1,14 +1,12 @@
 package qupath.ext.celltune.model;
 
-import qupath.ext.celltune.util.RobustStats;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+import qupath.ext.celltune.util.RobustStats;
 
 /**
  * Contextualises whole-image pixel statistics against the whole project.
@@ -45,8 +43,7 @@ public final class PixelCohortAnalyzer {
      */
     private static final double SIGNAL_FOREGROUND_FLOOR = 0.05;
 
-    private PixelCohortAnalyzer() {
-    }
+    private PixelCohortAnalyzer() {}
 
     /** Analyse with {@link PixelCohortReport#DEFAULT_THRESHOLDS}. */
     public static PixelCohortReport analyze(List<ImagePixelStats.ImageStats> inputs) {
@@ -61,8 +58,7 @@ public final class PixelCohortAnalyzer {
      * @return the cohort report, images sorted worst-first
      */
     public static PixelCohortReport analyze(
-            List<ImagePixelStats.ImageStats> inputs,
-            PixelCohortReport.Thresholds thresholds) {
+            List<ImagePixelStats.ImageStats> inputs, PixelCohortReport.Thresholds thresholds) {
 
         if (thresholds == null) {
             thresholds = PixelCohortReport.DEFAULT_THRESHOLDS;
@@ -170,7 +166,8 @@ public final class PixelCohortAnalyzer {
         for (int i = 0; i < nImages; i++) {
             var img = safe.get(i);
 
-            var channelContexts = new ArrayList<PixelCohortReport.ChannelContext>(img.channels().size());
+            var channelContexts = new ArrayList<PixelCohortReport.ChannelContext>(
+                    img.channels().size());
             for (var cs : img.channels()) {
                 channelContexts.add(new PixelCohortReport.ChannelContext(cs.channel(), cs));
             }
@@ -184,8 +181,8 @@ public final class PixelCohortAnalyzer {
             }
             boolean saturated = !Double.isNaN(maxSaturation[i])
                     && ((maxSaturation[i] >= thresholds.saturationMinFraction()
-                            && ge(maxSaturationZ[i], thresholds.saturationZ()))
-                        || maxSaturation[i] >= thresholds.saturationHardFraction());
+                                    && ge(maxSaturationZ[i], thresholds.saturationZ()))
+                            || maxSaturation[i] >= thresholds.saturationHardFraction());
             if (saturated) {
                 flags.add(PixelCohortReport.SATURATED);
             }
@@ -232,27 +229,53 @@ public final class PixelCohortAnalyzer {
                     ? Double.NaN
                     : medP99ByChannel.getOrDefault(maxIntensityChannel, Double.NaN);
             String narrative = buildNarrative(
-                    img, verdict, flags,
-                    emptyFraction[i], emptyFractionZ[i], medEmptyFraction,
-                    meanForeground[i], meanForegroundZ[i], medMeanForeground,
-                    maxSaturation[i], maxSaturationChannel[i], maxSaturationZ[i], medMaxSaturation,
-                    medianDynamicRange[i], medianDynamicRangeZ[i], medMedianDynamicRange,
-                    maxFocus[i], maxFocusZ[i], medMaxFocus,
-                    maxIntensityChannel, maxIntensitySignedZ, medP99);
+                    img,
+                    verdict,
+                    flags,
+                    emptyFraction[i],
+                    emptyFractionZ[i],
+                    medEmptyFraction,
+                    meanForeground[i],
+                    meanForegroundZ[i],
+                    medMeanForeground,
+                    maxSaturation[i],
+                    maxSaturationChannel[i],
+                    maxSaturationZ[i],
+                    medMaxSaturation,
+                    medianDynamicRange[i],
+                    medianDynamicRangeZ[i],
+                    medMedianDynamicRange,
+                    maxFocus[i],
+                    maxFocusZ[i],
+                    medMaxFocus,
+                    maxIntensityChannel,
+                    maxIntensitySignedZ,
+                    medP99);
 
             reports.add(new PixelCohortReport.ImageReport(
-                    img.imageName(), verdict, flags, score, narrative,
-                    emptyFraction[i], emptyFractionZ[i],
-                    meanForeground[i], meanForegroundZ[i],
-                    maxSaturation[i], maxSaturationChannel[i], maxSaturationZ[i],
-                    medianDynamicRange[i], medianDynamicRangeZ[i],
-                    maxFocus[i], maxFocusZ[i],
-                    maxIntensitySignedZ, maxIntensityChannel,
+                    img.imageName(),
+                    verdict,
+                    flags,
+                    score,
+                    narrative,
+                    emptyFraction[i],
+                    emptyFractionZ[i],
+                    meanForeground[i],
+                    meanForegroundZ[i],
+                    maxSaturation[i],
+                    maxSaturationChannel[i],
+                    maxSaturationZ[i],
+                    medianDynamicRange[i],
+                    medianDynamicRangeZ[i],
+                    maxFocus[i],
+                    maxFocusZ[i],
+                    maxIntensitySignedZ,
+                    maxIntensityChannel,
                     channelContexts));
         }
 
-        reports.sort(Comparator
-                .comparingDouble(PixelCohortReport.ImageReport::score).reversed()
+        reports.sort(Comparator.comparingDouble(PixelCohortReport.ImageReport::score)
+                .reversed()
                 .thenComparing(PixelCohortReport.ImageReport::imageName));
 
         return new PixelCohortReport(reports);
@@ -264,26 +287,46 @@ public final class PixelCohortAnalyzer {
             ImagePixelStats.ImageStats img,
             String verdict,
             List<String> flags,
-            double emptyFraction, double emptyFractionZ, double medEmptyFraction,
-            double meanForeground, double meanForegroundZ, double medMeanForeground,
-            double maxSaturation, String maxSaturationChannel, double maxSaturationZ, double medMaxSaturation,
-            double medianDynamicRange, double medianDynamicRangeZ, double medMedianDynamicRange,
-            double maxFocus, double maxFocusZ, double medMaxFocus,
-            String maxIntensityChannel, double maxIntensitySignedZ, double medP99) {
+            double emptyFraction,
+            double emptyFractionZ,
+            double medEmptyFraction,
+            double meanForeground,
+            double meanForegroundZ,
+            double medMeanForeground,
+            double maxSaturation,
+            String maxSaturationChannel,
+            double maxSaturationZ,
+            double medMaxSaturation,
+            double medianDynamicRange,
+            double medianDynamicRangeZ,
+            double medMedianDynamicRange,
+            double maxFocus,
+            double maxFocusZ,
+            double medMaxFocus,
+            String maxIntensityChannel,
+            double maxIntensitySignedZ,
+            double medP99) {
 
         var sb = new StringBuilder();
         sb.append(img.imageName()).append(" — ").append(verdict).append('\n');
 
         // Foreground / background context.
-        if (flags.contains(PixelCohortReport.BACKGROUND_HEAVY)
-                || notable(emptyFractionZ) || notable(meanForegroundZ)) {
-            sb.append("• Foreground coverage ").append(fmtPct(meanForeground))
-                    .append(" (cohort median ").append(fmtPct(medMeanForeground))
-                    .append(", ").append(fmtZ(meanForegroundZ)).append(" MAD).");
+        if (flags.contains(PixelCohortReport.BACKGROUND_HEAVY) || notable(emptyFractionZ) || notable(meanForegroundZ)) {
+            sb.append("• Foreground coverage ")
+                    .append(fmtPct(meanForeground))
+                    .append(" (cohort median ")
+                    .append(fmtPct(medMeanForeground))
+                    .append(", ")
+                    .append(fmtZ(meanForegroundZ))
+                    .append(" MAD).");
             if (!Double.isNaN(emptyFraction)) {
-                sb.append(" Empty/glass ").append(fmtPct(emptyFraction))
-                        .append(" (median ").append(fmtPct(medEmptyFraction))
-                        .append(", ").append(fmtZ(emptyFractionZ)).append(" MAD).");
+                sb.append(" Empty/glass ")
+                        .append(fmtPct(emptyFraction))
+                        .append(" (median ")
+                        .append(fmtPct(medEmptyFraction))
+                        .append(", ")
+                        .append(fmtZ(emptyFractionZ))
+                        .append(" MAD).");
             }
             sb.append('\n');
         }
@@ -294,22 +337,33 @@ public final class PixelCohortAnalyzer {
             if (maxSaturationChannel != null) {
                 sb.append(" in ").append(maxSaturationChannel);
             }
-            sb.append(" (cohort median ").append(fmtPct(medMaxSaturation))
-                    .append(", ").append(fmtZ(maxSaturationZ)).append(" MAD).\n");
+            sb.append(" (cohort median ")
+                    .append(fmtPct(medMaxSaturation))
+                    .append(", ")
+                    .append(fmtZ(maxSaturationZ))
+                    .append(" MAD).\n");
         }
 
         // Dynamic range / weak signal context.
         if (flags.contains(PixelCohortReport.WEAK_SIGNAL) || notable(medianDynamicRangeZ)) {
-            sb.append("• Median dynamic range ").append(fmtNum(medianDynamicRange))
-                    .append(" (cohort median ").append(fmtNum(medMedianDynamicRange))
-                    .append(", ").append(fmtZ(medianDynamicRangeZ)).append(" MAD).\n");
+            sb.append("• Median dynamic range ")
+                    .append(fmtNum(medianDynamicRange))
+                    .append(" (cohort median ")
+                    .append(fmtNum(medMedianDynamicRange))
+                    .append(", ")
+                    .append(fmtZ(medianDynamicRangeZ))
+                    .append(" MAD).\n");
         }
 
         // Focus / sharpness context (informational only — not a flag).
         if (notable(maxFocusZ)) {
-            sb.append("• Focus (sharpest-channel Laplacian variance) ").append(fmtNum(maxFocus))
-                    .append(" (cohort median ").append(fmtNum(medMaxFocus))
-                    .append(", ").append(fmtZ(maxFocusZ)).append(" MAD).\n");
+            sb.append("• Focus (sharpest-channel Laplacian variance) ")
+                    .append(fmtNum(maxFocus))
+                    .append(" (cohort median ")
+                    .append(fmtNum(medMaxFocus))
+                    .append(", ")
+                    .append(fmtZ(maxFocusZ))
+                    .append(" MAD).\n");
         }
 
         // Intensity-outlier context: name the divergent channel and its brightness.
@@ -323,10 +377,17 @@ public final class PixelCohortAnalyzer {
                 }
             }
             String direction = maxIntensitySignedZ >= 0 ? "brighter" : "dimmer";
-            sb.append("• ").append(maxIntensityChannel).append(" brightness (p99) ")
-                    .append(fmtNum(imgP99)).append(" is ").append(direction)
-                    .append(" than the cohort (median ").append(fmtNum(medP99))
-                    .append(", ").append(fmtZ(maxIntensitySignedZ)).append(" MAD).\n");
+            sb.append("• ")
+                    .append(maxIntensityChannel)
+                    .append(" brightness (p99) ")
+                    .append(fmtNum(imgP99))
+                    .append(" is ")
+                    .append(direction)
+                    .append(" than the cohort (median ")
+                    .append(fmtNum(medP99))
+                    .append(", ")
+                    .append(fmtZ(maxIntensitySignedZ))
+                    .append(" MAD).\n");
         }
 
         if (flags.isEmpty()) {
@@ -378,8 +439,7 @@ public final class PixelCohortAnalyzer {
     // ── Robust statistics helpers ────────────────────────────────────────────────
 
     /** Find a channel's stats by name within one image, or {@code null}. */
-    private static ImagePixelStats.ChannelStats channelOf(
-            ImagePixelStats.ImageStats img, String channel) {
+    private static ImagePixelStats.ChannelStats channelOf(ImagePixelStats.ImageStats img, String channel) {
         for (var cs : img.channels()) {
             if (channel.equals(cs.channel())) {
                 return cs;

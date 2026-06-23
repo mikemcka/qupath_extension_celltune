@@ -29,29 +29,41 @@ public class GatingExpression {
 
     sealed interface Node permits ItemNode, NotNode, AndNode, OrNode {
         boolean[] evaluate(Map<String, boolean[]> masks);
+
         String toText();
     }
 
     record ItemNode(String name) implements Node {
-        @Override public boolean[] evaluate(Map<String, boolean[]> masks) {
+        @Override
+        public boolean[] evaluate(Map<String, boolean[]> masks) {
             return masks.get(name); // null if marker not found
         }
-        @Override public String toText() { return name; }
+
+        @Override
+        public String toText() {
+            return name;
+        }
     }
 
     record NotNode(Node operand) implements Node {
-        @Override public boolean[] evaluate(Map<String, boolean[]> masks) {
+        @Override
+        public boolean[] evaluate(Map<String, boolean[]> masks) {
             boolean[] inner = operand.evaluate(masks);
             if (inner == null) return null;
             boolean[] result = new boolean[inner.length];
             for (int i = 0; i < inner.length; i++) result[i] = !inner[i];
             return result;
         }
-        @Override public String toText() { return "!" + operand.toText(); }
+
+        @Override
+        public String toText() {
+            return "!" + operand.toText();
+        }
     }
 
     record AndNode(Node left, Node right) implements Node {
-        @Override public boolean[] evaluate(Map<String, boolean[]> masks) {
+        @Override
+        public boolean[] evaluate(Map<String, boolean[]> masks) {
             boolean[] l = left.evaluate(masks);
             boolean[] r = right.evaluate(masks);
             if (l == null) return r;
@@ -60,11 +72,16 @@ public class GatingExpression {
             for (int i = 0; i < l.length; i++) result[i] = l[i] && r[i];
             return result;
         }
-        @Override public String toText() { return "(" + left.toText() + " & " + right.toText() + ")"; }
+
+        @Override
+        public String toText() {
+            return "(" + left.toText() + " & " + right.toText() + ")";
+        }
     }
 
     record OrNode(Node left, Node right) implements Node {
-        @Override public boolean[] evaluate(Map<String, boolean[]> masks) {
+        @Override
+        public boolean[] evaluate(Map<String, boolean[]> masks) {
             boolean[] l = left.evaluate(masks);
             boolean[] r = right.evaluate(masks);
             if (l == null) return r;
@@ -73,17 +90,17 @@ public class GatingExpression {
             for (int i = 0; i < l.length; i++) result[i] = l[i] || r[i];
             return result;
         }
-        @Override public String toText() { return "(" + left.toText() + " | " + right.toText() + ")"; }
+
+        @Override
+        public String toText() {
+            return "(" + left.toText() + " | " + right.toText() + ")";
+        }
     }
 
     // ── Categorisation result ───────────────────────────────────────────────
 
     /** Classification of operands in a parsed expression. */
-    public record MarkerCategories(
-            List<String> mustHave,
-            List<String> orExpression,
-            List<String> not
-    ) {}
+    public record MarkerCategories(List<String> mustHave, List<String> orExpression, List<String> not) {}
 
     // ── Fields ──────────────────────────────────────────────────────────────
 
@@ -110,8 +127,7 @@ public class GatingExpression {
             int[] pos = {0};
             this.root = parseOr(tokens, pos);
             if (pos[0] < tokens.size()) {
-                throw new IllegalArgumentException(
-                        "Unexpected token after complete expression: " + tokens.get(pos[0]));
+                throw new IllegalArgumentException("Unexpected token after complete expression: " + tokens.get(pos[0]));
             }
         }
     }
@@ -124,10 +140,14 @@ public class GatingExpression {
     // ── Public API ──────────────────────────────────────────────────────────
 
     /** @return true if this expression is empty (no markers) */
-    public boolean isEmpty() { return root == null; }
+    public boolean isEmpty() {
+        return root == null;
+    }
 
     /** @return the original expression string */
-    public String getExpression() { return expression; }
+    public String getExpression() {
+        return expression;
+    }
 
     /**
      * Evaluate the expression against per-marker boolean masks.
@@ -223,8 +243,7 @@ public class GatingExpression {
         }
         // Must be a marker name
         if (validMarkers != null && !validMarkers.contains(token)) {
-            throw new IllegalArgumentException("Unknown marker: " + token
-                    + ". Available: " + validMarkers);
+            throw new IllegalArgumentException("Unknown marker: " + token + ". Available: " + validMarkers);
         }
         pos[0]++;
         return new ItemNode(token);
@@ -232,9 +251,8 @@ public class GatingExpression {
 
     // ── Tree traversal helpers ──────────────────────────────────────────────
 
-    private void categorizeRecursive(Node node, List<String> mustHave,
-                                      List<String> orExpr, List<String> not,
-                                      boolean insideOr) {
+    private void categorizeRecursive(
+            Node node, List<String> mustHave, List<String> orExpr, List<String> not, boolean insideOr) {
         switch (node) {
             case ItemNode item -> {
                 if (insideOr) {
@@ -265,8 +283,14 @@ public class GatingExpression {
         switch (node) {
             case ItemNode item -> markers.add(item.name());
             case NotNode not -> collectMarkers(not.operand(), markers);
-            case AndNode and -> { collectMarkers(and.left(), markers); collectMarkers(and.right(), markers); }
-            case OrNode or -> { collectMarkers(or.left(), markers); collectMarkers(or.right(), markers); }
+            case AndNode and -> {
+                collectMarkers(and.left(), markers);
+                collectMarkers(and.right(), markers);
+            }
+            case OrNode or -> {
+                collectMarkers(or.left(), markers);
+                collectMarkers(or.right(), markers);
+            }
         }
     }
 }

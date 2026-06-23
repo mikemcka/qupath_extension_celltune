@@ -1,5 +1,13 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellPrediction;
@@ -11,15 +19,6 @@ import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.objects.hierarchy.events.PathObjectSelectionListener;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Controls the review queue.
@@ -55,6 +54,7 @@ public class ReviewController {
 
     /** When non-null/non-empty, navigation displays small training tiles instead of switching project images. */
     private final Map<String, TrainingTileExtractor.TilePrep> tilePreps;
+
     private final boolean tileMode;
     /** Currently-displayed tile ImageData (held so we can close it on swap). */
     private qupath.lib.images.ImageData<BufferedImage> currentTileImageData;
@@ -101,9 +101,7 @@ public class ReviewController {
     /**
      * Backward-compatible constructor for current-image review batches.
      */
-    public ReviewController(QuPathGUI qupath,
-                            List<String> cellIds,
-                            PopulationSet predictions) {
+    public ReviewController(QuPathGUI qupath, List<String> cellIds, PopulationSet predictions) {
         this(qupath, cellIds, predictions, Map.of(), Map.of(), null);
     }
 
@@ -115,21 +113,20 @@ public class ReviewController {
      * @param predictions prediction set containing sampled cells
      * @param cellImageMap optional mapping from cell ID to image name
      */
-    public ReviewController(QuPathGUI qupath,
-                            List<String> cellIds,
-                            PopulationSet predictions,
-                            Map<String, String> cellImageMap) {
+    public ReviewController(
+            QuPathGUI qupath, List<String> cellIds, PopulationSet predictions, Map<String, String> cellImageMap) {
         this(qupath, cellIds, predictions, cellImageMap, Map.of(), null);
     }
 
     /**
      * 5-arg constructor without sample-time annotation map.
      */
-    public ReviewController(QuPathGUI qupath,
-                            List<String> cellIds,
-                            PopulationSet predictions,
-                            Map<String, String> cellImageMap,
-                            Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
+    public ReviewController(
+            QuPathGUI qupath,
+            List<String> cellIds,
+            PopulationSet predictions,
+            Map<String, String> cellImageMap,
+            Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
         this(qupath, cellIds, predictions, cellImageMap, Map.of(), tilePreps);
     }
 
@@ -151,12 +148,13 @@ public class ReviewController {
      *                            {@link #getCurrentCellAnnotationNames()}.
      * @param tilePreps           optional pre-extracted training tiles, keyed by cellId
      */
-    public ReviewController(QuPathGUI qupath,
-                            List<String> cellIds,
-                            PopulationSet predictions,
-                            Map<String, String> cellImageMap,
-                            Map<String, List<String>> cellAnnotationMap,
-                            Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
+    public ReviewController(
+            QuPathGUI qupath,
+            List<String> cellIds,
+            PopulationSet predictions,
+            Map<String, String> cellImageMap,
+            Map<String, List<String>> cellAnnotationMap,
+            Map<String, TrainingTileExtractor.TilePrep> tilePreps) {
         this.qupath = qupath;
         this.predictions = predictions;
         this.outputLabels = new LabelStore("ReviewOutput");
@@ -184,7 +182,8 @@ public class ReviewController {
 
         if (qupath.getProject() != null) {
             @SuppressWarnings("unchecked")
-            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            var entries = (List<ProjectImageEntry<BufferedImage>>)
+                    (List<?>) qupath.getProject().getImageList();
             for (var entry : entries) {
                 if (entry != null && entry.getImageName() != null) {
                     entryByImageName.put(entry.getImageName(), entry);
@@ -240,8 +239,11 @@ public class ReviewController {
 
         ACTIVE_REVIEW_SESSIONS.incrementAndGet();
 
-        logger.info("Review queue: {} cells across {} image(s) ({} used default image mapping)",
-                reviewItems.size(), imageSet.size(), unresolvedImageCount);
+        logger.info(
+                "Review queue: {} cells across {} image(s) ({} used default image mapping)",
+                reviewItems.size(),
+                imageSet.size(),
+                unresolvedImageCount);
     }
 
     /**  true when at least one review session is open */
@@ -332,8 +334,12 @@ public class ReviewController {
             }
         }
         if (names.isEmpty()) {
-            logger.debug("No enclosing annotation for cell {} in image {} (centroid {},{})",
-                    cellId, getCurrentCellImageName(), cx, cy);
+            logger.debug(
+                    "No enclosing annotation for cell {} in image {} (centroid {},{})",
+                    cellId,
+                    getCurrentCellImageName(),
+                    cx,
+                    cy);
         }
         return names;
     }
@@ -432,13 +438,16 @@ public class ReviewController {
         if (selectedManualCellId != null) {
             selectedManualCellId = null;
             if (selectionChangedCallback != null) {
-                try { selectionChangedCallback.run(); } catch (Exception ignored) {}
+                try {
+                    selectionChangedCallback.run();
+                } catch (Exception ignored) {
+                }
             }
         }
     }
 
-    private void installTileSelectionListener(qupath.lib.images.ImageData<BufferedImage> tileData,
-                                              TrainingTileExtractor.TilePrep prep) {
+    private void installTileSelectionListener(
+            qupath.lib.images.ImageData<BufferedImage> tileData, TrainingTileExtractor.TilePrep prep) {
         uninstallTileSelectionListener();
         if (tileData == null || prep == null) return;
         var hierarchy = tileData.getHierarchy();
@@ -460,7 +469,10 @@ public class ReviewController {
                 if (!java.util.Objects.equals(newManual, selectedManualCellId)) {
                     selectedManualCellId = newManual;
                     if (selectionChangedCallback != null) {
-                        try { selectionChangedCallback.run(); } catch (Exception ignored) {}
+                        try {
+                            selectionChangedCallback.run();
+                        } catch (Exception ignored) {
+                        }
                     }
                 }
             });
@@ -472,8 +484,7 @@ public class ReviewController {
     private void uninstallTileSelectionListener() {
         if (tileSelectionListener != null && listenedHierarchy != null) {
             try {
-                listenedHierarchy.getSelectionModel()
-                        .removePathObjectSelectionListener(tileSelectionListener);
+                listenedHierarchy.getSelectionModel().removePathObjectSelectionListener(tileSelectionListener);
             } catch (Exception ignored) {
             }
         }
@@ -519,7 +530,10 @@ public class ReviewController {
             // Clear manual selection so subsequent clicks default back to the queue cell.
             selectedManualCellId = null;
             if (selectionChangedCallback != null) {
-                try { selectionChangedCallback.run(); } catch (Exception ignored) {}
+                try {
+                    selectionChangedCallback.run();
+                } catch (Exception ignored) {
+                }
             }
             return true; // stay on same queue item — never finishes from a manual label
         }
@@ -630,8 +644,12 @@ public class ReviewController {
         highlightOverlay.setTargetRoi(roi);
         viewer.repaint();
 
-        logger.debug("Navigated to cell {} in image '{}' ({}/{})",
-                item.cellId, item.imageName, currentIndex + 1, reviewItems.size());
+        logger.debug(
+                "Navigated to cell {} in image '{}' ({}/{})",
+                item.cellId,
+                item.imageName,
+                currentIndex + 1,
+                reviewItems.size());
     }
 
     /**
@@ -666,7 +684,10 @@ public class ReviewController {
             currentTileImageData = null;
             currentTileCellId = null;
             if (oldTile != null) {
-                try { oldTile.setChanged(false); } catch (Exception ignored) { }
+                try {
+                    oldTile.setChanged(false);
+                } catch (Exception ignored) {
+                }
             }
             try {
                 if (initialEntry != null) {
@@ -679,7 +700,10 @@ public class ReviewController {
                 logger.debug("Could not restore original image after tile review: {}", ex.getMessage());
             }
             if (oldTile != null) {
-                try { oldTile.close(); } catch (Exception ignored) { }
+                try {
+                    oldTile.close();
+                } catch (Exception ignored) {
+                }
             }
 
             // Remove any tile-derived project entries that QuPath's ProjectBrowser
@@ -846,7 +870,10 @@ public class ReviewController {
             // Mark the prior ImageData clean so QuPath does not prompt.
             var prior = viewer.getImageData();
             if (prior != null) {
-                try { prior.setChanged(false); } catch (Exception ignored) { }
+                try {
+                    prior.setChanged(false);
+                } catch (Exception ignored) {
+                }
             }
             // Detach selection listener from the prior tile's hierarchy before
             // QuPath disposes it.
@@ -862,7 +889,10 @@ public class ReviewController {
         currentTileImageData = newData;
         currentTileCellId = item.cellId;
         if (oldTile != null && oldTile != newData) {
-            try { oldTile.close(); } catch (Exception ignored) { }
+            try {
+                oldTile.close();
+            } catch (Exception ignored) {
+            }
         }
 
         // Attach selection listener so clicks on context cells inside the new

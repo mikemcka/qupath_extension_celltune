@@ -1,5 +1,6 @@
 package qupath.ext.celltune.ui;
 
+import java.util.*;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -15,8 +16,6 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import qupath.ext.celltune.classifier.DualModelClassifier.ShapResult;
 
-import java.util.*;
-
 /**
  * JavaFX dialog that renders per-class feature importance as a horizontal bar chart.
  * <p>
@@ -31,29 +30,29 @@ import java.util.*;
  */
 public class FeatureImportanceView {
 
-    private static final int MAX_BARS     = 10;
-    private static final int BAR_HEIGHT   = 22;
-    private static final int BAR_GAP      = 4;
-    private static final int RIGHT_MARGIN = 70;    // space for value labels
-    private static final int TOP_MARGIN   = 20;
+    private static final int MAX_BARS = 10;
+    private static final int BAR_HEIGHT = 22;
+    private static final int BAR_GAP = 4;
+    private static final int RIGHT_MARGIN = 70; // space for value labels
+    private static final int TOP_MARGIN = 20;
     private static final int BOTTOM_MARGIN = 32;
     private static final int MIN_CHART_WIDTH = 200;
     private static final int MIN_LEFT_MARGIN = 80;
-    private static final int LEFT_PADDING = 12;    // gap between name and bar
+    private static final int LEFT_PADDING = 12; // gap between name and bar
 
-    private static final Font BAR_FONT  = Font.font("SansSerif", 11);
+    private static final Font BAR_FONT = Font.font("SansSerif", 11);
     private static final Font AXIS_FONT = Font.font("SansSerif", 10);
 
     // One colour per class (wraps if more than 8 classes)
     private static final Color[] CLASS_COLORS = {
-            Color.rgb( 70, 130, 180),  // steel blue
-            Color.rgb(210,  70,  70),  // red
-            Color.rgb( 55, 155,  55),  // green
-            Color.rgb(210, 140,  25),  // amber
-            Color.rgb(145,  75, 195),  // purple
-            Color.rgb( 30, 175, 175),  // teal
-            Color.rgb(215, 115,  45),  // orange
-            Color.rgb(110, 110, 110),  // gray
+        Color.rgb(70, 130, 180), // steel blue
+        Color.rgb(210, 70, 70), // red
+        Color.rgb(55, 155, 55), // green
+        Color.rgb(210, 140, 25), // amber
+        Color.rgb(145, 75, 195), // purple
+        Color.rgb(30, 175, 175), // teal
+        Color.rgb(215, 115, 45), // orange
+        Color.rgb(110, 110, 110), // gray
     };
 
     private final Stage stage;
@@ -71,7 +70,7 @@ public class FeatureImportanceView {
     public FeatureImportanceView(Stage owner, ShapResult shapResult) {
         this.shapResult = shapResult;
 
-        int nBars       = Math.min(MAX_BARS, shapResult.featureNames().size());
+        int nBars = Math.min(MAX_BARS, shapResult.featureNames().size());
         int canvasHeight = TOP_MARGIN + nBars * (BAR_HEIGHT + BAR_GAP) + BOTTOM_MARGIN;
 
         canvas = new Canvas(700, canvasHeight);
@@ -98,7 +97,8 @@ public class FeatureImportanceView {
         classCombo.setValue(shapResult.classNames().get(0));
         // Conservative starting cap; refined dynamically when the popup opens
         // so the dropdown never extends past the bottom of the screen.
-        classCombo.setVisibleRowCount(Math.min(8, Math.max(3, shapResult.classNames().size())));
+        classCombo.setVisibleRowCount(
+                Math.min(8, Math.max(3, shapResult.classNames().size())));
         classCombo.showingProperty().addListener((obs, was, isNow) -> {
             if (!isNow) return;
             try {
@@ -125,8 +125,7 @@ public class FeatureImportanceView {
         topRow.setPadding(new Insets(8, 10, 4, 10));
 
         // ── Subtitle ────────────────────────────────────────────────────────
-        Label subtitle = new Label(
-                "Top features by mean |SHAP| value  ·  averaged across active models");
+        Label subtitle = new Label("Top features by mean |SHAP| value  ·  averaged across active models");
         subtitle.setStyle("-fx-font-size: 10px; -fx-text-fill: #666;");
         HBox subtitleRow = new HBox(subtitle);
         subtitleRow.setPadding(new Insets(0, 10, 6, 10));
@@ -193,16 +192,16 @@ public class FeatureImportanceView {
         gc.setFill(Color.WHITE);
         gc.fillRect(0, 0, w, h);
 
-        double[] importance  = shapResult.meanAbsShap()[c];
-        List<String> names   = shapResult.featureNames();
-        int nFeatures        = names.size();
+        double[] importance = shapResult.meanAbsShap()[c];
+        List<String> names = shapResult.featureNames();
+        int nFeatures = names.size();
 
         // Sort by importance descending
         Integer[] order = new Integer[nFeatures];
         for (int i = 0; i < nFeatures; i++) order[i] = i;
         Arrays.sort(order, (a, b) -> Double.compare(importance[b], importance[a]));
 
-        int    nBars  = Math.min(MAX_BARS, nFeatures);
+        int nBars = Math.min(MAX_BARS, nFeatures);
         double maxVal = importance[order[0]];
         if (maxVal <= 0) maxVal = 1.0;
 
@@ -222,12 +221,12 @@ public class FeatureImportanceView {
         Color barColor = CLASS_COLORS[c % CLASS_COLORS.length];
 
         for (int i = 0; i < nBars; i++) {
-            int    fIdx  = order[i];
-            String name  = names.get(fIdx);
-            double val   = importance[fIdx];
+            int fIdx = order[i];
+            String name = names.get(fIdx);
+            double val = importance[fIdx];
             double ratio = val / maxVal;
 
-            double y      = TOP_MARGIN + i * (BAR_HEIGHT + BAR_GAP);
+            double y = TOP_MARGIN + i * (BAR_HEIGHT + BAR_GAP);
             double barLen = ratio * chartWidth;
 
             // Alternating row background
@@ -268,7 +267,7 @@ public class FeatureImportanceView {
         // Y-axis rule
         gc.setStroke(Color.rgb(180, 180, 180));
         gc.setLineWidth(1);
-        double axisTop    = TOP_MARGIN;
+        double axisTop = TOP_MARGIN;
         double axisBottom = TOP_MARGIN + nBars * (BAR_HEIGHT + BAR_GAP);
         gc.strokeLine(leftMargin, axisTop, leftMargin, axisBottom);
 
@@ -276,9 +275,8 @@ public class FeatureImportanceView {
         gc.setFill(Color.rgb(120, 120, 120));
         gc.setFont(AXIS_FONT);
         gc.setTextAlign(TextAlignment.CENTER);
-        gc.fillText("mean |SHAP value|  (average impact on model output)",
-                leftMargin + chartWidth / 2.0,
-                axisBottom + 20);
+        gc.fillText(
+                "mean |SHAP value|  (average impact on model output)", leftMargin + chartWidth / 2.0, axisBottom + 20);
     }
 
     /** Truncate {@code s} with an ellipsis so it fits within {@code maxWidth}. */

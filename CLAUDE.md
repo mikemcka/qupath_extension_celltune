@@ -55,6 +55,19 @@ SpotBugs is wired as a **reporting-only** task (`ignoreFailures = true`) — it 
 
 Treat findings as a backlog to work down, not a gate. Don't add it as a failing `check` dependency without first triaging the existing baseline.
 
+### Formatting (Spotless + palantir-java-format)
+
+Code formatting is enforced by **Spotless** using **palantir-java-format** `2.93.0` (4-space indent, 120-col lines — chosen to match the existing style). Unlike SpotBugs, it is **blocking** (`isEnforceCheck = true`): `spotlessCheck` is wired into `check`, so an unformatted tree fails `./gradlew check` (and CI).
+
+```bash
+./gradlew spotlessApply        # reformat all sources in place (run this before committing)
+./gradlew spotlessCheck        # verify formatting without editing (exits non-zero on drift)
+```
+
+Steps applied: `palantirJavaFormat` + `removeUnusedImports`. Set `isEnforceCheck = false` in `build.gradle.kts` to make formatting reporting-only again.
+
+> **JDK 25 note:** the palantir-java-format version is pinned to `2.93.0` deliberately — older releases (e.g. 2.50.0) call an internal javac method (`Log$DeferredDiagnosticHandler.getDiagnostics()`) whose signature changed in JDK 25 and crash with `NoSuchMethodError`. Don't downgrade below a JDK-25-compatible release.
+
 ## Architecture
 
 Entry point: `src/main/java/qupath/ext/celltune/CellTuneExtension.java` — registers menus, docks the sidebar panel, and manages project-level state. Data flows as the active-learning loop: seed labels → train dual classifiers → inspect inter-model confusion → review disagreement cells → merge labels → retrain.

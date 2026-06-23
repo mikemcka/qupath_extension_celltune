@@ -1,5 +1,14 @@
 package qupath.ext.celltune.classifier;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.util.ArrayList;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import smile.base.cart.SplitRule;
@@ -10,16 +19,6 @@ import smile.data.measure.NominalScale;
 import smile.data.type.DataTypes;
 import smile.data.type.StructField;
 import smile.data.vector.IntVector;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Random Forest classifier backed by the SMILE library
@@ -40,6 +39,7 @@ public class RandomForestModel {
 
     /** Magic header identifying the SMILE-backed serialization format (v1). */
     private static final int MAGIC = 0x52465331; // "RFS1"
+
     private static final int FORMAT_VERSION = 1;
 
     /** Minimum samples in a leaf node (matches the former implementation). */
@@ -75,10 +75,17 @@ public class RandomForestModel {
      *       replacement, the standard bootstrap)</li>
      * </ul>
      */
-    public void train(float[] flatData, float[] labels,
-                      int nSamples, int nFeatures,
-                      List<String> classNames, List<String> featureNames,
-                      int numRounds, int maxDepth, float eta, float subsample)
+    public void train(
+            float[] flatData,
+            float[] labels,
+            int nSamples,
+            int nFeatures,
+            List<String> classNames,
+            List<String> featureNames,
+            int numRounds,
+            int maxDepth,
+            float eta,
+            float subsample)
             throws Exception {
 
         this.nClasses = classNames.size();
@@ -98,11 +105,8 @@ public class RandomForestModel {
         // a fixed-length posteriori in our class order, even if some class is
         // absent from the training labels.
         String[] levels = this.classNames.toArray(new String[0]);
-        DataFrame df = DataFrame.of(x, featureCols).merge(
-                IntVector.of(
-                        new StructField("class", DataTypes.IntegerType,
-                                new NominalScale(levels)),
-                        y));
+        DataFrame df = DataFrame.of(x, featureCols)
+                .merge(IntVector.of(new StructField("class", DataTypes.IntegerType, new NominalScale(levels)), y));
         Formula formula = Formula.lhs("class");
 
         int mtry = Math.max(1, (int) Math.sqrt(nFeatures));
@@ -112,10 +116,15 @@ public class RandomForestModel {
         logger.info(
                 "Random Forest (SMILE) training: {} trees, max_depth={}, mtry={}, "
                         + "{} samples, {} features, {} classes",
-                nTrees, maxDepth, mtry, nSamples, nFeatures, nClasses);
+                nTrees,
+                maxDepth,
+                mtry,
+                nSamples,
+                nFeatures,
+                nClasses);
 
-        this.forest = RandomForest.fit(formula, df, numRounds, mtry,
-                SplitRule.ENTROPY, maxDepth, maxNodes, NODE_SIZE, subsampleRate);
+        this.forest = RandomForest.fit(
+                formula, df, numRounds, mtry, SplitRule.ENTROPY, maxDepth, maxNodes, NODE_SIZE, subsampleRate);
 
         this.lastDevice = "CPU";
         logger.info("Random Forest training complete ({} trees)", nTrees);
@@ -136,8 +145,7 @@ public class RandomForestModel {
      * @param nFeatures number of features
      * @return probability matrix [nSamples][nClasses]
      */
-    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures)
-            throws Exception {
+    public float[][] predictProba(float[] flatData, int nSamples, int nFeatures) throws Exception {
         if (forest == null) {
             throw new IllegalStateException("Random Forest model is not trained.");
         }
@@ -158,8 +166,7 @@ public class RandomForestModel {
     /**
      * Predict the single best class index for each sample.
      */
-    public int[] predict(float[] flatData, int nSamples, int nFeatures)
-            throws Exception {
+    public int[] predict(float[] flatData, int nSamples, int nFeatures) throws Exception {
         float[][] probs = predictProba(flatData, nSamples, nFeatures);
         int[] preds = new int[nSamples];
         for (int i = 0; i < nSamples; i++) {
@@ -219,16 +226,14 @@ public class RandomForestModel {
      * @throws IOException if the bytes are in the legacy (pre-SMILE) format, which
      *                     cannot be migrated — such models must be retrained.
      */
-    public void loadFromBytes(byte[] bytes, List<String> classNames, List<String> featureNames)
-            throws Exception {
+    public void loadFromBytes(byte[] bytes, List<String> classNames, List<String> featureNames) throws Exception {
         DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
 
         int magic = in.readInt();
         if (magic != MAGIC) {
-            throw new IOException(
-                    "Saved Random Forest model uses the legacy format and is no "
-                            + "longer compatible after the SMILE upgrade. Please "
-                            + "retrain the classifier.");
+            throw new IOException("Saved Random Forest model uses the legacy format and is no "
+                    + "longer compatible after the SMILE upgrade. Please "
+                    + "retrain the classifier.");
         }
         in.readInt(); // format version (only v1 today)
 
@@ -253,8 +258,7 @@ public class RandomForestModel {
         int forestLen = in.readInt();
         byte[] forestBytes = new byte[forestLen];
         in.readFully(forestBytes);
-        try (ObjectInputStream ois =
-                     new ObjectInputStream(new ByteArrayInputStream(forestBytes))) {
+        try (ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(forestBytes))) {
             this.forest = (RandomForest) ois.readObject();
         }
     }

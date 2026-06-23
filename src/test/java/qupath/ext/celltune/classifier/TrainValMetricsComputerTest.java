@@ -1,14 +1,13 @@
 package qupath.ext.celltune.classifier;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests the {@link TrainValMetricsComputer} orchestration with stub trainers and a
@@ -23,7 +22,7 @@ class TrainValMetricsComputerTest {
     /** Two features per row; feature 0 holds the true class index. */
     private static List<float[]> rowsEncoding(List<Integer> labels) {
         List<float[]> rows = new ArrayList<>();
-        for (int lbl : labels) rows.add(new float[]{lbl, 0f});
+        for (int lbl : labels) rows.add(new float[] {lbl, 0f});
         return rows;
     }
 
@@ -47,10 +46,20 @@ class TrainValMetricsComputerTest {
         TrainValMetricsComputer.ModelTrainer trainer = (data, lbls, n) -> trainCalls.incrementAndGet();
 
         var result = TrainValMetricsComputer.compute(
-                rows, labels, labels.size(), 2, 2, ResamplingStrategy.NONE,
-                trainer, perfectPredictor(2), "Model 1 (XGBOOST)",
-                trainer, perfectPredictor(2), "Model 2 (LIGHTGBM)",
-                CLASSES, s -> {});
+                rows,
+                labels,
+                labels.size(),
+                2,
+                2,
+                ResamplingStrategy.NONE,
+                trainer,
+                perfectPredictor(2),
+                "Model 1 (XGBOOST)",
+                trainer,
+                perfectPredictor(2),
+                "Model 2 (LIGHTGBM)",
+                CLASSES,
+                s -> {});
 
         assertNotNull(result.model1Train());
         assertNotNull(result.model1Val());
@@ -73,18 +82,27 @@ class TrainValMetricsComputerTest {
         TrainValMetricsComputer.ModelTrainer trainer = (data, lbls, n) -> trainCalls.incrementAndGet();
 
         var result = TrainValMetricsComputer.compute(
-                rows, labels, labels.size(), 2, 2, ResamplingStrategy.NONE,
-                trainer, perfectPredictor(2), "M1",
-                trainer, perfectPredictor(2), "M2",
-                CLASSES, log::add);
+                rows,
+                labels,
+                labels.size(),
+                2,
+                2,
+                ResamplingStrategy.NONE,
+                trainer,
+                perfectPredictor(2),
+                "M1",
+                trainer,
+                perfectPredictor(2),
+                "M2",
+                CLASSES,
+                log::add);
 
         assertNull(result.model1Train());
         assertNull(result.model1Val());
         assertNull(result.model2Train());
         assertNull(result.model2Val());
         assertEquals(0, trainCalls.get(), "no training when the split is degenerate");
-        assertTrue(log.stream().anyMatch(m -> m.contains("Skipping metrics")),
-                "should log that metrics were skipped");
+        assertTrue(log.stream().anyMatch(m -> m.contains("Skipping metrics")), "should log that metrics were skipped");
     }
 
     @Test

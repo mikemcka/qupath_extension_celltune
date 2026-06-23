@@ -34,8 +34,7 @@ public final class FeatureMappingService {
      * @return an array of length {@code targetFeatureNames.size()} where entry {@code i}
      *         is the source index for target column {@code i}, or {@code -1} if absent
      */
-    public static int[] buildFeatureIndexMap(List<String> sourceFeatureNames,
-                                             List<String> targetFeatureNames) {
+    public static int[] buildFeatureIndexMap(List<String> sourceFeatureNames, List<String> targetFeatureNames) {
         Map<String, Integer> sourceByName = new HashMap<>();
         for (int i = 0; i < sourceFeatureNames.size(); i++) {
             sourceByName.put(sourceFeatureNames.get(i).strip().toLowerCase(Locale.ROOT), i);

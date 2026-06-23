@@ -24,15 +24,16 @@ public class ClassifierState {
     /**
      * Full constructor supporting all model types.
      */
-    public ClassifierState(String name,
-                           List<String> featureNames,
-                           List<String> classNames,
-                           byte[] xgboostBytes,
-                           byte[] lightgbmBytes,
-                           byte[] rfModel1Bytes,
-                           byte[] rfModel2Bytes,
-                           ModelType model1Type,
-                           ModelType model2Type) {
+    public ClassifierState(
+            String name,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes,
+            byte[] rfModel1Bytes,
+            byte[] rfModel2Bytes,
+            ModelType model1Type,
+            ModelType model2Type) {
         this.name = name;
         this.featureNames = List.copyOf(featureNames);
         this.classNames = List.copyOf(classNames);
@@ -47,37 +48,74 @@ public class ClassifierState {
     /**
      * Backward-compatible constructor (XGBoost + LightGBM only).
      */
-    public ClassifierState(String name,
-                           List<String> featureNames,
-                           List<String> classNames,
-                           byte[] xgboostBytes,
-                           byte[] lightgbmBytes) {
-        this(name, featureNames, classNames, xgboostBytes, lightgbmBytes,
-                null, null, ModelType.XGBOOST, ModelType.LIGHTGBM);
+    public ClassifierState(
+            String name,
+            List<String> featureNames,
+            List<String> classNames,
+            byte[] xgboostBytes,
+            byte[] lightgbmBytes) {
+        this(
+                name,
+                featureNames,
+                classNames,
+                xgboostBytes,
+                lightgbmBytes,
+                null,
+                null,
+                ModelType.XGBOOST,
+                ModelType.LIGHTGBM);
     }
 
-    public String getName()              { return name; }
-    public List<String> getFeatureNames() { return featureNames; }
-    public List<String> getClassNames()  { return classNames; }
-    public byte[] getXgboostBytes()      { return xgboostBytes != null ? xgboostBytes.clone() : null; }
-    public byte[] getLightgbmBytes()     { return lightgbmBytes != null ? lightgbmBytes.clone() : null; }
-    public byte[] getRfModel1Bytes()     { return rfModel1Bytes != null ? rfModel1Bytes.clone() : null; }
-    public byte[] getRfModel2Bytes()     { return rfModel2Bytes != null ? rfModel2Bytes.clone() : null; }
-    public ModelType getModel1Type()     { return model1Type; }
-    public ModelType getModel2Type()     { return model2Type; }
+    public String getName() {
+        return name;
+    }
+
+    public List<String> getFeatureNames() {
+        return featureNames;
+    }
+
+    public List<String> getClassNames() {
+        return classNames;
+    }
+
+    public byte[] getXgboostBytes() {
+        return xgboostBytes != null ? xgboostBytes.clone() : null;
+    }
+
+    public byte[] getLightgbmBytes() {
+        return lightgbmBytes != null ? lightgbmBytes.clone() : null;
+    }
+
+    public byte[] getRfModel1Bytes() {
+        return rfModel1Bytes != null ? rfModel1Bytes.clone() : null;
+    }
+
+    public byte[] getRfModel2Bytes() {
+        return rfModel2Bytes != null ? rfModel2Bytes.clone() : null;
+    }
+
+    public ModelType getModel1Type() {
+        return model1Type;
+    }
+
+    public ModelType getModel2Type() {
+        return model2Type;
+    }
 
     /** @return true if both models have been trained and serialised */
     public boolean isComplete() {
-        boolean m1 = switch (model1Type) {
-            case XGBOOST -> xgboostBytes != null;
-            case LIGHTGBM -> lightgbmBytes != null;
-            case RANDOM_FOREST -> rfModel1Bytes != null;
-        };
-        boolean m2 = switch (model2Type) {
-            case XGBOOST -> xgboostBytes != null;
-            case LIGHTGBM -> lightgbmBytes != null;
-            case RANDOM_FOREST -> rfModel2Bytes != null;
-        };
+        boolean m1 =
+                switch (model1Type) {
+                    case XGBOOST -> xgboostBytes != null;
+                    case LIGHTGBM -> lightgbmBytes != null;
+                    case RANDOM_FOREST -> rfModel1Bytes != null;
+                };
+        boolean m2 =
+                switch (model2Type) {
+                    case XGBOOST -> xgboostBytes != null;
+                    case LIGHTGBM -> lightgbmBytes != null;
+                    case RANDOM_FOREST -> rfModel2Bytes != null;
+                };
         return m1 && m2;
     }
 

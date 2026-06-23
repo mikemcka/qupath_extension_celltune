@@ -1,11 +1,10 @@
 package qupath.ext.celltune.model;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.LinkedHashMap;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class CohortAnomalyAnalyzerTest {
 
@@ -14,8 +13,7 @@ class CohortAnomalyAnalyzerTest {
         var inputs = List.of(
                 input("img-rare", 1000, 120, counts("NK", 60, "T", 940)),
                 input("img-b", 5000, 40, counts("T", 5000)),
-                input("img-c", 5000, 35, counts("T", 5000))
-        );
+                input("img-c", 5000, 35, counts("T", 5000)));
 
         var report = CohortAnomalyAnalyzer.analyze(inputs);
         var byImage = report.byImageName();
@@ -42,8 +40,7 @@ class CohortAnomalyAnalyzerTest {
                 input("img-4", 1000, 42, counts("A", 505, "B", 495)),
                 input("img-5", 1000, 39, counts("A", 498, "B", 502)),
                 input("img-6", 1000, 41, counts("A", 503, "B", 497)),
-                input("img-outlier", 1000, 700, counts("A", 980, "B", 20))
-        );
+                input("img-outlier", 1000, 700, counts("A", 980, "B", 20)));
 
         var report = CohortAnomalyAnalyzer.analyze(inputs);
         assertFalse(report.images().isEmpty());
@@ -62,8 +59,7 @@ class CohortAnomalyAnalyzerTest {
                 input("img-a", 1000, 50, counts("A", 500, "B", 500)),
                 input("img-b", 1000, 50, counts("A", 500, "B", 500)),
                 input("img-c", 1000, 50, counts("A", 500, "B", 500)),
-                input("img-d", 1000, 50, counts("A", 500, "B", 500))
-        );
+                input("img-d", 1000, 50, counts("A", 500, "B", 500)));
 
         var report = CohortAnomalyAnalyzer.analyze(inputs);
         assertEquals(4, report.images().size());
@@ -76,10 +72,7 @@ class CohortAnomalyAnalyzerTest {
     }
 
     private static CohortAnomalyReport.ImageInput input(
-            String imageName,
-            long predicted,
-            long disagreements,
-            LinkedHashMap<String, Long> classCounts) {
+            String imageName, long predicted, long disagreements, LinkedHashMap<String, Long> classCounts) {
         return new CohortAnomalyReport.ImageInput(imageName, predicted, disagreements, classCounts);
     }
 

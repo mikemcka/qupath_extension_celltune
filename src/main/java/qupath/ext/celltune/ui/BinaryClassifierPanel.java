@@ -1,5 +1,7 @@
 package qupath.ext.celltune.ui;
 
+import java.util.List;
+import java.util.function.Consumer;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -13,9 +15,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import qupath.ext.celltune.io.BinaryClassifierRegistry;
 import qupath.fx.dialogs.Dialogs;
-
-import java.util.List;
-import java.util.function.Consumer;
 
 /**
  * A {@link VBox} dialog panel for managing per-marker binary classifiers.
@@ -58,13 +57,15 @@ public class BinaryClassifierPanel extends VBox {
 
         // ── Action buttons ─────────────────────────────────────────────────────
         Button createButton = new Button("Create...");
-        Button openButton   = new Button("Open");
+        Button openButton = new Button("Open");
         Button deleteButton = new Button("Delete");
 
-        openButton.disableProperty().bind(
-                markerList.getSelectionModel().selectedItemProperty().isNull());
-        deleteButton.disableProperty().bind(
-                markerList.getSelectionModel().selectedItemProperty().isNull());
+        openButton
+                .disableProperty()
+                .bind(markerList.getSelectionModel().selectedItemProperty().isNull());
+        deleteButton
+                .disableProperty()
+                .bind(markerList.getSelectionModel().selectedItemProperty().isNull());
 
         createButton.setOnAction(e -> handleCreate());
         openButton.setOnAction(e -> handleOpen());
@@ -85,15 +86,7 @@ public class BinaryClassifierPanel extends VBox {
             if (onExitBinaryMode != null) onExitBinaryMode.run();
         });
 
-        getChildren().addAll(
-                title,
-                subtitle,
-                markerList,
-                buttonBar,
-                new Separator(),
-                activeBannerLabel,
-                exitButton
-        );
+        getChildren().addAll(title, subtitle, markerList, buttonBar, new Separator(), activeBannerLabel, exitButton);
     }
 
     // ── Public API ─────────────────────────────────────────────────────────────
@@ -153,8 +146,7 @@ public class BinaryClassifierPanel extends VBox {
                 }
                 if (onRegisterMarker != null) onRegisterMarker.accept(safe);
             } catch (IllegalArgumentException ex) {
-                Dialogs.showErrorMessage("Binary Classifiers",
-                        "Invalid marker name: " + ex.getMessage());
+                Dialogs.showErrorMessage("Binary Classifiers", "Invalid marker name: " + ex.getMessage());
             }
         });
     }
@@ -175,8 +167,8 @@ public class BinaryClassifierPanel extends VBox {
     private void handleDelete() {
         String selected = markerList.getSelectionModel().getSelectedItem();
         if (selected == null) return;
-        boolean confirm = Dialogs.showConfirmDialog("Delete Binary Classifier",
-                "Delete binary classifier '" + selected + "'? This cannot be undone.");
+        boolean confirm = Dialogs.showConfirmDialog(
+                "Delete Binary Classifier", "Delete binary classifier '" + selected + "'? This cannot be undone.");
         if (confirm) {
             markerNames.remove(selected);
             if (onDeleteMarker != null) onDeleteMarker.accept(selected);

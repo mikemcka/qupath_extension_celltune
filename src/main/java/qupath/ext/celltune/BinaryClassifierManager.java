@@ -1,5 +1,12 @@
 package qupath.ext.celltune;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.classifier.ClassifierState;
@@ -12,14 +19,6 @@ import qupath.ext.celltune.ui.BinaryClassifierPanel;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.Project;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * Owns the <b>binary-classifier mode</b> session state and transitions, lifted out of
@@ -47,18 +46,31 @@ final class BinaryClassifierManager {
      */
     interface Host {
         LabelStore getLabelStore();
+
         void setLabelStore(LabelStore labelStore);
+
         DualModelClassifier getClassifier();
+
         void setClassifier(DualModelClassifier classifier);
+
         List<GroundTruthIO.TrainingRow> getImportedTrainingRows();
+
         void setImportedTrainingRows(List<GroundTruthIO.TrainingRow> rows);
+
         List<String> getImportedTrainingFeatureNames();
+
         void setImportedTrainingFeatureNames(List<String> featureNames);
+
         String getActiveBinaryMarker();
+
         void setActiveBinaryMarker(String marker);
+
         List<String> getActiveBinaryClassNames();
+
         void setActiveBinaryClassNames(List<String> classNames);
+
         void syncPanelState();
+
         void selectAndExpandDockPanel(QuPathGUI qupath);
     }
 
@@ -152,8 +164,9 @@ final class BinaryClassifierManager {
             preBinaryClassifier = host.getClassifier();
             preBinaryImportedTrainingRows =
                     host.getImportedTrainingRows() == null ? null : new ArrayList<>(host.getImportedTrainingRows());
-            preBinaryImportedTrainingFeatureNames =
-                    host.getImportedTrainingFeatureNames() == null ? null : new ArrayList<>(host.getImportedTrainingFeatureNames());
+            preBinaryImportedTrainingFeatureNames = host.getImportedTrainingFeatureNames() == null
+                    ? null
+                    : new ArrayList<>(host.getImportedTrainingFeatureNames());
         }
 
         // Load binary marker's labels
@@ -168,9 +181,10 @@ final class BinaryClassifierManager {
         host.setClassifier(null);
         try {
             ProjectStateManager.SavedState savedState = ProjectStateManager.loadBinaryState(project, markerName);
-            if (savedState != null && (savedState.xgboostModelBase64 != null
-                    || savedState.lightgbmModelBase64 != null
-                    || savedState.rfModel1Base64 != null)) {
+            if (savedState != null
+                    && (savedState.xgboostModelBase64 != null
+                            || savedState.lightgbmModelBase64 != null
+                            || savedState.rfModel1Base64 != null)) {
                 var cs = new ClassifierState(
                         savedState.name,
                         savedState.featureNames,
@@ -198,8 +212,10 @@ final class BinaryClassifierManager {
             if (imported != null) {
                 host.setImportedTrainingFeatureNames(new ArrayList<>(imported.featureNames()));
                 host.setImportedTrainingRows(new ArrayList<>(imported.rows()));
-                logger.info("[CellTune] Loaded binary imported training rows for '{}' ({} rows)",
-                        markerName, imported.rows().size());
+                logger.info(
+                        "[CellTune] Loaded binary imported training rows for '{}' ({} rows)",
+                        markerName,
+                        imported.rows().size());
             } else {
                 host.setImportedTrainingFeatureNames(null);
                 host.setImportedTrainingRows(null);
@@ -247,13 +263,15 @@ final class BinaryClassifierManager {
         if (labelStore != null && labelStore.size() > 0) {
             int removed = labelStore.retainClasses(canonical);
             if (removed > 0) {
-                logger.info("[CellTune] Pruned {} foreign-class labels from binary store '{}' on entry",
-                        removed, markerName);
+                logger.info(
+                        "[CellTune] Pruned {} foreign-class labels from binary store '{}' on entry",
+                        removed,
+                        markerName);
                 try {
                     ProjectStateManager.saveBinaryLabels(project, markerName, labelStore);
                 } catch (IOException ex) {
-                    logger.warn("Failed to persist self-healed binary labels for '{}': {}",
-                            markerName, ex.getMessage());
+                    logger.warn(
+                            "Failed to persist self-healed binary labels for '{}': {}", markerName, ex.getMessage());
                 }
                 // Also scrub every per-image label file for this marker so that
                 // disk state matches the now-cleaned in-memory state. Without
@@ -264,8 +282,10 @@ final class BinaryClassifierManager {
         }
 
         host.syncPanelState();
-        logger.info("[CellTune] Entered binary mode for marker '{}' (classes: {})",
-                markerName, host.getActiveBinaryClassNames());
+        logger.info(
+                "[CellTune] Entered binary mode for marker '{}' (classes: {})",
+                markerName,
+                host.getActiveBinaryClassNames());
 
         // Select and expand the docked classification panel for immediate use
         host.selectAndExpandDockPanel(qupath);
@@ -320,9 +340,7 @@ final class BinaryClassifierManager {
      * that become empty are deleted. Errors on individual files are logged and
      * do not abort the scrub.
      */
-    private static void scrubBinaryPerImageLabels(Project<?> project,
-                                                  String markerName,
-                                                  Set<String> allowedClasses) {
+    private static void scrubBinaryPerImageLabels(Project<?> project, String markerName, Set<String> allowedClasses) {
         if (project == null || markerName == null || allowedClasses == null || allowedClasses.isEmpty()) return;
         try {
             var files = ProjectStateManager.listImageLabelFiles(project, markerName);
@@ -348,12 +366,17 @@ final class BinaryClassifierManager {
                 }
             }
             if (totalRemoved > 0) {
-                logger.info("[CellTune] Scrubbed {} foreign-class labels from {} per-image file(s) for binary marker '{}'",
-                        totalRemoved, filesScrubbed, markerName);
+                logger.info(
+                        "[CellTune] Scrubbed {} foreign-class labels from {} per-image file(s) for binary marker '{}'",
+                        totalRemoved,
+                        filesScrubbed,
+                        markerName);
             }
         } catch (Exception ex) {
-            logger.warn("Failed to enumerate per-image label files for binary marker '{}': {}",
-                    markerName, ex.getMessage());
+            logger.warn(
+                    "Failed to enumerate per-image label files for binary marker '{}': {}",
+                    markerName,
+                    ex.getMessage());
         }
     }
 }

@@ -1,5 +1,10 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -18,14 +23,7 @@ import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
-import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.util.*;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
  * Main classifier sidebar panel that collects labels, trains both models,
@@ -36,8 +34,7 @@ import java.util.stream.Collectors;
  */
 public class ClassificationPanel extends VBox {
 
-    private static final ResourceBundle STRINGS =
-            ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
+    private static final ResourceBundle STRINGS = ResourceBundle.getBundle("qupath.ext.celltune.ui.strings");
 
     private final QuPathGUI qupath;
 
@@ -74,8 +71,7 @@ public class ClassificationPanel extends VBox {
     private final Button featureImportanceButton = new Button("Feature Importance...");
     private Runnable onFeatureImportance;
     private final Button reviewButton = new Button();
-    private final CheckBox currentImageOnlyCheckBox =
-            new CheckBox("Sample current image only");
+    private final CheckBox currentImageOnlyCheckBox = new CheckBox("Sample current image only");
     private final TextField annotationKeywordField = new TextField();
     private final CheckBox showFeatureImportanceCheckBox =
             new CheckBox("Show top 10 feature importance after training");
@@ -96,8 +92,7 @@ public class ClassificationPanel extends VBox {
     private final ComboBox<ModelType> model2Combo = new ComboBox<>();
     private final CheckBox autoTuneCheckBox = new CheckBox("Auto-tune hyperparameters");
     private final CheckBox earlyStopCheckBox = new CheckBox("Early stopping");
-    private final CheckBox autoPruneCheckBox =
-            new CheckBox("Auto-prune features (drop near-constant & redundant)");
+    private final CheckBox autoPruneCheckBox = new CheckBox("Auto-prune features (drop near-constant & redundant)");
     private final PopulationPanel populationPanel = new PopulationPanel();
 
     // ── Binary mode banner (hidden by default) ──
@@ -130,13 +125,19 @@ public class ClassificationPanel extends VBox {
         binaryBannerLabel.setManaged(false);
         exitBinaryButton.setVisible(false);
         exitBinaryButton.setManaged(false);
-        exitBinaryButton.setOnAction(e -> { if (onExitBinaryMode != null) onExitBinaryMode.run(); });
+        exitBinaryButton.setOnAction(e -> {
+            if (onExitBinaryMode != null) onExitBinaryMode.run();
+        });
         applyToImagesButton.setVisible(true);
         applyToImagesButton.setManaged(true);
         applyToImagesButton.setDisable(false);
-        applyToImagesButton.setOnAction(e -> { if (onApplyToImages != null) onApplyToImages.run(); });
+        applyToImagesButton.setOnAction(e -> {
+            if (onApplyToImages != null) onApplyToImages.run();
+        });
         manualLabelButton.setMaxWidth(Double.MAX_VALUE);
-        manualLabelButton.setOnAction(e -> { if (onManualLabelMode != null) onManualLabelMode.run(); });
+        manualLabelButton.setOnAction(e -> {
+            if (onManualLabelMode != null) onManualLabelMode.run();
+        });
 
         // ── Hyperparameter controls ──
         roundsSpinner = new Spinner<>(50, 1000, 200, 50);
@@ -155,36 +156,38 @@ public class ClassificationPanel extends VBox {
         workersSpinner = new Spinner<>(1, 8, 1, 1);
         workersSpinner.setEditable(true);
         workersSpinner.setPrefWidth(70);
-        workersSpinner.setTooltip(new Tooltip(
-                "Number of parallel workers used when applying the trained classifier "
-                        + "to other selected images. Higher = faster but uses more memory "
-                        + "(each worker loads a full slide)."));
+        workersSpinner.setTooltip(new Tooltip("Number of parallel workers used when applying the trained classifier "
+                + "to other selected images. Higher = faster but uses more memory "
+                + "(each worker loads a full slide)."));
 
-        HBox paramRow = new HBox(8,
-                new Label(STRINGS.getString("param.num_rounds.label")), roundsSpinner,
-                new Label(STRINGS.getString("param.max_depth.label")), depthSpinner,
-                new Label("Workers:"), workersSpinner);
+        HBox paramRow = new HBox(
+                8,
+                new Label(STRINGS.getString("param.num_rounds.label")),
+                roundsSpinner,
+                new Label(STRINGS.getString("param.max_depth.label")),
+                depthSpinner,
+                new Label("Workers:"),
+                workersSpinner);
         paramRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Pool images checkbox ──
-        poolImagesCheckBox.setTooltip(new Tooltip(
-                "Include labelled cells from all project images in the training set"));
+        poolImagesCheckBox.setTooltip(
+                new Tooltip("Include labelled cells from all project images in the training set"));
         poolImagesCheckBox.setSelected(true);
 
         // ── Data balancing ──
         enableBalancingCheckBox.setSelected(true);
-        enableBalancingCheckBox.setTooltip(new Tooltip(
-                "Apply SMOTE + Tomek resampling to address class imbalance before training.\n"
-                + "Recommended for most datasets. Use the Strategy dropdown to override."));
+        enableBalancingCheckBox.setTooltip(
+                new Tooltip("Apply SMOTE + Tomek resampling to address class imbalance before training.\n"
+                        + "Recommended for most datasets. Use the Strategy dropdown to override."));
         advancedResamplingCombo.getItems().addAll(ResamplingStrategy.values());
         advancedResamplingCombo.setValue(ResamplingStrategy.SMOTE_TOMEK);
-        advancedResamplingCombo.setTooltip(new Tooltip(
-                "Override the default SMOTE + Tomek strategy with another resampling method"));
+        advancedResamplingCombo.setTooltip(
+                new Tooltip("Override the default SMOTE + Tomek strategy with another resampling method"));
         advancedResamplingCombo.visibleProperty().bind(enableBalancingCheckBox.selectedProperty());
         advancedResamplingCombo.managedProperty().bind(enableBalancingCheckBox.selectedProperty());
 
-        HBox balancingRow = new HBox(8, enableBalancingCheckBox,
-                new Label("Strategy:"), advancedResamplingCombo);
+        HBox balancingRow = new HBox(8, enableBalancingCheckBox, new Label("Strategy:"), advancedResamplingCombo);
         balancingRow.setAlignment(Pos.CENTER_LEFT);
 
         model1Combo.getItems().addAll(ModelType.values());
@@ -197,26 +200,25 @@ public class ClassificationPanel extends VBox {
         model2Combo.setMaxWidth(Double.MAX_VALUE);
         model2Combo.setTooltip(new Tooltip("Model 2 type"));
 
-        HBox modelRow = new HBox(8,
-                new Label("Model 1:"), model1Combo,
-                new Label("Model 2:"), model2Combo);
+        HBox modelRow = new HBox(8, new Label("Model 1:"), model1Combo, new Label("Model 2:"), model2Combo);
         modelRow.setAlignment(Pos.CENTER_LEFT);
 
         autoTuneCheckBox.setSelected(false);
-        autoTuneCheckBox.setTooltip(new Tooltip(
-                "TPE Bayesian optimisation with cross-validation to find optimal hyperparameters independently per model"));
+        autoTuneCheckBox.setTooltip(
+                new Tooltip(
+                        "TPE Bayesian optimisation with cross-validation to find optimal hyperparameters independently per model"));
 
         earlyStopCheckBox.setSelected(true);
-        earlyStopCheckBox.setTooltip(new Tooltip(
-                "Find optimal boosting rounds via validation loss monitoring (patience=20)"));
+        earlyStopCheckBox.setTooltip(
+                new Tooltip("Find optimal boosting rounds via validation loss monitoring (patience=20)"));
 
         showFeatureImportanceCheckBox.setSelected(true);
-        showFeatureImportanceCheckBox.setTooltip(new Tooltip(
-                "After training, compute and display top 10 features by mean |SHAP| value per class"));
+        showFeatureImportanceCheckBox.setTooltip(
+                new Tooltip("After training, compute and display top 10 features by mean |SHAP| value per class"));
 
         autoPruneCheckBox.setSelected(true);
-        autoPruneCheckBox.setTooltip(new Tooltip(
-                "Before training, examine the labelled cells and drop features that are\n"
+        autoPruneCheckBox.setTooltip(
+                new Tooltip("Before training, examine the labelled cells and drop features that are\n"
                         + "near-constant or highly correlated with another feature from the\n"
                         + "same marker. Rare-marker guardrail keeps the best feature for any\n"
                         + "marker that would otherwise be dropped entirely. The full\n"
@@ -224,8 +226,8 @@ public class ClassificationPanel extends VBox {
                         + "by this training run are reduced."));
 
         // ── Status row ──
-        clearImportedButton.setTooltip(new Tooltip(
-                "Remove imported training rows for the active context (binary marker, or multi-class). "
+        clearImportedButton.setTooltip(
+                new Tooltip("Remove imported training rows for the active context (binary marker, or multi-class). "
                         + "Labels, models and predictions are not affected."));
         clearImportedButton.setStyle("-fx-font-size: 10px; -fx-padding: 1 6 1 6;");
         clearImportedButton.setDisable(true);
@@ -261,7 +263,9 @@ public class ClassificationPanel extends VBox {
 
         featureImportanceButton.setMaxWidth(Double.MAX_VALUE);
         featureImportanceButton.setDisable(true);
-        featureImportanceButton.setOnAction(e -> { if (onFeatureImportance != null) onFeatureImportance.run(); });
+        featureImportanceButton.setOnAction(e -> {
+            if (onFeatureImportance != null) onFeatureImportance.run();
+        });
 
         // sampleButton was a separate "Sample for Review" entry point; the
         // current workflow goes straight from training through Enter Review
@@ -275,15 +279,15 @@ public class ClassificationPanel extends VBox {
         currentImageOnlyCheckBox.setSelected(false);
         currentImageOnlyCheckBox.setTooltip(new javafx.scene.control.Tooltip(
                 "When checked, sampling and review only consider cells from the currently open image.\n"
-              + "Default (unchecked) pools predictions from every project image so review covers all FOVs."));
+                        + "Default (unchecked) pools predictions from every project image so review covers all FOVs."));
 
         annotationKeywordField.setPromptText("Filter by annotation keywords (comma-separated, e.g. Tumour)");
         annotationKeywordField.setTooltip(new javafx.scene.control.Tooltip(
                 "Optional. Comma-separated keywords matched (case-insensitive substring) against\n"
-              + "annotation names. Across every project image (unless 'Sample current image only'\n"
-              + "is checked), only cells whose centroid falls inside an annotation whose name\n"
-              + "contains one of the keywords are eligible for sampling/review.\n"
-              + "Leave blank to sample all cells."));
+                        + "annotation names. Across every project image (unless 'Sample current image only'\n"
+                        + "is checked), only cells whose centroid falls inside an annotation whose name\n"
+                        + "contains one of the keywords are eligible for sampling/review.\n"
+                        + "Leave blank to sample all cells."));
 
         HBox actionRow1 = new HBox(6, confusionsButton, metricsButton);
         HBox.setHgrow(confusionsButton, Priority.ALWAYS);
@@ -295,35 +299,35 @@ public class ClassificationPanel extends VBox {
         Separator sep = new Separator();
 
         // ── Layout ──
-        getChildren().addAll(
-                title,
-                binaryBannerLabel,
-                exitBinaryButton,
-                manualLabelButton,
-                applyToImagesButton,
-                paramRow,
-                modelRow,
-                poolImagesCheckBox,
-                balancingRow,
-                autoTuneCheckBox,
-                earlyStopCheckBox,
-                showFeatureImportanceCheckBox,
-                autoPruneCheckBox,
-                restrictToImportedFeaturesCheckBox,
-                new Separator(),
-                statsRow,
-                trainButton,
-                progressBar,
-                statusLabel,
-                new Separator(),
-                actionRow1,
-                featureImportanceButton,
-                currentImageOnlyCheckBox,
-                buildAnnotationFilterBox(),
-                reviewButton,
-                sep,
-                populationPanel
-        );
+        getChildren()
+                .addAll(
+                        title,
+                        binaryBannerLabel,
+                        exitBinaryButton,
+                        manualLabelButton,
+                        applyToImagesButton,
+                        paramRow,
+                        modelRow,
+                        poolImagesCheckBox,
+                        balancingRow,
+                        autoTuneCheckBox,
+                        earlyStopCheckBox,
+                        showFeatureImportanceCheckBox,
+                        autoPruneCheckBox,
+                        restrictToImportedFeaturesCheckBox,
+                        new Separator(),
+                        statsRow,
+                        trainButton,
+                        progressBar,
+                        statusLabel,
+                        new Separator(),
+                        actionRow1,
+                        featureImportanceButton,
+                        currentImageOnlyCheckBox,
+                        buildAnnotationFilterBox(),
+                        reviewButton,
+                        sep,
+                        populationPanel);
     }
 
     // ── Binary mode indicator ──
@@ -388,7 +392,8 @@ public class ClassificationPanel extends VBox {
     }
 
     public void setApplyToImagesCount(int count) {
-        applyToImagesButton.setText(count > 0 ? "Apply to which images... (" + count + ")" : "Apply to which images...");
+        applyToImagesButton.setText(
+                count > 0 ? "Apply to which images... (" + count + ")" : "Apply to which images...");
     }
 
     // ── State setters (called by CellTuneExtension to share state) ──
@@ -397,15 +402,26 @@ public class ClassificationPanel extends VBox {
         this.labelStore = store;
         refreshStats();
     }
+
     public void setClassifier(DualModelClassifier cls) {
         this.classifier = cls;
         // Re-enable the "Training Metrics" and "Feature Importance" buttons if the restored classifier has metrics.
         metricsButton.setDisable(cls == null || !cls.hasTrainValMetrics());
         featureImportanceButton.setDisable(cls == null || !cls.isTrained());
     }
-    public void setFeatureNormalizer(FeatureNormalizer normalizer) { this.featureNormalizer = normalizer; }
-    public void setSelectedFeatures(List<String> features) { this.selectedFeatures = features; }
-    public void setCellTypeTable(CellTypeTable table) { this.cellTypeTable = table; }
+
+    public void setFeatureNormalizer(FeatureNormalizer normalizer) {
+        this.featureNormalizer = normalizer;
+    }
+
+    public void setSelectedFeatures(List<String> features) {
+        this.selectedFeatures = features;
+    }
+
+    public void setCellTypeTable(CellTypeTable table) {
+        this.cellTypeTable = table;
+    }
+
     public void setPredAll(PopulationSet pa) {
         this.predAll = pa;
         refreshStats();
@@ -413,7 +429,11 @@ public class ClassificationPanel extends VBox {
         // (e.g. after restoring per-image predictions on project re-open).
         confusionsButton.setDisable(pa == null || pa.size() == 0);
     }
-    public void setLastAgreementRates(double[] rates) { this.lastAgreementRates = rates; }
+
+    public void setLastAgreementRates(double[] rates) {
+        this.lastAgreementRates = rates;
+    }
+
     public void setLastSampledCellIds(List<String> ids) {
         this.lastSampledCellIds = ids;
         if (ids == null || ids.isEmpty()) {
@@ -423,6 +443,7 @@ public class ClassificationPanel extends VBox {
         }
         reviewButton.setDisable(ids == null || ids.isEmpty());
     }
+
     public void setImportedTrainingData(List<GroundTruthIO.TrainingRow> rows, List<String> featureNames) {
         this.importedTrainingRows = rows == null ? null : List.copyOf(rows);
         this.importedTrainingFeatureNames = featureNames == null ? null : List.copyOf(featureNames);
@@ -431,13 +452,33 @@ public class ClassificationPanel extends VBox {
 
     // ── Callbacks ──
 
-    public void setOnLabelStoreChanged(Consumer<LabelStore> cb) { this.onLabelStoreChanged = cb; }
-    public void setOnPredAllChanged(Consumer<PopulationSet> cb) { this.onPredAllChanged = cb; }
-    public void setOnAgreementRatesChanged(Consumer<double[]> cb) { this.onAgreementRatesChanged = cb; }
-    public void setOnSampledCellsChanged(Consumer<List<String>> cb) { this.onSampledCellsChanged = cb; }
-    public void setOnClassifierChanged(Consumer<DualModelClassifier> cb) { this.onClassifierChanged = cb; }
-    public void setAutoClassifyCallback(Supplier<Boolean> cb) { this.autoClassifyCallback = cb; }
-    public void setBinaryTargetImagesSupplier(Supplier<List<String>> cb) { this.binaryTargetImagesSupplier = cb; }
+    public void setOnLabelStoreChanged(Consumer<LabelStore> cb) {
+        this.onLabelStoreChanged = cb;
+    }
+
+    public void setOnPredAllChanged(Consumer<PopulationSet> cb) {
+        this.onPredAllChanged = cb;
+    }
+
+    public void setOnAgreementRatesChanged(Consumer<double[]> cb) {
+        this.onAgreementRatesChanged = cb;
+    }
+
+    public void setOnSampledCellsChanged(Consumer<List<String>> cb) {
+        this.onSampledCellsChanged = cb;
+    }
+
+    public void setOnClassifierChanged(Consumer<DualModelClassifier> cb) {
+        this.onClassifierChanged = cb;
+    }
+
+    public void setAutoClassifyCallback(Supplier<Boolean> cb) {
+        this.autoClassifyCallback = cb;
+    }
+
+    public void setBinaryTargetImagesSupplier(Supplier<List<String>> cb) {
+        this.binaryTargetImagesSupplier = cb;
+    }
 
     // ── Actions ──
 
@@ -457,11 +498,9 @@ public class ClassificationPanel extends VBox {
 
         Collection<PathObject> detections = imageData.getHierarchy().getDetectionObjects();
         if (detections.isEmpty()) {
-            Dialogs.showErrorMessage(STRINGS.getString("name"),
-                    "No detections found. Run cell detection first.");
+            Dialogs.showErrorMessage(STRINGS.getString("name"), "No detections found. Run cell detection first.");
             return;
         }
-
 
         // Collect labels from annotations
         if (labelStore == null) labelStore = new LabelStore("CellTune");
@@ -473,8 +512,7 @@ public class ClassificationPanel extends VBox {
         // this store before training and persistence.
         var project = qupath.getProject();
         Set<String> validClasses = new LinkedHashSet<>();
-        if (activeBinaryMarker != null && activeBinaryClassNames != null
-                && !activeBinaryClassNames.isEmpty()) {
+        if (activeBinaryMarker != null && activeBinaryClassNames != null && !activeBinaryClassNames.isEmpty()) {
             validClasses.addAll(activeBinaryClassNames);
             labelStore.retainClasses(validClasses);
         } else if (project != null) {
@@ -488,9 +526,15 @@ public class ClassificationPanel extends VBox {
             }
         }
 
-        int importedEvidenceCount = (int) (importedTrainingRows == null ? 0 : importedTrainingRows.stream()
-                .filter(r -> r != null && r.label() != null && !r.label().isBlank() && r.features() != null)
-                .count());
+        int importedEvidenceCount = (int)
+                (importedTrainingRows == null
+                        ? 0
+                        : importedTrainingRows.stream()
+                                .filter(r -> r != null
+                                        && r.label() != null
+                                        && !r.label().isBlank()
+                                        && r.features() != null)
+                                .count());
 
         // If not enough local labels, try to reload from saved state.
         // Imported rows are counted as training evidence and may satisfy the threshold.
@@ -499,7 +543,8 @@ public class ClassificationPanel extends VBox {
                 var imgEntry = project.getEntry(imageData);
                 if (imgEntry != null) {
                     try {
-                        var savedLabels = ProjectStateManager.loadImageLabels(project, activeBinaryMarker, imgEntry.getImageName());
+                        var savedLabels = ProjectStateManager.loadImageLabels(
+                                project, activeBinaryMarker, imgEntry.getImageName());
                         if (savedLabels != null && savedLabels.size() > labelStore.size()) {
                             labelStore.mergeFrom(savedLabels);
                             // Re-sync after merge
@@ -530,7 +575,8 @@ public class ClassificationPanel extends VBox {
 
         int totalEvidenceCount = labelStore.size() + importedEvidenceCount;
         if (totalEvidenceCount < 10) {
-            Dialogs.showErrorMessage(STRINGS.getString("name"),
+            Dialogs.showErrorMessage(
+                    STRINGS.getString("name"),
                     "Need at least 10 labelled cells to train. Found: " + totalEvidenceCount
                             + " (local labels=" + labelStore.size() + ", imported rows=" + importedEvidenceCount + ")"
                             + "\nUse point annotations or import training rows to label cells.");
@@ -546,12 +592,10 @@ public class ClassificationPanel extends VBox {
 
         // Apply user feature selection
         if (selectedFeatures != null && !selectedFeatures.isEmpty()) {
-            featureNames = featureNames.stream()
-                    .filter(selectedFeatures::contains)
-                    .collect(Collectors.toList());
+            featureNames =
+                    featureNames.stream().filter(selectedFeatures::contains).collect(Collectors.toList());
             if (featureNames.isEmpty()) {
-                Dialogs.showErrorMessage(STRINGS.getString("name"),
-                        "None of the selected features are present.");
+                Dialogs.showErrorMessage(STRINGS.getString("name"), "None of the selected features are present.");
                 return;
             }
         }
@@ -575,7 +619,8 @@ public class ClassificationPanel extends VBox {
                     .filter(n -> importedLower.contains(n.strip().toLowerCase(Locale.ROOT)))
                     .collect(Collectors.toList());
             if (intersected.isEmpty()) {
-                Dialogs.showErrorMessage(STRINGS.getString("name"),
+                Dialogs.showErrorMessage(
+                        STRINGS.getString("name"),
                         "Restrict to imported features is on, but no current-project features\n"
                                 + "match any of the " + importedTrainingFeatureNames.size()
                                 + " imported feature names. Disable the option or fix the panel mismatch.");
@@ -593,8 +638,7 @@ public class ClassificationPanel extends VBox {
         // Pruning only filters this run's feature list; measurements on disk
         // are untouched. Rare-marker guardrail is on by default.
         String prunePreamble = null;
-        if (autoPruneCheckBox.isSelected() && featureNames.size() > 20
-                && labelStore.size() >= 10) {
+        if (autoPruneCheckBox.isSelected() && featureNames.size() > 20 && labelStore.size() >= 10) {
             List<PathObject> labelledCells = new ArrayList<>();
             var labelMap = labelStore.getAllLabels();
             for (PathObject cell : detections) {
@@ -604,16 +648,16 @@ public class ClassificationPanel extends VBox {
             }
             if (labelledCells.size() >= 10) {
                 int before = featureNames.size();
-                FeaturePruner.PruneResult pr = FeaturePruner.prune(
-                        labelledCells, featureNames,
-                        FeaturePruner.PruneOptions.defaults(), null);
-                if (!pr.keptFeatures().isEmpty()
-                        && pr.keptFeatures().size() < before) {
+                FeaturePruner.PruneResult pr =
+                        FeaturePruner.prune(labelledCells, featureNames, FeaturePruner.PruneOptions.defaults(), null);
+                if (!pr.keptFeatures().isEmpty() && pr.keptFeatures().size() < before) {
                     featureNames = pr.keptFeatures();
                     prunePreamble = String.format(
                             "Auto-prune: %d → %d features (dropped %d near-constant, %d redundant; %d labelled cells)",
-                            before, pr.keptFeatures().size(),
-                            pr.droppedConstant(), pr.droppedWithinMarker(),
+                            before,
+                            pr.keptFeatures().size(),
+                            pr.droppedConstant(),
+                            pr.droppedWithinMarker(),
                             labelledCells.size());
                 }
             }
@@ -699,197 +743,221 @@ public class ClassificationPanel extends VBox {
         final List<String> finalFeatureNames = featureNames;
         final var projectRef = project;
         final List<GroundTruthIO.TrainingRow> importedRowsSnapshot =
-            importedTrainingRows == null ? null : List.copyOf(importedTrainingRows);
+                importedTrainingRows == null ? null : List.copyOf(importedTrainingRows);
         final List<String> importedFeatureNamesSnapshot =
-            importedTrainingFeatureNames == null ? null : List.copyOf(importedTrainingFeatureNames);
+                importedTrainingFeatureNames == null ? null : List.copyOf(importedTrainingFeatureNames);
         final boolean binaryModeActive = binaryBannerLabel.isVisible();
-        List<String> suppliedTargets = binaryTargetImagesSupplier != null
-                ? binaryTargetImagesSupplier.get() : null;
-        final List<String> batchTargetImages = suppliedTargets == null
-                ? List.of() : List.copyOf(suppliedTargets);
+        List<String> suppliedTargets = binaryTargetImagesSupplier != null ? binaryTargetImagesSupplier.get() : null;
+        final List<String> batchTargetImages = suppliedTargets == null ? List.of() : List.copyOf(suppliedTargets);
         final int workers = workersSpinner.getValue();
-        Thread trainThread = new Thread(() -> {
-            try {
-                // Auto-backup labels
-                if (projectRef != null) {
-                    var backupEntry = projectRef.getEntry(imageData);
-                    String backupImageName = backupEntry != null ? backupEntry.getImageName() : null;
-                    ProjectStateManager.backupLabels(projectRef, backupImageName, storeCopy);
-                }
-
-                // Collect supplementary training data from other project images
-                List<float[]> supplementaryRows = null;
-                List<String> supplementaryLabels = null;
-
-                if (poolAllImages && projectRef != null) {
-                    var pooled = TrainingOrchestrator.poolLabelsFromOtherImages(
-                            projectRef, imageData, scope, finalFeatureNames, featureNormalizer, trainLog);
-                    supplementaryRows = pooled.rows();
-                    supplementaryLabels = pooled.labels();
-                }
-
-                // Always include explicitly imported training rows (if any).
-                var pooledImported = DataPoolingService.poolImportedRows(
-                        importedRowsSnapshot, importedFeatureNamesSnapshot, finalFeatureNames);
-                if (pooledImported.addedCount() > 0) {
-                    if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
-                    if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
-                    supplementaryRows.addAll(pooledImported.rows());
-                    supplementaryLabels.addAll(pooledImported.labels());
-                    trainLog.accept("Merged " + pooledImported.addedCount() + " imported training rows ("
-                            + pooledImported.mappedFeatureCount() + "/" + finalFeatureNames.size()
-                            + " features aligned).");
-                }
-
-                classifier.trainAndPredict(detections, storeCopy, extractor,
-                        supplementaryRows, supplementaryLabels,
-                        resamplingStrategy,
-                        autoTuneSelected,
-                        earlyStopSelected,
-                        trainLog);
-
-                predAll = classifier.getPredALL();
-
-                // Save classifier state
-                if (projectRef != null) {
-                    // In binary mode the trained binary classifier is persisted separately
-                    // (the onClassifierChanged callback -> saveBinaryState), and its imported
-                    // rows live in binary-imported/<marker>.json. Writing the multi-class
-                    // classifier-state.json here would pollute it with the binary classifier's
-                    // labels / imported rows / model (which then leak back into multi-class on
-                    // the next image switch), so only save it in multi-class mode.
-                    if (scope == null) {
-                        var state = classifier.toClassifierState("CellTune");
-                        ProjectStateManager.saveState(projectRef, state.getName(),
-                                storeCopy, state.getFeatureNames(), state.getClassNames(),
-                                state.getXgboostBytes(), state.getLightgbmBytes(),
-                                state.getRfModel1Bytes(), state.getRfModel2Bytes(),
-                                state.getModel1Type(), state.getModel2Type(),
-                                importedFeatureNamesSnapshot, importedRowsSnapshot);
-
-                        // Persist per-model train/val metrics so the "Training Metrics" view
-                        // and confusion matrix are available after reopening the project.
-                        try {
-                            ProjectStateManager.saveTrainingMetrics(projectRef,
-                                    classifier.getModel1TrainMetrics(),
-                                    classifier.getModel1ValMetrics(),
-                                    classifier.getModel2TrainMetrics(),
-                                    classifier.getModel2ValMetrics());
-                        } catch (Exception ex) {
-                            System.err.println("[CellTune] Failed to persist training metrics: " + ex.getMessage());
+        Thread trainThread = new Thread(
+                () -> {
+                    try {
+                        // Auto-backup labels
+                        if (projectRef != null) {
+                            var backupEntry = projectRef.getEntry(imageData);
+                            String backupImageName = backupEntry != null ? backupEntry.getImageName() : null;
+                            ProjectStateManager.backupLabels(projectRef, backupImageName, storeCopy);
                         }
-                    }
 
-                    // Save per-image labels for cross-image pooling
-                    var imgEntry = projectRef.getEntry(imageData);
-                    if (imgEntry != null) {
-                        var filteredStore = filterLabelStoreToImage(storeCopy, imageData);
-                        // In binary mode, drop any foreign-class labels so the per-image
-                        // file for this classifier never contains the other classifier's
-                        // classes (and any historical contamination gets self-healed).
-                        if (binaryClassFilter != null) {
-                            filteredStore.retainClasses(binaryClassFilter);
+                        // Collect supplementary training data from other project images
+                        List<float[]> supplementaryRows = null;
+                        List<String> supplementaryLabels = null;
+
+                        if (poolAllImages && projectRef != null) {
+                            var pooled = TrainingOrchestrator.poolLabelsFromOtherImages(
+                                    projectRef, imageData, scope, finalFeatureNames, featureNormalizer, trainLog);
+                            supplementaryRows = pooled.rows();
+                            supplementaryLabels = pooled.labels();
                         }
-                        ProjectStateManager.saveImageLabels(
-                                projectRef, scope, imgEntry.getImageName(), filteredStore);
+
+                        // Always include explicitly imported training rows (if any).
+                        var pooledImported = DataPoolingService.poolImportedRows(
+                                importedRowsSnapshot, importedFeatureNamesSnapshot, finalFeatureNames);
+                        if (pooledImported.addedCount() > 0) {
+                            if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
+                            if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
+                            supplementaryRows.addAll(pooledImported.rows());
+                            supplementaryLabels.addAll(pooledImported.labels());
+                            trainLog.accept("Merged " + pooledImported.addedCount() + " imported training rows ("
+                                    + pooledImported.mappedFeatureCount() + "/" + finalFeatureNames.size()
+                                    + " features aligned).");
+                        }
+
+                        classifier.trainAndPredict(
+                                detections,
+                                storeCopy,
+                                extractor,
+                                supplementaryRows,
+                                supplementaryLabels,
+                                resamplingStrategy,
+                                autoTuneSelected,
+                                earlyStopSelected,
+                                trainLog);
+
+                        predAll = classifier.getPredALL();
+
+                        // Save classifier state
+                        if (projectRef != null) {
+                            // In binary mode the trained binary classifier is persisted separately
+                            // (the onClassifierChanged callback -> saveBinaryState), and its imported
+                            // rows live in binary-imported/<marker>.json. Writing the multi-class
+                            // classifier-state.json here would pollute it with the binary classifier's
+                            // labels / imported rows / model (which then leak back into multi-class on
+                            // the next image switch), so only save it in multi-class mode.
+                            if (scope == null) {
+                                var state = classifier.toClassifierState("CellTune");
+                                ProjectStateManager.saveState(
+                                        projectRef,
+                                        state.getName(),
+                                        storeCopy,
+                                        state.getFeatureNames(),
+                                        state.getClassNames(),
+                                        state.getXgboostBytes(),
+                                        state.getLightgbmBytes(),
+                                        state.getRfModel1Bytes(),
+                                        state.getRfModel2Bytes(),
+                                        state.getModel1Type(),
+                                        state.getModel2Type(),
+                                        importedFeatureNamesSnapshot,
+                                        importedRowsSnapshot);
+
+                                // Persist per-model train/val metrics so the "Training Metrics" view
+                                // and confusion matrix are available after reopening the project.
+                                try {
+                                    ProjectStateManager.saveTrainingMetrics(
+                                            projectRef,
+                                            classifier.getModel1TrainMetrics(),
+                                            classifier.getModel1ValMetrics(),
+                                            classifier.getModel2TrainMetrics(),
+                                            classifier.getModel2ValMetrics());
+                                } catch (Exception ex) {
+                                    System.err.println(
+                                            "[CellTune] Failed to persist training metrics: " + ex.getMessage());
+                                }
+                            }
+
+                            // Save per-image labels for cross-image pooling
+                            var imgEntry = projectRef.getEntry(imageData);
+                            if (imgEntry != null) {
+                                var filteredStore = filterLabelStoreToImage(storeCopy, imageData);
+                                // In binary mode, drop any foreign-class labels so the per-image
+                                // file for this classifier never contains the other classifier's
+                                // classes (and any historical contamination gets self-healed).
+                                if (binaryClassFilter != null) {
+                                    filteredStore.retainClasses(binaryClassFilter);
+                                }
+                                ProjectStateManager.saveImageLabels(
+                                        projectRef, scope, imgEntry.getImageName(), filteredStore);
+                            }
+                        }
+
+                        int batchApplied = 0;
+                        if (projectRef != null && !batchTargetImages.isEmpty()) {
+                            batchApplied = TrainingOrchestrator.applyToTargetImages(
+                                    projectRef,
+                                    imageData,
+                                    batchTargetImages,
+                                    workers,
+                                    classifier,
+                                    finalFeatureNames,
+                                    featureNormalizer,
+                                    this,
+                                    trainLog);
+                        }
+
+                        final int totalBatchApplied = batchApplied;
+                        Platform.runLater(() -> {
+                            progressBar.progressProperty().unbind();
+                            statusLabel.textProperty().unbind();
+                            progressBar.setProgress(1.0);
+                            statusLabel.setText("Training complete \u2014 " + predAll.size()
+                                    + " cells classified, "
+                                    + predAll.getDisagreementCount() + " disagreements.");
+                            dlgProgressBar.progressProperty().unbind();
+                            dlgStatusLabel.textProperty().unbind();
+                            dlgProgressBar.setProgress(1.0);
+                            dlgStatusLabel.setText("Complete \u2014 close this window when ready.");
+                            logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
+                                    + predAll.getDisagreementCount() + " disagreements.\n"
+                                    + (totalBatchApplied > 0
+                                            ? "Applied to " + totalBatchApplied + " additional image(s).\n"
+                                            : ""));
+                            trainButton.setDisable(false);
+                            confusionsButton.setDisable(false);
+                            // Enable Review Mode now that predictions exist; clicking it
+                            // will trigger uncertainty sampling on demand.
+                            reviewButton.setDisable(predAll == null || predAll.size() == 0);
+
+                            metricsButton.setDisable(!classifier.hasTrainValMetrics());
+
+                            // Auto-show feature importance if checkbox is selected
+                            if (showFeatureImportanceCheckBox.isSelected()) {
+                                doShowFeatureImportance();
+                            }
+
+                            // Update spinners if auto-tuned
+                            // (Tuned params are now per-model; spinners retain user defaults)
+
+                            imageData.getHierarchy().fireHierarchyChangedEvent(this);
+
+                            // Update population panel
+                            populationPanel.update(
+                                    classifier.getPredMDL1(),
+                                    classifier.getPredMDL2(),
+                                    classifier.getPredAVG(),
+                                    classifier.getPredALL(),
+                                    classifier.getClassNames());
+
+                            refreshStats();
+
+                            // Notify extension
+                            if (onLabelStoreChanged != null) onLabelStoreChanged.accept(storeCopy);
+                            if (onPredAllChanged != null) onPredAllChanged.accept(predAll);
+                            if (onClassifierChanged != null) onClassifierChanged.accept(classifier);
+
+                            String completionMessage = "Training complete. " + predAll.size() + " cells classified, "
+                                    + predAll.getDisagreementCount() + " disagreements.";
+                            if (totalBatchApplied > 0) {
+                                completionMessage += " Applied to " + totalBatchApplied + " additional image(s).";
+                            }
+                            Dialogs.showInfoNotification(STRINGS.getString("name"), completionMessage);
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> {
+                            progressBar.progressProperty().unbind();
+                            statusLabel.textProperty().unbind();
+                            progressBar.setProgress(0);
+                            statusLabel.setText("Training failed");
+                            dlgProgressBar.progressProperty().unbind();
+                            dlgStatusLabel.textProperty().unbind();
+                            dlgProgressBar.setProgress(0);
+                            dlgStatusLabel.setText("Training failed!");
+                            logArea.appendText("\nERROR: " + ex.getMessage() + "\n");
+                            trainButton.setDisable(false);
+                            Dialogs.showErrorMessage(STRINGS.getString("name"), "Training failed: " + ex.getMessage());
+                        });
                     }
-                }
-
-                int batchApplied = 0;
-                if (projectRef != null && !batchTargetImages.isEmpty()) {
-                    batchApplied = TrainingOrchestrator.applyToTargetImages(
-                            projectRef, imageData, batchTargetImages, workers,
-                            classifier, finalFeatureNames, featureNormalizer, this, trainLog);
-                }
-
-                final int totalBatchApplied = batchApplied;
-                Platform.runLater(() -> {
-                    progressBar.progressProperty().unbind();
-                    statusLabel.textProperty().unbind();
-                    progressBar.setProgress(1.0);
-                    statusLabel.setText("Training complete \u2014 " + predAll.size()
-                            + " cells classified, "
-                            + predAll.getDisagreementCount() + " disagreements.");
-                    dlgProgressBar.progressProperty().unbind();
-                    dlgStatusLabel.textProperty().unbind();
-                    dlgProgressBar.setProgress(1.0);
-                    dlgStatusLabel.setText("Complete \u2014 close this window when ready.");
-                    logArea.appendText("\nDone! Classified " + predAll.size() + " cells, "
-                            + predAll.getDisagreementCount() + " disagreements.\n"
-                            + (totalBatchApplied > 0
-                                    ? "Applied to " + totalBatchApplied + " additional image(s).\n"
-                                    : ""));
-                    trainButton.setDisable(false);
-                    confusionsButton.setDisable(false);
-                    // Enable Review Mode now that predictions exist; clicking it
-                    // will trigger uncertainty sampling on demand.
-                    reviewButton.setDisable(predAll == null || predAll.size() == 0);
-
-                    metricsButton.setDisable(!classifier.hasTrainValMetrics());
-
-                    // Auto-show feature importance if checkbox is selected
-                    if (showFeatureImportanceCheckBox.isSelected()) {
-                        doShowFeatureImportance();
-                    }
-
-                    // Update spinners if auto-tuned
-                    // (Tuned params are now per-model; spinners retain user defaults)
-
-                    imageData.getHierarchy().fireHierarchyChangedEvent(this);
-
-                    // Update population panel
-                    populationPanel.update(
-                            classifier.getPredMDL1(), classifier.getPredMDL2(),
-                            classifier.getPredAVG(), classifier.getPredALL(),
-                            classifier.getClassNames());
-
-                    refreshStats();
-
-                    // Notify extension
-                    if (onLabelStoreChanged != null) onLabelStoreChanged.accept(storeCopy);
-                    if (onPredAllChanged != null) onPredAllChanged.accept(predAll);
-                    if (onClassifierChanged != null) onClassifierChanged.accept(classifier);
-
-                    String completionMessage = "Training complete. " + predAll.size()
-                            + " cells classified, " + predAll.getDisagreementCount() + " disagreements.";
-                    if (totalBatchApplied > 0) {
-                        completionMessage += " Applied to " + totalBatchApplied
-                                + " additional image(s).";
-                    }
-                    Dialogs.showInfoNotification(STRINGS.getString("name"), completionMessage);
-                });
-            } catch (Exception ex) {
-                Platform.runLater(() -> {
-                    progressBar.progressProperty().unbind();
-                    statusLabel.textProperty().unbind();
-                    progressBar.setProgress(0);
-                    statusLabel.setText("Training failed");
-                    dlgProgressBar.progressProperty().unbind();
-                    dlgStatusLabel.textProperty().unbind();
-                    dlgProgressBar.setProgress(0);
-                    dlgStatusLabel.setText("Training failed!");
-                    logArea.appendText("\nERROR: " + ex.getMessage() + "\n");
-                    trainButton.setDisable(false);
-                    Dialogs.showErrorMessage(STRINGS.getString("name"),
-                            "Training failed: " + ex.getMessage());
-                });
-            }
-        }, "CellTune-Training");
+                },
+                "CellTune-Training");
         trainThread.setDaemon(true);
         trainThread.start();
     }
 
     private void doShowTrainingMetrics() {
         if (classifier == null || !classifier.hasTrainValMetrics()) {
-            Dialogs.showInfoNotification(STRINGS.getString("name"),
+            Dialogs.showInfoNotification(
+                    STRINGS.getString("name"),
                     "No training metrics available. Train first (need \u2265 20 labelled cells).");
             return;
         }
-        new TrainingMetricsView(qupath.getStage(),
-                classifier.getModel1TrainMetrics(),
-                classifier.getModel1ValMetrics(),
-                classifier.getModel2TrainMetrics(),
-                classifier.getModel2ValMetrics()).show();
+        new TrainingMetricsView(
+                        qupath.getStage(),
+                        classifier.getModel1TrainMetrics(),
+                        classifier.getModel1ValMetrics(),
+                        classifier.getModel2TrainMetrics(),
+                        classifier.getModel2ValMetrics())
+                .show();
     }
 
     private void doShowConfusions() {
@@ -900,8 +968,7 @@ public class ClassificationPanel extends VBox {
             }
         }
         if (predAll == null || predAll.size() == 0 || classifier == null) {
-            Dialogs.showErrorMessage(STRINGS.getString("name"),
-                    "No predictions available. Train first.");
+            Dialogs.showErrorMessage(STRINGS.getString("name"), "No predictions available. Train first.");
             return;
         }
 
@@ -936,21 +1003,23 @@ public class ClassificationPanel extends VBox {
         extractor.setNormalizer(featureNormalizer);
 
         showFeatureImportanceCheckBox.setDisable(true);
-        Thread worker = new Thread(() -> {
-            try {
-                var result = classifier.computeFeatureImportance(detections, extractor);
-                Platform.runLater(() -> {
-                    showFeatureImportanceCheckBox.setDisable(false);
-                    new FeatureImportanceView(qupath.getStage(), result).show();
-                });
-            } catch (Exception ex) {
-                Platform.runLater(() -> {
-                    showFeatureImportanceCheckBox.setDisable(false);
-                    Dialogs.showErrorMessage(STRINGS.getString("name"),
-                            "Feature importance failed: " + ex.getMessage());
-                });
-            }
-        }, "CellTune-FeatureImportance");
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        var result = classifier.computeFeatureImportance(detections, extractor);
+                        Platform.runLater(() -> {
+                            showFeatureImportanceCheckBox.setDisable(false);
+                            new FeatureImportanceView(qupath.getStage(), result).show();
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> {
+                            showFeatureImportanceCheckBox.setDisable(false);
+                            Dialogs.showErrorMessage(
+                                    STRINGS.getString("name"), "Feature importance failed: " + ex.getMessage());
+                        });
+                    }
+                },
+                "CellTune-FeatureImportance");
         worker.setDaemon(true);
         worker.start();
     }
@@ -973,15 +1042,14 @@ public class ClassificationPanel extends VBox {
         loadSamplingContextAsync(samplingContext -> {
             long disagreeCount = samplingContext.predictions().getDisagreementCount();
             if (disagreeCount == 0) {
-                Dialogs.showInfoNotification(STRINGS.getString("name"),
-                        "No disagreement cells available across saved project predictions.");
+                Dialogs.showInfoNotification(
+                        STRINGS.getString("name"), "No disagreement cells available across saved project predictions.");
                 return;
             }
 
             String countStr = Dialogs.showInputDialog(
                     STRINGS.getString("sample.dialog.title"),
-                    STRINGS.getString("sample.count.label")
-                            + " (" + disagreeCount + " disagreements available)",
+                    STRINGS.getString("sample.count.label") + " (" + disagreeCount + " disagreements available)",
                     "200");
             if (countStr == null) return;
 
@@ -995,15 +1063,17 @@ public class ClassificationPanel extends VBox {
             if (sampleSize <= 0) return;
 
             if (!sampleForReviewBatch(samplingContext, sampleSize)) {
-                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                Dialogs.showInfoNotification(
+                        STRINGS.getString("name"),
                         "No eligible disagreement cells remained after excluding reviewed cells.");
                 return;
             }
 
             int imageCount = new LinkedHashSet<>(lastSampledCellImageMap.values()).size();
-            Dialogs.showInfoNotification(STRINGS.getString("name"),
-                    "Sampled " + lastSampledCellIds.size() + " cells across "
-                            + imageCount + " image(s). Use 'Enter Review Mode' to start.");
+            Dialogs.showInfoNotification(
+                    STRINGS.getString("name"),
+                    "Sampled " + lastSampledCellIds.size() + " cells across " + imageCount
+                            + " image(s). Use 'Enter Review Mode' to start.");
         });
     }
 
@@ -1017,8 +1087,8 @@ public class ClassificationPanel extends VBox {
         loadSamplingContextAsync(samplingContext -> {
             long disagreeCount = samplingContext.predictions().getDisagreementCount();
             if (disagreeCount == 0) {
-                Dialogs.showInfoNotification(STRINGS.getString("name"),
-                        "No disagreement cells available across saved project predictions.");
+                Dialogs.showInfoNotification(
+                        STRINGS.getString("name"), "No disagreement cells available across saved project predictions.");
                 return;
             }
 
@@ -1031,8 +1101,7 @@ public class ClassificationPanel extends VBox {
 
             String countStr = Dialogs.showInputDialog(
                     STRINGS.getString("sample.dialog.title"),
-                    "How many disagreement cells to review?"
-                            + " (" + disagreeCount + " available)",
+                    "How many disagreement cells to review?" + " (" + disagreeCount + " available)",
                     "200");
             if (countStr == null) return;
 
@@ -1046,7 +1115,8 @@ public class ClassificationPanel extends VBox {
             if (sampleSize <= 0) return;
 
             if (!sampleForReviewBatch(samplingContext, sampleSize)) {
-                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                Dialogs.showInfoNotification(
+                        STRINGS.getString("name"),
                         "No eligible disagreement cells remained after excluding reviewed cells.");
                 return;
             }
@@ -1057,7 +1127,8 @@ public class ClassificationPanel extends VBox {
             }
 
             PopulationSet reviewPredictions = (lastSampledPredictions != null && lastSampledPredictions.size() > 0)
-                    ? lastSampledPredictions : predAll;
+                    ? lastSampledPredictions
+                    : predAll;
             if (reviewPredictions == null || reviewPredictions.size() == 0) return;
 
             launchReviewStage(reviewPredictions);
@@ -1087,31 +1158,32 @@ public class ClassificationPanel extends VBox {
         stage.setOnCloseRequest(e -> e.consume()); // disable manual close
         stage.show();
 
-        Thread t = new Thread(() -> {
-            SamplingContext ctx = null;
-            try {
-                ctx = buildSamplingContext((done, total) -> Platform.runLater(() -> {
-                    if (total > 0) {
-                        bar.setProgress((double) done / total);
-                        status.setText(String.format("Loading predictions: %d / %d images\u2026",
-                                done, total));
+        Thread t = new Thread(
+                () -> {
+                    SamplingContext ctx = null;
+                    try {
+                        ctx = buildSamplingContext((done, total) -> Platform.runLater(() -> {
+                            if (total > 0) {
+                                bar.setProgress((double) done / total);
+                                status.setText(String.format("Loading predictions: %d / %d images\u2026", done, total));
+                            }
+                        }));
+                    } catch (Exception e) {
+                        final Exception err = e;
+                        Platform.runLater(() -> {
+                            stage.close();
+                            Dialogs.showErrorMessage(
+                                    STRINGS.getString("name"), "Failed to load predictions: " + err.getMessage());
+                        });
+                        return;
                     }
-                }));
-            } catch (Exception e) {
-                final Exception err = e;
-                Platform.runLater(() -> {
-                    stage.close();
-                    Dialogs.showErrorMessage(STRINGS.getString("name"),
-                            "Failed to load predictions: " + err.getMessage());
-                });
-                return;
-            }
-            final SamplingContext result = ctx;
-            Platform.runLater(() -> {
-                stage.close();
-                if (result != null) onReady.accept(result);
-            });
-        }, "celltune-sampling-load");
+                    final SamplingContext result = ctx;
+                    Platform.runLater(() -> {
+                        stage.close();
+                        if (result != null) onReady.accept(result);
+                    });
+                },
+                "celltune-sampling-load");
         t.setDaemon(true);
         t.start();
     }
@@ -1142,43 +1214,51 @@ public class ClassificationPanel extends VBox {
         stage.show();
 
         final int total = lastSampledCellIds == null ? 0 : lastSampledCellIds.size();
-        Thread t = new Thread(() -> {
-            TrainingTileExtractor extractor;
-            try {
-                extractor = TrainingTileExtractor.extract(qupath, lastSampledCellIds,
-                        lastSampledCellImageMap, done -> Platform.runLater(() -> {
-                            if (total > 0) {
-                                bar.setProgress((double) done / total);
-                                status.setText(String.format("Extracting tiles: %d / %d cells\u2026",
-                                        done, total));
-                            }
-                        }));
-            } catch (Exception e) {
-                final Exception err = e;
-                Platform.runLater(() -> {
-                    stage.close();
-                    Dialogs.showErrorMessage(STRINGS.getString("name"),
-                            "Failed to prepare review tiles: " + err.getMessage());
-                });
-                return;
-            }
-            Platform.runLater(() -> {
-                stage.close();
-                onReady.accept(extractor);
-            });
-        }, "celltune-tile-extract");
+        Thread t = new Thread(
+                () -> {
+                    TrainingTileExtractor extractor;
+                    try {
+                        extractor = TrainingTileExtractor.extract(
+                                qupath,
+                                lastSampledCellIds,
+                                lastSampledCellImageMap,
+                                done -> Platform.runLater(() -> {
+                                    if (total > 0) {
+                                        bar.setProgress((double) done / total);
+                                        status.setText(
+                                                String.format("Extracting tiles: %d / %d cells\u2026", done, total));
+                                    }
+                                }));
+                    } catch (Exception e) {
+                        final Exception err = e;
+                        Platform.runLater(() -> {
+                            stage.close();
+                            Dialogs.showErrorMessage(
+                                    STRINGS.getString("name"), "Failed to prepare review tiles: " + err.getMessage());
+                        });
+                        return;
+                    }
+                    Platform.runLater(() -> {
+                        stage.close();
+                        onReady.accept(extractor);
+                    });
+                },
+                "celltune-tile-extract");
         t.setDaemon(true);
         t.start();
     }
 
-    private void launchReviewStageWithTiles(PopulationSet reviewPredictions,
-                                             TrainingTileExtractor extractor) {
-        var reviewController = new ReviewController(qupath, lastSampledCellIds,
-                reviewPredictions, lastSampledCellImageMap, lastSampledCellAnnotationsMap, extractor.getPreps());
+    private void launchReviewStageWithTiles(PopulationSet reviewPredictions, TrainingTileExtractor extractor) {
+        var reviewController = new ReviewController(
+                qupath,
+                lastSampledCellIds,
+                reviewPredictions,
+                lastSampledCellImageMap,
+                lastSampledCellAnnotationsMap,
+                extractor.getPreps());
         if (reviewController.size() == 0) {
             extractor.close();
-            Dialogs.showErrorMessage(STRINGS.getString("name"),
-                    "Could not resolve sampled cells in project images.");
+            Dialogs.showErrorMessage(STRINGS.getString("name"), "Could not resolve sampled cells in project images.");
             return;
         }
 
@@ -1251,7 +1331,8 @@ public class ClassificationPanel extends VBox {
 
                 final int mergedFinal = mergedToCurrent;
                 final int savedFinal = savedToOthers;
-                Dialogs.showInfoNotification(STRINGS.getString("name"),
+                Dialogs.showInfoNotification(
+                        STRINGS.getString("name"),
                         String.format(
                                 "Review complete: %d labels in current image, "
                                         + "%d saved to other project images (pooled on next train).",
@@ -1299,8 +1380,7 @@ public class ClassificationPanel extends VBox {
      * as detections in the given image.
      */
     private static LabelStore filterLabelStoreToImage(
-            LabelStore store,
-            qupath.lib.images.ImageData<java.awt.image.BufferedImage> imageData) {
+            LabelStore store, qupath.lib.images.ImageData<java.awt.image.BufferedImage> imageData) {
         var detections = imageData.getHierarchy().getDetectionObjects();
         var validIds = new java.util.HashSet<String>(detections.size());
         for (var det : detections) {
@@ -1320,9 +1400,10 @@ public class ClassificationPanel extends VBox {
         private final Map<String, String> cellToImage;
         private final Map<String, List<String>> cellToAnnotations;
 
-        private SamplingContext(PopulationSet predictions,
-                                Map<String, String> cellToImage,
-                                Map<String, List<String>> cellToAnnotations) {
+        private SamplingContext(
+                PopulationSet predictions,
+                Map<String, String> cellToImage,
+                Map<String, List<String>> cellToAnnotations) {
             this.predictions = predictions;
             this.cellToImage = cellToImage;
             this.cellToAnnotations = cellToAnnotations;
@@ -1354,8 +1435,7 @@ public class ClassificationPanel extends VBox {
      *     each image finishes loading; receives (completed, total). Use
      *     Platform.runLater inside the callback if updating UI.
      */
-    private SamplingContext buildSamplingContext(
-            java.util.function.BiConsumer<Integer, Integer> progressCallback) {
+    private SamplingContext buildSamplingContext(java.util.function.BiConsumer<Integer, Integer> progressCallback) {
         PopulationSet pooled = new PopulationSet("Pred_ALL");
         Map<String, String> cellToImage = new LinkedHashMap<>();
         // Per-cell annotation names captured at sample time, while we still
@@ -1383,22 +1463,31 @@ public class ClassificationPanel extends VBox {
         // Resolve current image's allowed-cells map (and annotation names per
         // cell). For the current image we always compute it because the
         // hierarchy is free — we just need to walk annotations once.
-        Map<String, List<String>> currentImageAnnotations = (imageData != null)
-                ? mapCellsToContainingAnnotations(imageData, annotationKeywords)
-                : Map.of();
-        Set<String> currentImageFilterIds = annotationFilterActive
-                ? currentImageAnnotations.keySet()
-                : null;
+        Map<String, List<String>> currentImageAnnotations =
+                (imageData != null) ? mapCellsToContainingAnnotations(imageData, annotationKeywords) : Map.of();
+        Set<String> currentImageFilterIds = annotationFilterActive ? currentImageAnnotations.keySet() : null;
 
         if (predAll != null && predAll.size() > 0) {
-            addPredictionsToSamplingPool(pooled, predAll, currentImageNameFinal,
-                    cellToImage, currentImageFilterIds, currentImageAnnotations, cellToAnnotations);
+            addPredictionsToSamplingPool(
+                    pooled,
+                    predAll,
+                    currentImageNameFinal,
+                    cellToImage,
+                    currentImageFilterIds,
+                    currentImageAnnotations,
+                    cellToAnnotations);
         } else if (project != null && currentImageNameFinal != null) {
             try {
                 var loadedCurrent = ProjectStateManager.loadImagePredictions(project, currentImageNameFinal);
                 if (loadedCurrent != null && loadedCurrent.size() > 0) {
-                    addPredictionsToSamplingPool(pooled, loadedCurrent, currentImageNameFinal,
-                            cellToImage, currentImageFilterIds, currentImageAnnotations, cellToAnnotations);
+                    addPredictionsToSamplingPool(
+                            pooled,
+                            loadedCurrent,
+                            currentImageNameFinal,
+                            cellToImage,
+                            currentImageFilterIds,
+                            currentImageAnnotations,
+                            cellToAnnotations);
                 }
             } catch (Exception ignored) {
             }
@@ -1444,34 +1533,29 @@ public class ClassificationPanel extends VBox {
             // ImageData per call so per-thread instances are independent.
             Map<String, Map<String, List<String>>> annotationsByImage;
             if (annotationFilterActive) {
-                int hierarchyThreads = Math.max(1, Math.min(4,
-                        Runtime.getRuntime().availableProcessors() / 2));
-                java.util.concurrent.ForkJoinPool hierPool =
-                        new java.util.concurrent.ForkJoinPool(hierarchyThreads);
+                int hierarchyThreads =
+                        Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+                java.util.concurrent.ForkJoinPool hierPool = new java.util.concurrent.ForkJoinPool(hierarchyThreads);
                 try {
                     annotationsByImage = hierPool.submit(() -> loaded.parallelStream()
-                            .filter(e -> e.getValue() != null && e.getValue().size() > 0)
-                            .map(e -> {
-                                var entry = entryByName.get(e.getKey());
-                                if (entry == null) return null;
-                                try {
-                                    var otherImageData = entry.readImageData();
-                                    Map<String, List<String>> m =
-                                            mapCellsToContainingAnnotations(otherImageData, annotationKeywords);
-                                    return m.isEmpty()
-                                            ? null
-                                            : new AbstractMap.SimpleEntry<>(e.getKey(), m);
-                                } catch (Exception ex) {
-                                    return null;
-                                }
-                            })
-                            .filter(java.util.Objects::nonNull)
-                            .collect(Collectors.toMap(
-                                    Map.Entry::getKey,
-                                    Map.Entry::getValue,
-                                    (a, b) -> a,
-                                    LinkedHashMap::new))
-                    ).get();
+                                    .filter(e ->
+                                            e.getValue() != null && e.getValue().size() > 0)
+                                    .map(e -> {
+                                        var entry = entryByName.get(e.getKey());
+                                        if (entry == null) return null;
+                                        try {
+                                            var otherImageData = entry.readImageData();
+                                            Map<String, List<String>> m =
+                                                    mapCellsToContainingAnnotations(otherImageData, annotationKeywords);
+                                            return m.isEmpty() ? null : new AbstractMap.SimpleEntry<>(e.getKey(), m);
+                                        } catch (Exception ex) {
+                                            return null;
+                                        }
+                                    })
+                                    .filter(java.util.Objects::nonNull)
+                                    .collect(Collectors.toMap(
+                                            Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new)))
+                            .get();
                 } catch (Exception ex) {
                     annotationsByImage = Map.of();
                 } finally {
@@ -1492,8 +1576,8 @@ public class ClassificationPanel extends VBox {
                     if (annoMap == null) continue; // no matching annotations in this image
                     allowedIds = annoMap.keySet();
                 }
-                addPredictionsToSamplingPool(pooled, ps, e.getKey(),
-                        cellToImage, allowedIds, annoMap, cellToAnnotations);
+                addPredictionsToSamplingPool(
+                        pooled, ps, e.getKey(), cellToImage, allowedIds, annoMap, cellToAnnotations);
             }
         }
 
@@ -1523,7 +1607,7 @@ public class ClassificationPanel extends VBox {
      * inside any annotation whose name contains one of the keywords
      * (case-insensitive substring match). Returns an empty set if no annotation
      * matches — caller treats that as "no eligible cells".
-    /**
+     * /**
      * Map detection IDs in {@code imageData} to the labels of all annotations
      * (matched by keyword substring; empty keyword list means "all named
      * annotations") whose ROI geometrically contains the detection's
@@ -1532,8 +1616,7 @@ public class ClassificationPanel extends VBox {
      * if no eligible annotations exist.
      */
     private static Map<String, List<String>> mapCellsToContainingAnnotations(
-            qupath.lib.images.ImageData<BufferedImage> imageData,
-            List<String> keywords) {
+            qupath.lib.images.ImageData<BufferedImage> imageData, List<String> keywords) {
         var hierarchy = imageData.getHierarchy();
         boolean filtering = keywords != null && !keywords.isEmpty();
         List<String> lowerKeywords = filtering
@@ -1590,13 +1673,14 @@ public class ClassificationPanel extends VBox {
         return null;
     }
 
-    private static void addPredictionsToSamplingPool(PopulationSet pooled,
-                                                     PopulationSet source,
-                                                     String imageName,
-                                                     Map<String, String> cellToImage,
-                                                     Set<String> allowedCellIds,
-                                                     Map<String, List<String>> sourceAnnotations,
-                                                     Map<String, List<String>> cellToAnnotations) {
+    private static void addPredictionsToSamplingPool(
+            PopulationSet pooled,
+            PopulationSet source,
+            String imageName,
+            Map<String, String> cellToImage,
+            Set<String> allowedCellIds,
+            Map<String, List<String>> sourceAnnotations,
+            Map<String, List<String>> cellToAnnotations) {
         if (source == null || source.size() == 0) return;
         String safeImageName = (imageName == null || imageName.isBlank()) ? "image" : imageName;
 
@@ -1618,12 +1702,15 @@ public class ClassificationPanel extends VBox {
     }
 
     private boolean sampleForReviewBatch(SamplingContext samplingContext, int sampleSize) {
-        if (samplingContext == null || samplingContext.predictions() == null
-                || samplingContext.predictions().size() == 0 || sampleSize <= 0) {
+        if (samplingContext == null
+                || samplingContext.predictions() == null
+                || samplingContext.predictions().size() == 0
+                || sampleSize <= 0) {
             return false;
         }
 
-        Set<String> reviewedCellIds = buildReviewedCellIdsForSampling(qupath, activeBinaryMarker, labelStore, lastSampledCellIds);
+        Set<String> reviewedCellIds =
+                buildReviewedCellIdsForSampling(qupath, activeBinaryMarker, labelStore, lastSampledCellIds);
         lastSampledCellIds = UncertaintySampler.sample(
                 samplingContext.predictions(),
                 classifier.getClassNames(),
@@ -1732,9 +1819,7 @@ public class ClassificationPanel extends VBox {
                 // (foreign labels written by older buggy code) gets cleaned up on
                 // the next save.
                 java.util.Set<String> binaryFilter = null;
-                if (activeBinaryMarker != null
-                        && activeBinaryClassNames != null
-                        && !activeBinaryClassNames.isEmpty()) {
+                if (activeBinaryMarker != null && activeBinaryClassNames != null && !activeBinaryClassNames.isEmpty()) {
                     binaryFilter = new java.util.LinkedHashSet<>(activeBinaryClassNames);
                     delta.retainClasses(binaryFilter);
                     if (delta.size() == 0) continue;
@@ -1755,10 +1840,7 @@ public class ClassificationPanel extends VBox {
     }
 
     private static Set<String> buildReviewedCellIdsForSampling(
-            QuPathGUI qupath,
-            String scope,
-            LabelStore labels,
-            List<String> previouslySampledIds) {
+            QuPathGUI qupath, String scope, LabelStore labels, List<String> previouslySampledIds) {
         Set<String> reviewed = new LinkedHashSet<>();
         if (labels != null) {
             reviewed.addAll(labels.getAllLabels().keySet());
@@ -1769,11 +1851,13 @@ public class ClassificationPanel extends VBox {
 
         if (qupath != null && qupath.getProject() != null) {
             @SuppressWarnings("unchecked")
-            var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+            var entries = (List<ProjectImageEntry<BufferedImage>>)
+                    (List<?>) qupath.getProject().getImageList();
             for (var entry : entries) {
                 if (entry == null || entry.getImageName() == null) continue;
                 try {
-                    LabelStore imageLabels = ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
+                    LabelStore imageLabels =
+                            ProjectStateManager.loadImageLabels(qupath.getProject(), scope, entry.getImageName());
                     if (imageLabels != null) {
                         reviewed.addAll(imageLabels.getAllLabels().keySet());
                     }

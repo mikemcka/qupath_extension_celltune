@@ -1,12 +1,11 @@
 package qupath.ext.celltune.ui;
 
-import org.junit.jupiter.api.Test;
-
-import java.util.Random;
-
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.Random;
+import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link DistanceMeasurementsDialog#sameClassNearestNeighbourDistances}.
@@ -20,15 +19,14 @@ class DistanceMeasurementsDialogTest {
 
     @Test
     void emptyInputReturnsEmptyArray() {
-        double[] out = DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(
-                new double[0], new double[0]);
+        double[] out = DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(new double[0], new double[0]);
         assertEquals(0, out.length);
     }
 
     @Test
     void singlePointReturnsNaN() {
-        double[] out = DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(
-                new double[]{1.0}, new double[]{2.0});
+        double[] out =
+                DistanceMeasurementsDialog.sameClassNearestNeighbourDistances(new double[] {1.0}, new double[] {2.0});
         assertEquals(1, out.length);
         assertTrue(Double.isNaN(out[0]), "Single point has no neighbour");
     }

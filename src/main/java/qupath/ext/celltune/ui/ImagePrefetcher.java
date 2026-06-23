@@ -1,13 +1,12 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.util.concurrent.ExecutorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.util.BackgroundExecutors;
 import qupath.lib.images.ImageData;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.util.concurrent.ExecutorService;
 
 /**
  * Background prefetcher for the cross-image review flow. Warms QuPath's caches
@@ -23,8 +22,7 @@ final class ImagePrefetcher {
 
     private static final Logger logger = LoggerFactory.getLogger(ImagePrefetcher.class);
 
-    private final ExecutorService executor =
-            BackgroundExecutors.newSingleThread("CellTune-ReviewPrefetch");
+    private final ExecutorService executor = BackgroundExecutors.newSingleThread("CellTune-ReviewPrefetch");
 
     /** Image name most recently submitted for prefetch, to avoid duplicate work. */
     private volatile String lastPrefetchedImageName;

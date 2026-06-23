@@ -1,5 +1,12 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -25,14 +32,6 @@ import qupath.ext.celltune.io.ProjectSummaryCsvExporter;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashSet;
-import java.util.List;
 
 /**
  * Dialog that summarizes per-image prediction agreement/disagreement counts
@@ -90,38 +89,38 @@ public class ProjectPredictionSummaryView {
         table = new TableView<>(filteredRows);
 
         TableColumn<Row, String> imageCol = new TableColumn<>("Image");
-        imageCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().imageName()));
+        imageCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(cd.getValue().imageName()));
         imageCol.setMinWidth(240);
 
         TableColumn<Row, Number> predictedCol = new TableColumn<>("Predicted");
-        predictedCol.setCellValueFactory(cd ->
-                new SimpleObjectProperty<>(cd.getValue().predictedCells()));
+        predictedCol.setCellValueFactory(
+                cd -> new SimpleObjectProperty<>(cd.getValue().predictedCells()));
         predictedCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<Row, Number> agreementsCol = new TableColumn<>("Agreements");
-        agreementsCol.setCellValueFactory(cd ->
-                new SimpleObjectProperty<>(cd.getValue().agreements()));
+        agreementsCol.setCellValueFactory(
+                cd -> new SimpleObjectProperty<>(cd.getValue().agreements()));
         agreementsCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<Row, Number> disagreementsCol = new TableColumn<>("Disagreements");
-        disagreementsCol.setCellValueFactory(cd ->
-                new SimpleObjectProperty<>(cd.getValue().disagreements()));
+        disagreementsCol.setCellValueFactory(
+                cd -> new SimpleObjectProperty<>(cd.getValue().disagreements()));
         disagreementsCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<Row, String> agreementRateCol = new TableColumn<>("Agreement %");
-        agreementRateCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().agreementRate()));
+        agreementRateCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(cd.getValue().agreementRate()));
         agreementRateCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<Row, Number> anomalyCol = new TableColumn<>("Anomaly");
-        anomalyCol.setCellValueFactory(cd ->
-                new SimpleObjectProperty<>(cd.getValue().anomalyScore()));
+        anomalyCol.setCellValueFactory(
+                cd -> new SimpleObjectProperty<>(cd.getValue().anomalyScore()));
         anomalyCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         TableColumn<Row, String> flaggedCol = new TableColumn<>("Flagged");
-        flaggedCol.setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().flagged() ? "Yes" : "No"));
+        flaggedCol.setCellValueFactory(
+                cd -> new SimpleStringProperty(cd.getValue().flagged() ? "Yes" : "No"));
         flaggedCol.setStyle("-fx-alignment: CENTER;");
 
         table.getColumns().add(imageCol);
@@ -146,8 +145,7 @@ public class ProjectPredictionSummaryView {
         detailsArea.setWrapText(true);
         detailsArea.setPrefRowCount(7);
 
-        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) ->
-                showDetailsFor(newRow));
+        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> showDetailsFor(newRow));
 
         flaggedOnlyBox = new CheckBox("Flagged only");
 
@@ -168,12 +166,7 @@ public class ProjectPredictionSummaryView {
         Label targetClassLabel = new Label("Target class:");
         Label presetLabel = new Label("Threshold preset:");
 
-        HBox filtersRow = new HBox(10,
-                flaggedOnlyBox,
-                targetClassLabel,
-                targetClassBox,
-                presetLabel,
-                presetBox);
+        HBox filtersRow = new HBox(10, flaggedOnlyBox, targetClassLabel, targetClassBox, presetLabel, presetBox);
         filtersRow.setAlignment(Pos.CENTER_LEFT);
 
         Button openImageButton = new Button("Open Selected Image");
@@ -264,10 +257,7 @@ public class ProjectPredictionSummaryView {
 
         summaryLabel.setText(String.format(
                 "Displayed: %d / %d images | with predictions: %d | flagged: %d",
-                filteredRows.size(),
-                rows.size(),
-                withPredictions,
-                flaggedCount));
+                filteredRows.size(), rows.size(), withPredictions, flaggedCount));
     }
 
     private List<String> buildTargetClassOptions(List<Row> allRows) {
@@ -313,14 +303,14 @@ public class ProjectPredictionSummaryView {
         }
 
         @SuppressWarnings("unchecked")
-        var entries = (List<ProjectImageEntry<BufferedImage>>) (List<?>) qupath.getProject().getImageList();
+        var entries = (List<ProjectImageEntry<BufferedImage>>)
+                (List<?>) qupath.getProject().getImageList();
         var entryOpt = entries.stream()
                 .filter(e -> e != null && selected.imageName().equals(e.getImageName()))
                 .findFirst();
 
         if (entryOpt.isEmpty()) {
-            Dialogs.showErrorMessage(TITLE,
-                    "Could not find image in project: " + selected.imageName());
+            Dialogs.showErrorMessage(TITLE, "Could not find image in project: " + selected.imageName());
             return;
         }
 
@@ -340,8 +330,7 @@ public class ProjectPredictionSummaryView {
 
         boolean opened = qupath.openImageEntry(entryOpt.get());
         if (!opened) {
-            Dialogs.showErrorMessage(TITLE,
-                    "QuPath could not open image: " + selected.imageName());
+            Dialogs.showErrorMessage(TITLE, "QuPath could not open image: " + selected.imageName());
         }
     }
 
@@ -354,8 +343,7 @@ public class ProjectPredictionSummaryView {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Export Project Prediction Summary CSV");
         chooser.setInitialFileName("celltune_project_prediction_summary.csv");
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
 
         File out = chooser.showSaveDialog(stage);
         if (out == null) {
@@ -374,8 +362,7 @@ public class ProjectPredictionSummaryView {
                     row.flagged(),
                     row.flagReasons(),
                     row.rareEnrichmentText(),
-                    row.classCountsText()
-            ));
+                    row.classCountsText()));
         }
 
         try {
