@@ -4,7 +4,6 @@
 
 A [QuPath](https://qupath.github.io/) 0.7 extension that brings **CellTune-style active learning** to cell classification. It trains two gradient-boosted models (XGBoost + LightGBM) simultaneously, identifies cells where the models disagree, and presents those disputed cells for human review — creating an iterative loop that progressively improves classification accuracy.
 
-No Python dependency is required. Everything runs inside QuPath using Java/JavaFX.
 
 ## Features
 
@@ -56,7 +55,7 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 ## Quick Start
 
 1. **Open a project** with an image that has cell detections (run *Analyze > Cell detection* first if needed)
-2. **Label seed cells** — create point annotations on detected cells, then set the annotation's class (e.g. `CD4T`, `Bcell`, `Macrophage`). Aim for ≥10 cells per class.
+2. **Label seed cells** — create point annotations on detected cells, then set the annotation's class (e.g. `CD4T`, `Bcell`, `Macrophage`). Aim for ≥20-30 cells per class.
 3. **Import a marker table** (optional) — *Extensions > CellTune Classifier > Import Marker Table* — a CSV mapping cell types to up to 3 marker channel names, used for auto-channel switching during review
 4. **Select features** (optional) — *Extensions > CellTune Classifier > Select Features* — choose which measurements to include in training. Features are shown in a grouped, searchable checkbox tree (one group per marker, plus Morphology / Shape, Neighbors, Embeddings, and Other / Uncategorized) so 1000+-column panels stay navigable.
 5. **Normalise features** (optional) — *Extensions > CellTune Classifier > Normalise Features* — apply arcsinh or sqrt transforms to selected features. Use cofactor=1 for fluorescence (COMET, CODEX) or cofactor=100 for mass spectrometry (MIBI, IMC).
@@ -125,7 +124,6 @@ Optional per-feature transforms can be applied before training and inference:
 ## TODO / Future Exploration
 - tab pfn model wrapper
 - chatbot integration through mcp
-- **Swap the k-means clustering library to relax licensing** — replace Smile's k-means (used by the cell scatter plot / clustering) with an Apache-2.0–licensed implementation such as [Apache Spark MLlib](https://spark.apache.org/mllib/) (Apache-2.0), to remove Smile's GPL-3.0 constraint on the bundled JAR. Note: Smile also supplies the scatter plot's **PCA** and **UMAP**, so fully dropping the GPL dependency would mean replacing those too; and Spark is a heavyweight dependency, so a lighter Apache-2.0 k-means may be preferable.
 
 ## License
 
