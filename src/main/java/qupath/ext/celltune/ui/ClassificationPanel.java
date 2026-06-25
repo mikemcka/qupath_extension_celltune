@@ -217,13 +217,15 @@ public class ClassificationPanel extends VBox {
                 new Tooltip("After training, compute and display top 10 features by mean |SHAP| value per class"));
 
         autoPruneCheckBox.setSelected(true);
-        autoPruneCheckBox.setTooltip(
-                new Tooltip("Before training, examine the labelled cells and drop features that are\n"
-                        + "near-constant or highly correlated with another feature from the\n"
-                        + "same marker. Rare-marker guardrail keeps the best feature for any\n"
-                        + "marker that would otherwise be dropped entirely. The full\n"
-                        + "measurement set on disk is never touched — only the columns used\n"
-                        + "by this training run are reduced."));
+        autoPruneCheckBox.setTooltip(new Tooltip("After labels are pooled across images and normalised, examine the\n"
+                + "full training matrix and drop features that are near-constant or\n"
+                + "highly correlated with another feature from the same marker.\n"
+                + "Pruning on the pooled set (not just the current image) means a\n"
+                + "feature is only dropped when it is redundant across the whole\n"
+                + "cohort. Rare-marker guardrail keeps the best feature for any marker\n"
+                + "that would otherwise be dropped entirely. The full measurement set\n"
+                + "on disk is never touched — only the columns used by this training\n"
+                + "run are reduced."));
 
         // ── Status row ──
         clearImportedButton.setTooltip(
@@ -412,6 +414,22 @@ public class ClassificationPanel extends VBox {
 
     public void setFeatureNormalizer(FeatureNormalizer normalizer) {
         this.featureNormalizer = normalizer;
+    }
+
+    /**
+     * Apply the per-feature normaliser to a single row already aligned to
+     * {@code featureNames}, mirroring how {@link CellFeatureExtractor#extractRow}
+     * treats image-derived cells (non-finite values coerced to {@code 0} before the
+     * transform). Used to normalise imported training rows so they share the same
+     * scale as pooled cell rows. Returns a new array; the input is left untouched.
+     */
+    private static float[] normaliseRow(float[] row, List<String> featureNames, FeatureNormalizer normalizer) {
+        float[] out = new float[row.length];
+        for (int i = 0; i < row.length; i++) {
+            float v = Float.isFinite(row[i]) ? row[i] : 0f;
+            out[i] = normalizer == null ? v : normalizer.apply(featureNames.get(i), v);
+        }
+        return out;
     }
 
     public void setSelectedFeatures(List<String> features) {
@@ -633,39 +651,17 @@ public class ClassificationPanel extends VBox {
         }
         final String restrictPreambleFinal = restrictPreamble;
 
-        // ── Auto-prune features against labelled cells (non-destructive) ───
-        // Runs every train so the kept set adapts as more labels are added.
-        // Pruning only filters this run's feature list; measurements on disk
-        // are untouched. Rare-marker guardrail is on by default.
-        String prunePreamble = null;
-        if (autoPruneCheckBox.isSelected() && featureNames.size() > 20 && labelStore.size() >= 10) {
-            List<PathObject> labelledCells = new ArrayList<>();
-            var labelMap = labelStore.getAllLabels();
-            for (PathObject cell : detections) {
-                if (labelMap.containsKey(cell.getID().toString())) {
-                    labelledCells.add(cell);
-                }
-            }
-            if (labelledCells.size() >= 10) {
-                int before = featureNames.size();
-                FeaturePruner.PruneResult pr =
-                        FeaturePruner.prune(labelledCells, featureNames, FeaturePruner.PruneOptions.defaults(), null);
-                if (!pr.keptFeatures().isEmpty() && pr.keptFeatures().size() < before) {
-                    featureNames = pr.keptFeatures();
-                    prunePreamble = String.format(
-                            "Auto-prune: %d → %d features (dropped %d near-constant, %d redundant; %d labelled cells)",
-                            before,
-                            pr.keptFeatures().size(),
-                            pr.droppedConstant(),
-                            pr.droppedWithinMarker(),
-                            labelledCells.size());
-                }
-            }
-        }
-        final String prunePreambleFinal = prunePreamble;
+        // ── Auto-prune is deferred until AFTER label pooling + normalisation ──
+        // Near-constant/redundant decisions depend on the data they are measured
+        // against, so pruning here (current image only, raw measurements) would
+        // judge variance/correlation on an unrepresentative subset — and worse,
+        // gate which columns are even read from the pooled images. We only capture
+        // the intent now; the prune runs on the background thread once the full,
+        // normalised training matrix (current + pooled + imported) is assembled.
+        final boolean autoPruneEnabled = autoPruneCheckBox.isSelected() && featureNames.size() > 20;
 
-        CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
-        extractor.setNormalizer(featureNormalizer);
+        // The feature extractor is built on the background thread once auto-prune
+        // has decided the final kept-feature set against the pooled training matrix.
         if (classifier == null) classifier = new DualModelClassifier();
 
         // Apply model types from combos
@@ -709,9 +705,6 @@ public class ClassificationPanel extends VBox {
         progressStage.show();
         if (restrictPreambleFinal != null) {
             logArea.appendText(restrictPreambleFinal + "\n");
-        }
-        if (prunePreambleFinal != null) {
-            logArea.appendText(prunePreambleFinal + "\n");
         }
 
         dlgProgressBar.progressProperty().bind(classifier.progressProperty());
@@ -760,29 +753,121 @@ public class ClassificationPanel extends VBox {
                             ProjectStateManager.backupLabels(projectRef, backupImageName, storeCopy);
                         }
 
-                        // Collect supplementary training data from other project images
-                        List<float[]> supplementaryRows = null;
-                        List<String> supplementaryLabels = null;
-
+                        // Pool labelled cells from other project images. These are
+                        // real cells carrying the full feature panel, already
+                        // normalised during extraction, so they take part in the
+                        // auto-prune decision below.
+                        List<float[]> pooledRows = null;
+                        List<String> pooledLabels = null;
                         if (poolAllImages && projectRef != null) {
                             var pooled = TrainingOrchestrator.poolLabelsFromOtherImages(
                                     projectRef, imageData, scope, finalFeatureNames, featureNormalizer, trainLog);
-                            supplementaryRows = pooled.rows();
-                            supplementaryLabels = pooled.labels();
+                            pooledRows = pooled.rows();
+                            pooledLabels = pooled.labels();
                         }
 
-                        // Always include explicitly imported training rows (if any).
+                        // Explicitly imported training rows (if any), aligned to the
+                        // full panel and normalised the same way image-derived rows
+                        // are. Imported rows may carry a different/partial panel
+                        // (zero-filled where unmapped), so they are EXCLUDED from the
+                        // prune decision — but they are still trained on.
+                        List<float[]> importedRows = null;
+                        List<String> importedLabels = null;
                         var pooledImported = DataPoolingService.poolImportedRows(
                                 importedRowsSnapshot, importedFeatureNamesSnapshot, finalFeatureNames);
                         if (pooledImported.addedCount() > 0) {
-                            if (supplementaryRows == null) supplementaryRows = new ArrayList<>();
-                            if (supplementaryLabels == null) supplementaryLabels = new ArrayList<>();
-                            supplementaryRows.addAll(pooledImported.rows());
-                            supplementaryLabels.addAll(pooledImported.labels());
+                            importedRows = new ArrayList<>(pooledImported.rows().size());
+                            for (float[] row : pooledImported.rows()) {
+                                importedRows.add(normaliseRow(row, finalFeatureNames, featureNormalizer));
+                            }
+                            importedLabels = pooledImported.labels();
                             trainLog.accept("Merged " + pooledImported.addedCount() + " imported training rows ("
                                     + pooledImported.mappedFeatureCount() + "/" + finalFeatureNames.size()
-                                    + " features aligned).");
+                                    + " features aligned, normalised; excluded from pruning).");
                         }
+
+                        // ── Auto-prune on the pooled, normalised cell matrix ──
+                        // Decisions use the current image's labelled cells plus the
+                        // cells pooled from other images — the data the models train
+                        // on. Imported rows are deliberately left out so a partial /
+                        // zero-filled imported panel can't distort the variance and
+                        // correlation estimates that drive pruning.
+                        List<String> effectiveFeatureNames = finalFeatureNames;
+                        int[] keepIdx = null;
+                        if (autoPruneEnabled) {
+                            List<float[]> pruneRows = new ArrayList<>();
+                            CellFeatureExtractor fullExtractor =
+                                    new CellFeatureExtractor(finalFeatureNames, featureNormalizer);
+                            var labelMap = storeCopy.getAllLabels();
+                            for (PathObject cell : detections) {
+                                if (labelMap.containsKey(cell.getID().toString())) {
+                                    pruneRows.add(fullExtractor.extractRow(cell));
+                                }
+                            }
+                            if (pooledRows != null) {
+                                pruneRows.addAll(pooledRows);
+                            }
+                            if (pruneRows.size() >= 10) {
+                                int before = finalFeatureNames.size();
+                                FeaturePruner.PruneResult pr = FeaturePruner.prune(
+                                        pruneRows.toArray(new float[0][]),
+                                        finalFeatureNames,
+                                        FeaturePruner.PruneOptions.defaults(),
+                                        null);
+                                if (!pr.keptFeatures().isEmpty()
+                                        && pr.keptFeatures().size() < before) {
+                                    effectiveFeatureNames = pr.keptFeatures();
+                                    Map<String, Integer> fullIndex = new HashMap<>();
+                                    for (int i = 0; i < finalFeatureNames.size(); i++) {
+                                        fullIndex.put(finalFeatureNames.get(i), i);
+                                    }
+                                    keepIdx = new int[effectiveFeatureNames.size()];
+                                    for (int k = 0; k < effectiveFeatureNames.size(); k++) {
+                                        keepIdx[k] = fullIndex.get(effectiveFeatureNames.get(k));
+                                    }
+                                    trainLog.accept(String.format(
+                                            "Auto-prune: %d → %d features (dropped %d near-constant, %d redundant;"
+                                                    + " %d labelled cells)",
+                                            before,
+                                            pr.keptFeatures().size(),
+                                            pr.droppedConstant(),
+                                            pr.droppedWithinMarker(),
+                                            pruneRows.size()));
+                                }
+                            }
+                        }
+
+                        // Assemble the supplementary rows (pooled + imported) the
+                        // trainer appends to the current image, subsetting to the kept
+                        // columns when pruning fired so every row stays aligned.
+                        List<float[]> supplementaryRows = null;
+                        List<String> supplementaryLabels = null;
+                        if (pooledRows != null || importedRows != null) {
+                            supplementaryRows = new ArrayList<>();
+                            supplementaryLabels = new ArrayList<>();
+                            if (pooledRows != null) {
+                                supplementaryRows.addAll(pooledRows);
+                                supplementaryLabels.addAll(pooledLabels);
+                            }
+                            if (importedRows != null) {
+                                supplementaryRows.addAll(importedRows);
+                                supplementaryLabels.addAll(importedLabels);
+                            }
+                            if (keepIdx != null) {
+                                List<float[]> subset = new ArrayList<>(supplementaryRows.size());
+                                for (float[] row : supplementaryRows) {
+                                    float[] kept = new float[keepIdx.length];
+                                    for (int k = 0; k < keepIdx.length; k++) {
+                                        kept[k] = row[keepIdx[k]];
+                                    }
+                                    subset.add(kept);
+                                }
+                                supplementaryRows = subset;
+                            }
+                        }
+
+                        CellFeatureExtractor extractor =
+                                new CellFeatureExtractor(effectiveFeatureNames, featureNormalizer);
 
                         classifier.trainAndPredict(
                                 detections,

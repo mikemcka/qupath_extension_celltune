@@ -120,8 +120,73 @@ public final class FeaturePruner {
                     0);
         }
 
+        // Materialise raw measurements into a dense [cell][feature] matrix and
+        // delegate to the shared matrix-based pruner. Callers that already hold
+        // pre-extracted (e.g. normalised, cross-image pooled) rows should call the
+        // float[][] overload directly so pruning sees the same values the models
+        // train on, rather than one image's raw measurements.
+        final int nFeatures = featureNames.size();
         final PathObject[] cells = detections.toArray(new PathObject[0]);
         final int nCells = cells.length;
+        final String[] names = featureNames.toArray(new String[0]);
+        final float[][] data = new float[nCells][nFeatures];
+        IntStream.range(0, nFeatures).parallel().forEach(j -> {
+            String name = names[j];
+            for (int i = 0; i < nCells; i++) {
+                double v = cells[i].getMeasurementList().get(name);
+                data[i][j] = Double.isNaN(v) ? 0f : (float) v;
+            }
+        });
+        return pruneMatrix(data, featureNames, opts, progress);
+    }
+
+    /**
+     * Prune from pre-extracted feature rows. Use this overload when pruning should
+     * reflect the full training matrix the models will actually see — e.g. the
+     * normalised, cross-image pooled rows assembled before training — rather than a
+     * single image's raw measurements. Each row must be aligned to {@code featureNames}.
+     *
+     * @param rows         feature rows, each of length {@code featureNames.size()}
+     * @param featureNames feature-column ordering
+     * @param opts         pruning options
+     * @param progress     optional progress sink (may be {@code null})
+     * @return pruning result; never {@code null}
+     */
+    public static PruneResult prune(
+            float[][] rows, List<String> featureNames, PruneOptions opts, Consumer<String> progress) {
+        if (featureNames == null || featureNames.isEmpty()) {
+            return new PruneResult(List.of(), 0, 0, 0, 0, List.of(), List.of(), List.of(), 0);
+        }
+        if (rows == null || rows.length == 0) {
+            return new PruneResult(
+                    List.copyOf(featureNames),
+                    featureNames.size(),
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    groupKeys(featureNames),
+                    List.of(),
+                    0);
+        }
+        final int nFeatures = featureNames.size();
+        for (float[] row : rows) {
+            if (row == null || row.length != nFeatures) {
+                throw new IllegalArgumentException("Each prune row must have length " + nFeatures + " (got "
+                        + (row == null ? "null" : row.length) + ")");
+            }
+        }
+        return pruneMatrix(rows, featureNames, opts, progress);
+    }
+
+    /**
+     * Shared core: prune a dense {@code [cell][feature]} matrix. Both public
+     * {@code prune} overloads funnel here so the sparsity/variance and correlation
+     * logic lives in one place.
+     */
+    private static PruneResult pruneMatrix(
+            float[][] data, List<String> featureNames, PruneOptions opts, Consumer<String> progress) {
+        final int nCells = data.length;
         final int nFeatures = featureNames.size();
         final String[] names = featureNames.toArray(new String[0]);
 
@@ -139,12 +204,11 @@ public final class FeaturePruner {
         final double[][] z = new double[nFeatures][];
 
         IntStream.range(0, nFeatures).parallel().forEach(j -> {
-            String name = names[j];
             double s = 0.0, ss = 0.0;
             int nz = 0;
             double[] raw = new double[nCells];
             for (int i = 0; i < nCells; i++) {
-                double v = cells[i].getMeasurementList().get(name);
+                double v = data[i][j];
                 if (Double.isNaN(v)) v = 0.0;
                 raw[i] = v;
                 s += v;
