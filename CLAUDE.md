@@ -17,7 +17,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 chmod +x gradlew
 ./gradlew clean compileJava
 ./gradlew test
-./gradlew shadowJar    # → build/libs/qupath-extension-celltune-0.1.0-all.jar
+./gradlew shadowJar    # → build/libs/qupath-extension-celltune-0.1.1-all.jar
 ```
 
 ```powershell
