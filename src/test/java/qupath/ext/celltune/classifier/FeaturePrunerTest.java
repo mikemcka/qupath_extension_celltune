@@ -84,4 +84,42 @@ class FeaturePrunerTest {
                 IllegalArgumentException.class,
                 () -> FeaturePruner.prune(rows, names, FeaturePruner.PruneOptions.defaults(), null));
     }
+
+    @Test
+    void groupsByColonThenUnderscoreThenSpace() {
+        // Marker convention: text before the first ": ".
+        assertEquals("CD3", FeaturePruner.extractGroup("CD3: Cell: Mean"));
+        // ": " wins even when a space appears earlier.
+        assertEquals("Some Marker", FeaturePruner.extractGroup("Some Marker: Mean"));
+        // No colon -> token before the first underscore.
+        assertEquals("kronos", FeaturePruner.extractGroup("kronos_emb_0"));
+        assertEquals("embedding", FeaturePruner.extractGroup("embedding_12"));
+        // No colon -> token before the first space.
+        assertEquals("Distance", FeaturePruner.extractGroup("Distance to tumor"));
+        // Underscore and space both present, no colon -> whichever is earlier wins.
+        assertEquals("kronos", FeaturePruner.extractGroup("kronos_emb dim"));
+        assertEquals("Distance", FeaturePruner.extractGroup("Distance to tumor_region"));
+        // No recognised separator -> own singleton group.
+        assertEquals("solo", FeaturePruner.extractGroup("solo"));
+        // Separator at position 0 -> whole name (empty prefix not allowed).
+        assertEquals("_lead", FeaturePruner.extractGroup("_lead"));
+    }
+
+    @Test
+    void underscoreGroupedFeaturesAreDeduplicated() {
+        // Two perfectly-correlated kronos embedding dims now share the "kronos" group,
+        // so within-marker correlation removal drops one (previously each was a
+        // singleton and neither was ever compared).
+        List<String> names = List.of("kronos_emb_0", "kronos_emb_1", "Distance to tumor");
+        // emb_1 == 3 * emb_0 -> |r| = 1 within the kronos group; distance is independent.
+        float[][] rows = {
+            {1f, 3f, 9f}, {2f, 6f, 1f}, {3f, 9f, 7f}, {4f, 12f, 2f}, {5f, 15f, 8f}, {6f, 18f, 3f},
+        };
+        FeaturePruner.PruneResult pr = FeaturePruner.prune(rows, names, OPTS, null);
+        assertEquals(1, pr.droppedWithinMarker());
+        assertTrue(pr.keptFeatures().contains("Distance to tumor"));
+        assertTrue(
+                pr.keptFeatures().contains("kronos_emb_0") ^ pr.keptFeatures().contains("kronos_emb_1"),
+                "exactly one of the two correlated kronos embeddings survives");
+    }
 }

@@ -371,15 +371,38 @@ public final class FeaturePruner {
     }
 
     /**
-     * Extract the marker-group key for a feature.
-     * <p>Convention: text before the first {@code ": "} separator. Features
-     * without that separator form their own singleton group keyed by the full
-     * feature name.
+     * Extract the marker-group key for a feature, so within-group redundant features
+     * can be deduplicated and a guardrail can keep at least one per group.
+     *
+     * <p>Separators are tried in priority order:
+     *
+     * <ol>
+     *   <li>{@code ": "} — the marker convention ({@code "CD3: Cell: Mean" -> "CD3"}).
+     *       Checked first so it always wins, even over an earlier space
+     *       ({@code "Some Marker: Mean" -> "Some Marker"}).
+     *   <li>otherwise, the first {@code '_'} or {@code ' '} — whichever appears
+     *       earlier ({@code "kronos_emb_0" -> "kronos"}, {@code "Distance to tumor" -> "Distance"}).
+     * </ol>
+     *
+     * <p>A feature with no recognised separator (or one only at position 0) forms its
+     * own singleton group keyed by the full feature name. Group keys are
+     * case-sensitive and preserve the original prefix.
      */
     public static String extractGroup(String featureName) {
+        // Marker-style "PREFIX: ..." takes priority regardless of other separators.
         int colon = featureName.indexOf(": ");
-        if (colon <= 0) return featureName;
-        return featureName.substring(0, colon);
+        if (colon > 0) return featureName.substring(0, colon);
+        // Otherwise group by the token before the first underscore or space.
+        int cut = firstSeparator(featureName.indexOf('_'), featureName.indexOf(' '));
+        if (cut > 0) return featureName.substring(0, cut);
+        return featureName;
+    }
+
+    /** Smaller of two {@code indexOf} results, ignoring {@code -1} (not found). */
+    private static int firstSeparator(int a, int b) {
+        if (a < 0) return b;
+        if (b < 0) return a;
+        return Math.min(a, b);
     }
 
     private static List<String> groupKeys(List<String> featureNames) {
