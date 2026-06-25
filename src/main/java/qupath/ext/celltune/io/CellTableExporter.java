@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -267,10 +268,16 @@ public class CellTableExporter {
         return "Annotation";
     }
 
-    /** Return the cell's PathClass name, or empty string if unclassified. */
+    /**
+     * Return the cell's full classification, or empty string if unclassified.
+     * Uses {@link PathClass#toString()} rather than {@link PathClass#getName()}
+     * so that composite/derived classes are written in full (e.g.
+     * {@code "CD8-: GrB-: HLA-DR-: PD-1-: TCR-"}); {@code getName()} would return
+     * only the leaf segment ({@code "TCR-"}).
+     */
     private static String classificationName(PathObject cell) {
         PathClass cls = cell.getPathClass();
-        return cls != null ? cls.getName() : "";
+        return cls != null ? cls.toString() : "";
     }
 
     /**
@@ -287,15 +294,15 @@ public class CellTableExporter {
         StringBuilder sb = new StringBuilder("POLYGON ((");
         for (int i = 0; i < points.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(String.format("%.2f", points.get(i).getX() * pixelWidthMicrons))
+            sb.append(String.format(Locale.ROOT, "%.2f", points.get(i).getX() * pixelWidthMicrons))
                     .append(" ")
-                    .append(String.format("%.2f", points.get(i).getY() * pixelHeightMicrons));
+                    .append(String.format(Locale.ROOT, "%.2f", points.get(i).getY() * pixelHeightMicrons));
         }
         // Close the ring (WKT requires first == last point)
         sb.append(", ")
-                .append(String.format("%.2f", points.get(0).getX() * pixelWidthMicrons))
+                .append(String.format(Locale.ROOT, "%.2f", points.get(0).getX() * pixelWidthMicrons))
                 .append(" ")
-                .append(String.format("%.2f", points.get(0).getY() * pixelHeightMicrons));
+                .append(String.format(Locale.ROOT, "%.2f", points.get(0).getY() * pixelHeightMicrons));
         sb.append("))");
         return sb.toString();
     }
@@ -306,6 +313,6 @@ public class CellTableExporter {
     }
 
     private static String fmt(double v) {
-        return Double.isNaN(v) ? "NA" : String.format("%.2f", v);
+        return Double.isNaN(v) ? "NA" : String.format(Locale.ROOT, "%.2f", v);
     }
 }

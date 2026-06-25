@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
+import qupath.lib.objects.classes.PathClass;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
@@ -95,5 +96,24 @@ class CellTableExporterTest {
         // Last two fields: selected CD8 value, then NA for the missing feature.
         assertEquals("1.5", fields[fields.length - 2]);
         assertEquals("NA", fields[fields.length - 1]);
+    }
+
+    @Test
+    void exportsFullCompositeClassificationNotJustLeaf(@TempDir Path dir) throws IOException {
+        ROI roi = ROIs.createPolygonROI(
+                new double[] {10, 30, 30, 10}, new double[] {20, 20, 40, 40}, ImagePlane.getDefaultPlane());
+        PathObject cell = PathObjects.createDetectionObject(roi);
+        // Composite/derived class as produced by CompositeClassifier.
+        cell.setPathClass(PathClass.fromString("CD8-:GrB-:HLA-DR-:PD-1-:TCR-"));
+
+        Path file = dir.resolve("composite.csv");
+        CellTableExporter.export(file, List.of(cell), List.of(), "img-a", List.of(), 1.0, 1.0, false, false);
+        String[] lines = Files.readString(file, StandardCharsets.UTF_8).split("\\R");
+
+        // Classification is column index 5 (Image, CellID, CentroidX_um,
+        // CentroidY_um, Area_um2, Classification, ...). The full composite is
+        // written, not just the leaf segment "TCR-".
+        String classification = lines[1].split(",", -1)[5];
+        assertEquals("CD8-: GrB-: HLA-DR-: PD-1-: TCR-", classification);
     }
 }
