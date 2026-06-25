@@ -36,13 +36,13 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 
 ### Install in QuPath
 
-Copy the fat JAR into the QuPath extensions folder and restart QuPath fully:
+**Delete any older `qupath-extension-celltune-*-all.jar` from the extensions folder first**, then copy the new fat JAR in and restart QuPath fully. QuPath loads every JAR in the folder, so a leftover old version can be loaded instead of the new one — the symptom is unchanged behaviour after an "update" (e.g. a known-fixed bug still reproducing). Keep exactly one CellTune JAR present.
 
 - Windows: `C:\Users\<you>\QuPath\v0.7\extensions\`
 - Linux: `~/.local/share/QuPath/v0.7/extensions/`
 - macOS: `~/Library/Application Support/QuPath/v0.7/extensions/`
 
-Troubleshooting: build fails with toolchain errors → confirm `JAVA_HOME` points to JDK 25. No menu entries → confirm the new JAR is in the correct folder and QuPath was restarted fully. Native model issues → use the shadow JAR only, never partial classpath JARs.
+Troubleshooting: build fails with toolchain errors → confirm `JAVA_HOME` points to JDK 25. No menu entries → confirm the new JAR is in the correct folder and QuPath was restarted fully. Old behaviour persists after updating → an older CellTune JAR is still in the extensions folder; delete it so only the new one remains. Native model issues → use the shadow JAR only, never partial classpath JARs.
 
 ### Static analysis (SpotBugs)
 

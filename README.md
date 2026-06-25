@@ -46,11 +46,14 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 ## Installation
 
 1. Download the latest `qupath-extension-celltune-*-all.jar` from the [Releases](../../releases) page (or build from source — see below)
-2. Drag and drop the JAR onto the QuPath window, or copy it to your QuPath extensions directory:
+2. **If upgrading, delete any older `qupath-extension-celltune-*-all.jar` from the extensions directory first.** QuPath loads every JAR it finds there, so leaving an old version behind means the stale extension may load instead of the new one (you'll see old behaviour even after "updating"). Only one CellTune JAR should be present.
+3. Drag and drop the JAR onto the QuPath window, or copy it to your QuPath extensions directory:
    - **Windows:** `C:\Users\<you>\QuPath\v0.7\extensions\`
    - **Linux:** `~/.local/share/QuPath/v0.7/extensions/`
    - **macOS:** `~/Library/Application Support/QuPath/v0.7/extensions/`
-3. Restart QuPath — the extension appears under **Extensions > CellTune Classifier**
+
+   (In QuPath, *Extensions > Installed extensions* opens this folder directly.)
+4. Restart QuPath — the extension appears under **Extensions > CellTune Classifier**
 
 ## Quick Start
 
