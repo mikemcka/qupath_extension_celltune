@@ -31,14 +31,18 @@ import qupath.lib.objects.PathObject;
  *       above the threshold. Groups are processed in parallel.</li>
  *   <li><b>Cross-marker correlation removal</b> — optional, off by default.
  *       Greedy keep-set across all surviving features.</li>
- *   <li><b>Per-group guardrail</b> — if any marker group ends up with zero
- *       surviving features the highest-variance original feature for that
- *       group is force-kept so the classifier never goes blind to a marker.</li>
+ *   <li><b>Per-group whitelist</b> — the {@code minKeptPerGroup} highest-variance
+ *       features in every marker group are always kept, immune to the stages above
+ *       (a group with fewer features keeps them all). This guarantees the classifier
+ *       never goes blind to a marker and that each marker keeps its strongest few
+ *       features even if they correlate.</li>
  * </ol>
  *
- * <p>The "marker group" of a feature is the prefix before the first
- * {@code ": "} — matching the convention used by
- * {@code FeatureSelectionPane.discoverPrefixes}.
+ * <p>The "marker group" of a feature is decided by {@link #extractGroup(String)}: the
+ * prefix before the first {@code ": "}, else the token before the first underscore or
+ * space, matched <b>case-insensitively</b>. This is intentionally distinct from the
+ * UI category grouping in {@code FeatureSelectionPane} (markers / morphology /
+ * neighbours / embeddings), which is semantic rather than structural.
  */
 public final class FeaturePruner {
 
@@ -52,17 +56,18 @@ public final class FeaturePruner {
      * @param minNonZeroCells            drop a feature if non-zero in fewer than this many cells
      * @param withinMarkerCorrThreshold  drop within-marker peers with |r| above this threshold
      * @param crossMarkerCorrThreshold   |r| threshold for cross-marker dropping; use 1.0 to disable
-     * @param keepAtLeastOnePerGroup     if true, force-keep the highest-variance feature
-     *                                   for any marker group that would otherwise be empty
+     * @param minKeptPerGroup            always keep this many highest-variance features per marker
+     *                                   group, immune to the sparsity/correlation stages (a group
+     *                                   with fewer features keeps them all); 0 disables the guardrail
      */
     public record PruneOptions(
             int minNonZeroCells,
             double withinMarkerCorrThreshold,
             double crossMarkerCorrThreshold,
-            boolean keepAtLeastOnePerGroup) {
+            int minKeptPerGroup) {
         /** Defaults tuned for training-time pruning over labelled cells. */
         public static PruneOptions defaults() {
-            return new PruneOptions(5, 0.95, 1.0, true);
+            return new PruneOptions(5, 0.95, 1.0, 5);
         }
     }
 
@@ -74,9 +79,10 @@ public final class FeaturePruner {
      * @param droppedConstant     features removed in the sparsity stage
      * @param droppedWithinMarker features removed by within-marker correlation
      * @param droppedCrossMarker  features removed by cross-marker correlation
-     * @param forceKeptMarkers    marker groups whose highest-variance feature was force-kept
+     * @param forceKeptMarkers    marker groups where the top-N whitelist re-added a feature that the
+     *                            correlation/sparsity stages had dropped
      * @param markersRetained     marker groups with ≥1 surviving feature
-     * @param markersLost         marker groups that ended up with zero features (guardrail off)
+     * @param markersLost         marker groups that ended up with zero features (only when minKeptPerGroup == 0)
      * @param cellsScanned        number of cells contributing to stats
      */
     public record PruneResult(
@@ -229,6 +235,11 @@ public final class FeaturePruner {
             }
         });
 
+        // Why each feature was dropped (1 = near-constant, 2 = within-marker,
+        // 3 = cross-marker), so net per-stage counts can be recomputed after the
+        // Stage-4 whitelist re-adds protected features.
+        final int[] dropReason = new int[nFeatures];
+
         // ── Stage 1: sparsity / constant filter ─────────────────────────────
         final boolean[] kept = new boolean[nFeatures];
         int droppedConstant = 0;
@@ -236,6 +247,7 @@ public final class FeaturePruner {
             if (nonZero[j] >= opts.minNonZeroCells() && std[j] > 0.0) {
                 kept[j] = true;
             } else {
+                dropReason[j] = 1;
                 droppedConstant++;
             }
         }
@@ -266,6 +278,7 @@ public final class FeaturePruner {
                 }
                 if (redundant) {
                     kept[idx] = false; // disjoint indices across groups — safe
+                    dropReason[idx] = 2;
                     droppedWithinAtom.incrementAndGet();
                 } else {
                     keepSet.add(idx);
@@ -302,6 +315,7 @@ public final class FeaturePruner {
                 }
                 if (redundant) {
                     kept[idxF] = false;
+                    dropReason[idxF] = 3;
                     droppedCross++;
                 } else {
                     keepSet.add(idxF);
@@ -310,31 +324,30 @@ public final class FeaturePruner {
             report(progress, "Cross-marker: dropped " + droppedCross + " correlated features");
         }
 
-        // ── Stage 4: guardrail — keep ≥1 feature per marker group ───────────
+        // ── Stage 4: per-group whitelist — always keep the top-N highest-variance
+        // features in every marker group, immune to the sparsity/correlation stages.
+        // N = opts.minKeptPerGroup(); a group with ≤N features keeps them all. This
+        // subsumes the old "keep ≥1 per group" guardrail (N == 1 reproduces it).
         List<String> forceKept = new ArrayList<>();
-        List<String> markersLost = new ArrayList<>();
         Map<String, List<Integer>> allGroupIndices = new LinkedHashMap<>();
         for (int j = 0; j < nFeatures; j++) {
             allGroupIndices.computeIfAbsent(groupOf[j], k -> new ArrayList<>()).add(j);
         }
-        for (var entry : allGroupIndices.entrySet()) {
-            String group = entry.getKey();
-            boolean anyKept = entry.getValue().stream().anyMatch(j -> kept[j]);
-            if (!anyKept) {
-                if (opts.keepAtLeastOnePerGroup()) {
-                    int best = entry.getValue().get(0);
-                    double bestStd = std[best];
-                    for (int j : entry.getValue()) {
-                        if (std[j] > bestStd) {
-                            bestStd = std[j];
-                            best = j;
-                        }
+        final int minKeep = Math.max(0, opts.minKeptPerGroup());
+        if (minKeep > 0) {
+            for (var entry : allGroupIndices.entrySet()) {
+                List<Integer> idxs = new ArrayList<>(entry.getValue());
+                idxs.sort((a, b) -> Double.compare(std[b], std[a]));
+                int keepN = Math.min(minKeep, idxs.size());
+                boolean reAdded = false;
+                for (int t = 0; t < keepN; t++) {
+                    int j = idxs.get(t);
+                    if (!kept[j]) {
+                        kept[j] = true;
+                        reAdded = true;
                     }
-                    kept[best] = true;
-                    forceKept.add(group);
-                } else {
-                    markersLost.add(group);
                 }
+                if (reAdded) forceKept.add(entry.getKey());
             }
         }
 
@@ -343,11 +356,35 @@ public final class FeaturePruner {
             if (kept[j]) keptNames.add(names[j]);
         }
 
+        // Net per-stage drop counts after the whitelist, so that
+        // (originalCount − netConstant − netWithin − netCross) == keptFeatures.size()
+        // and the reported breakdown matches the actual kept set.
+        int netConstant = 0;
+        int netWithin = 0;
+        int netCross = 0;
+        for (int j = 0; j < nFeatures; j++) {
+            if (kept[j]) continue;
+            switch (dropReason[j]) {
+                case 1 -> netConstant++;
+                case 2 -> netWithin++;
+                case 3 -> netCross++;
+                default -> {}
+            }
+        }
+
         Set<String> retainedSet = new LinkedHashSet<>();
         for (int j = 0; j < nFeatures; j++) {
             if (kept[j]) retainedSet.add(groupOf[j]);
         }
         List<String> markersRetained = new ArrayList<>(retainedSet);
+
+        // Groups with zero survivors — only possible when the whitelist is disabled.
+        List<String> markersLost = new ArrayList<>();
+        for (var entry : allGroupIndices.entrySet()) {
+            if (entry.getValue().stream().noneMatch(j -> kept[j])) {
+                markersLost.add(entry.getKey());
+            }
+        }
 
         logger.info(
                 "Pruned {} -> {} features ({} marker groups retained, {} force-kept, {} lost; {} cells)",
@@ -361,9 +398,9 @@ public final class FeaturePruner {
         return new PruneResult(
                 keptNames,
                 nFeatures,
-                droppedConstant,
-                droppedWithin,
-                droppedCross,
+                netConstant,
+                netWithin,
+                netCross,
                 forceKept,
                 markersRetained,
                 markersLost,
@@ -386,16 +423,21 @@ public final class FeaturePruner {
      *
      * <p>A feature with no recognised separator (or one only at position 0) forms its
      * own singleton group keyed by the full feature name. Group keys are
-     * case-sensitive and preserve the original prefix.
+     * <b>case-insensitive</b> (lower-cased), so {@code "CD3: Mean"} and {@code "cd3: Max"}
+     * share a group.
      */
     public static String extractGroup(String featureName) {
+        String prefix;
         // Marker-style "PREFIX: ..." takes priority regardless of other separators.
         int colon = featureName.indexOf(": ");
-        if (colon > 0) return featureName.substring(0, colon);
-        // Otherwise group by the token before the first underscore or space.
-        int cut = firstSeparator(featureName.indexOf('_'), featureName.indexOf(' '));
-        if (cut > 0) return featureName.substring(0, cut);
-        return featureName;
+        if (colon > 0) {
+            prefix = featureName.substring(0, colon);
+        } else {
+            // Otherwise group by the token before the first underscore or space.
+            int cut = firstSeparator(featureName.indexOf('_'), featureName.indexOf(' '));
+            prefix = cut > 0 ? featureName.substring(0, cut) : featureName;
+        }
+        return prefix.toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Smaller of two {@code indexOf} results, ignoring {@code -1} (not found). */

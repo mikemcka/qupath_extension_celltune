@@ -155,14 +155,16 @@ Features are grouped so large panels stay navigable — one group per **marker**
 
 **Do you need to hand-prune for big panels?** Usually not. Both default models are gradient-boosted trees, which are robust to correlated and redundant features: at each split a tree picks the single most informative feature, so two near-duplicate columns don't distort the model the way they would in a linear/regression model — the worst case is wasted training time and *diluted* importance (a marker's signal gets split across its correlated columns, muddying SHAP plots). So extra features rarely hurt accuracy, but they do cost speed and interpretability.
 
-Rather than manually paring the list down, leave **Auto-prune features** (§[14](#14-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round:
+Rather than manually paring the list down, leave **Auto-prune features** (§[14](#14-reference-every-setting-in-the-sidebar)) ticked — it removes the redundancy for you, non-destructively, at the start of every training round. Pruning runs on the **pooled, normalised training matrix**: your labelled cells *plus* the cells pooled from every other project image, after normalisation — so a feature is judged on the whole training cohort, not the open image alone. (Imported CSV rows are normalised and trained on, but are **excluded** from the prune decision, since their panel may be partial.) The stages are:
 
-1. **Sparsity / variance filter** — drops features that are effectively constant (non-zero in fewer than ~5 of your labelled cells, or zero variance). A feature that never varies can't help a tree split.
-2. **Within-marker correlation removal** — features are grouped by their prefix (`Cell:`, `Nucleus:`, `Membrane:`…); within each group it keeps the **highest-variance** feature and drops any peer whose absolute Pearson correlation with a kept feature exceeds ~0.95. This is what collapses `Cell: CD3 Mean` / `Cell: CD3 Median` / `Cell: CD3 Max` down to one representative column.
+1. **Sparsity / variance filter** — drops features that are effectively constant across the pooled set (non-zero in fewer than ~5 cells, or zero variance). A feature that never varies can't help a tree split.
+2. **Within-marker correlation removal** — features are grouped (see *What defines a group* below); within each group it keeps the **highest-variance** feature and drops any peer whose absolute Pearson correlation with a kept feature exceeds ~0.95. This is what collapses `CD3: Cell: Mean` / `CD3: Cell: Median` / `CD3: Cell: Max` down to one representative column.
 3. **Cross-marker correlation removal** — available but **off by default**, so distinct markers are never merged just because they happen to co-vary.
-4. **Per-marker guardrail** — if a marker group would otherwise be emptied, its highest-variance feature is force-kept, so the classifier never goes completely blind to a marker.
+4. **Per-group whitelist (top 5)** — the **5 highest-variance features in every group are always kept**, immune to the stages above. A group with 5 or fewer features keeps *all* of them. So the classifier never goes blind to a marker, and each marker retains its strongest few features even when they correlate.
 
-Pruning runs only on your (small) labelled set, takes milliseconds, and **never touches the measurements on disk** — it only trims the training column list for that run. The net effect is the same "near-identical accuracy, much faster training, cleaner SHAP plots" you'd get from hand-restricting to `Cell: Mean` only, without you having to guess which columns to keep.
+> **What defines a "group" for pruning?** The group key is the text before the first `: ` (so `CD3: Cell: Mean` → `cd3`); if the name has no `: `, it's the token before the first underscore or space (so `kronos_emb_0` → `kronos`, `Distance to tumor` → `distance`). Matching is **case-insensitive** (`CD3` and `cd3` are one group). This pruning grouping is deliberately *separate* from the feature-picker categories above (Morphology / Neighbors / Embeddings) — those exist to navigate the UI; this one defines redundancy families for pruning.
+
+Pruning takes milliseconds and **never touches the measurements on disk** — it only trims the training column list for that run. The net effect is the same "near-identical accuracy, much faster training, cleaner SHAP plots" you'd get from hand-restricting to `Cell: Mean` only, without you having to guess which columns to keep.
 
 Your selection is saved in `<project>/celltune/classifier-state.json` and persists across QuPath sessions.
 
@@ -899,7 +901,7 @@ Deletes the project's entire `celltune/` folder: all labels and per-image label 
 | **Auto-tune hyperparameters** | ❌ | TPE Bayesian search per model. Slow but explores rounds/depth/eta/subsample. |
 | **Early stopping** | ✅ | Stop boosting when val loss plateaus (patience 20). |
 | **Show top 10 feature importance after training** | ✅ | Auto-open SHAP plot after training. |
-| **Auto-prune features** | ✅ | Drop near-constant & redundant features before training. Non-destructive. |
+| **Auto-prune features** | ✅ | Drop near-constant & redundant features across the pooled, normalised training set before training; the top 5 highest-variance features per group are always kept. Non-destructive. See §[4.1](#41-select-features). |
 | **Restrict to features shared with imported data** | ❌ | Case-insensitive intersection with imported ground-truth columns. |
 | **Sample current image only** | ❌ | Restrict sampling/review to the open image. |
 | **Filter by annotation keywords** | (blank) | Comma-separated substring filter on annotation names. |

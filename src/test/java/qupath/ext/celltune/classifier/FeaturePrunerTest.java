@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
  */
 class FeaturePrunerTest {
 
-    // minNonZeroCells=1, within-marker r>0.95, cross-marker off, guardrail off
-    private static final FeaturePruner.PruneOptions OPTS = new FeaturePruner.PruneOptions(1, 0.95, 1.0, false);
+    // minNonZeroCells=1, within-marker r>0.95, cross-marker off, whitelist off (minKeptPerGroup=0)
+    private static final FeaturePruner.PruneOptions OPTS = new FeaturePruner.PruneOptions(1, 0.95, 1.0, 0);
 
     @Test
     void dropsNearConstantColumn() {
@@ -87,22 +87,70 @@ class FeaturePrunerTest {
 
     @Test
     void groupsByColonThenUnderscoreThenSpace() {
+        // Group keys are lower-cased (case-insensitive grouping).
         // Marker convention: text before the first ": ".
-        assertEquals("CD3", FeaturePruner.extractGroup("CD3: Cell: Mean"));
+        assertEquals("cd3", FeaturePruner.extractGroup("CD3: Cell: Mean"));
         // ": " wins even when a space appears earlier.
-        assertEquals("Some Marker", FeaturePruner.extractGroup("Some Marker: Mean"));
+        assertEquals("some marker", FeaturePruner.extractGroup("Some Marker: Mean"));
         // No colon -> token before the first underscore.
         assertEquals("kronos", FeaturePruner.extractGroup("kronos_emb_0"));
         assertEquals("embedding", FeaturePruner.extractGroup("embedding_12"));
         // No colon -> token before the first space.
-        assertEquals("Distance", FeaturePruner.extractGroup("Distance to tumor"));
+        assertEquals("distance", FeaturePruner.extractGroup("Distance to tumor"));
         // Underscore and space both present, no colon -> whichever is earlier wins.
         assertEquals("kronos", FeaturePruner.extractGroup("kronos_emb dim"));
-        assertEquals("Distance", FeaturePruner.extractGroup("Distance to tumor_region"));
+        assertEquals("distance", FeaturePruner.extractGroup("Distance to tumor_region"));
         // No recognised separator -> own singleton group.
         assertEquals("solo", FeaturePruner.extractGroup("solo"));
         // Separator at position 0 -> whole name (empty prefix not allowed).
         assertEquals("_lead", FeaturePruner.extractGroup("_lead"));
+    }
+
+    @Test
+    void groupingIsCaseInsensitive() {
+        // Different-case prefixes collapse to the same group key.
+        assertEquals(FeaturePruner.extractGroup("CD3: Mean"), FeaturePruner.extractGroup("cd3: Max"));
+        assertEquals(FeaturePruner.extractGroup("Kronos_emb_0"), FeaturePruner.extractGroup("kronos_emb_1"));
+        // So two case-variant, correlated features land in one group and get deduped.
+        List<String> names = List.of("Kronos_emb_0", "kronos_emb_1");
+        float[][] rows = {{1f, 2f}, {2f, 4f}, {3f, 6f}, {4f, 8f}, {5f, 10f}, {6f, 12f}};
+        FeaturePruner.PruneResult pr = FeaturePruner.prune(rows, names, OPTS, null);
+        assertEquals(1, pr.keptFeatures().size());
+        assertEquals(1, pr.droppedWithinMarker());
+    }
+
+    @Test
+    void whitelistKeepsTopFivePerGroupEvenIfRedundant() {
+        // Two perfectly-correlated CD3 features. With the default top-5 whitelist and a
+        // group of <=5 features, BOTH survive despite the within-marker redundancy.
+        List<String> names = List.of("CD3: Mean", "CD3: Median");
+        float[][] rows = {{1f, 2f}, {2f, 4f}, {3f, 6f}, {4f, 8f}, {5f, 10f}, {6f, 12f}};
+        FeaturePruner.PruneResult pr = FeaturePruner.prune(rows, names, FeaturePruner.PruneOptions.defaults(), null);
+        assertEquals(2, pr.keptFeatures().size());
+        assertTrue(pr.keptFeatures().contains("CD3: Mean"));
+        assertTrue(pr.keptFeatures().contains("CD3: Median"));
+        // Net redundancy count is 0: the dropped peer was re-added by the whitelist.
+        assertEquals(0, pr.droppedWithinMarker());
+    }
+
+    @Test
+    void whitelistKeepsTopFiveInLargerGroupAndPrunesBeyond() {
+        // One "M" group of 6 mutually-correlated features with distinct variances.
+        // Default whitelist protects the top 5 by variance; the 6th (lowest variance)
+        // is redundant, outside the whitelist, and dropped.
+        List<String> names = List.of("M: a", "M: b", "M: c", "M: d", "M: e", "M: f");
+        float[][] rows = {
+            {10f, 8f, 6f, 4f, 3f, 0.1f},
+            {-10f, -8f, -6f, -4f, -3f, -0.1f},
+            {10f, 8f, 6f, 4f, 3f, 0.1f},
+            {-10f, -8f, -6f, -4f, -3f, -0.1f},
+            {10f, 8f, 6f, 4f, 3f, 0.1f},
+            {-10f, -8f, -6f, -4f, -3f, -0.1f},
+        };
+        FeaturePruner.PruneResult pr = FeaturePruner.prune(rows, names, FeaturePruner.PruneOptions.defaults(), null);
+        assertEquals(5, pr.keptFeatures().size());
+        assertTrue(pr.keptFeatures().contains("M: a"));
+        assertFalse(pr.keptFeatures().contains("M: f"), "lowest-variance redundant feature is not in the top 5");
     }
 
     @Test
