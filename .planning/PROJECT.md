@@ -91,6 +91,10 @@ Bioimaging researchers can iteratively improve cell classifiers by reviewing mod
 
 ## Current Milestone: v1.1 Reliability and Verification Hardening
 
+> Note (2026-06-30): a v1.4 "Cellular Neighborhood Analytics" plan (Phase 13) has been filed and
+> is ready to execute *ahead of* the remaining v1.1 hardening debt (phases 6-9) and v1.3 (phase 12).
+> See ROADMAP.md / STATE.md. v1.1 remains the nominal current milestone until that debt is cleared.
+
 Goal: Harden v1.0 delivery quality by normalizing phase verification evidence and fixing high-impact reliability risks.
 
 Target features:
