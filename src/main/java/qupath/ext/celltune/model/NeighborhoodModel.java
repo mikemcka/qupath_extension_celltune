@@ -284,6 +284,63 @@ public final class NeighborhoodModel {
         return perClusterMeans(labels, composition, nCN, nCols);
     }
 
+    /**
+     * Normalised Shannon diversity of a composition vector, in {@code [0, 1]}:
+     * {@code H / ln(nTypes)} where {@code H = -Σ p_i ln p_i} over the non-zero
+     * fractions. 0 when one type dominates (or the window is empty), 1 when the
+     * neighborhood is an even mix of all {@code nTypes} cell types. Rewards both
+     * richness (using more types) and evenness, so higher = more cell-type variety.
+     */
+    public static double compositionDiversity(double[] composition) {
+        int nTypes = composition.length;
+        if (nTypes < 2) {
+            return 0.0;
+        }
+        double total = 0;
+        for (double v : composition) {
+            if (v > 0) {
+                total += v;
+            }
+        }
+        if (total <= 0) {
+            return 0.0;
+        }
+        double h = 0;
+        for (double v : composition) {
+            if (v > 0) {
+                double p = v / total;
+                h -= p * Math.log(p);
+            }
+        }
+        double norm = Math.log(nTypes);
+        return norm > 0 ? Math.min(1.0, h / norm) : 0.0;
+    }
+
+    /**
+     * Symmetric CN spatial-adjacency counts: {@code adj[a][b]} is the number of
+     * times a cell of CN {@code a+1} has a neighbour of CN {@code b+1} (a != b),
+     * summed over both directions. Used to colour spatially-touching CNs with
+     * maximally-contrasting palette colours. CN ids are 1-based; cells with
+     * {@code cn[i] < 1 || > k} (e.g. empty windows, -1) are ignored.
+     */
+    public static double[][] cnAdjacency(int[][] neighbors, int[] cn, int k) {
+        double[][] adj = new double[k][k];
+        for (int i = 0; i < neighbors.length; i++) {
+            int a = cn[i];
+            if (a < 1 || a > k) {
+                continue;
+            }
+            for (int j : neighbors[i]) {
+                int b = cn[j];
+                if (b < 1 || b > k || b == a) {
+                    continue;
+                }
+                adj[a - 1][b - 1] += 1;
+            }
+        }
+        return adj;
+    }
+
     private static double[][] perClusterMeans(int[] labels, double[][] data, int nGroups, int nCols) {
         double[][] sums = new double[nGroups][nCols];
         int[] counts = new int[nGroups];

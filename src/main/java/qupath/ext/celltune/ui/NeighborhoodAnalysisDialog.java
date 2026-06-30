@@ -76,8 +76,22 @@ public class NeighborhoodAnalysisDialog {
     private enum Coloring {
         NONE,
         CN,
-        CLASS
+        CLASS,
+        DIVERSITY
     }
+
+    /**
+     * Distinct qualitative palette (Glasbey/Tab-style) for categorical CN colouring —
+     * adjacent CNs are assigned maximally-contrasting entries so regions next to each
+     * other are easy to tell apart (continuous ramps like Viridis wash them together).
+     */
+    private static final Color[] CATEGORICAL = {
+        Color.web("#e6194b"), Color.web("#3cb44b"), Color.web("#4363d8"), Color.web("#f58231"),
+        Color.web("#911eb4"), Color.web("#42d4f4"), Color.web("#f032e6"), Color.web("#bfef45"),
+        Color.web("#fabed4"), Color.web("#469990"), Color.web("#dcbeff"), Color.web("#9a6324"),
+        Color.web("#800000"), Color.web("#aaffc3"), Color.web("#808000"), Color.web("#000075"),
+        Color.web("#a9a9a9"), Color.web("#ffe119"), Color.web("#000000"), Color.web("#ffd8b1"),
+    };
 
     private final QuPathGUI qupath;
     private final Stage stage;
@@ -110,13 +124,15 @@ public class NeighborhoodAnalysisDialog {
     private final Button closeBtn = new Button("Close");
     private final Button toggleBtn = new Button("Color by: Neighborhood (CN)");
     private final Button classToggleBtn = new Button("Color by: CN class");
+    private final Button diversityToggleBtn = new Button("Color by: diversity");
     private final Button heatmapBtn = new Button("Show heatmap");
 
     private final String unit;
-    private final ColorMaps.ColorMap cnColorMap =
-            ColorMaps.getColorMaps().getOrDefault("Viridis", ColorMaps.getDefaultColorMap());
-    private MeasurementMapper cnMapper; // active overlay mapper (CN or CN class)
+    private final ColorMaps.ColorMap diversityRamp =
+            ColorMaps.getColorMaps().getOrDefault("Inferno", ColorMaps.getDefaultColorMap());
+    private MeasurementMapper cnMapper; // active overlay mapper (CN / CN class / diversity)
     private Coloring coloring = Coloring.NONE;
+    private List<Color> cnDisplayColors = List.of(); // categorical, adjacency-aware, per CN
 
     // Last run's results, cached so the heatmap can be reopened without rerunning.
     private double[][] lastCnMean;
@@ -310,11 +326,16 @@ public class NeighborhoodAnalysisDialog {
         classToggleBtn.setTooltip(
                 new Tooltip("Colour by the assigned CN class (after naming/merge in the heatmap). Non-destructive."));
         classToggleBtn.setOnAction(e -> setColoring(coloring == Coloring.CLASS ? Coloring.NONE : Coloring.CLASS));
+        diversityToggleBtn.setDisable(true);
+        diversityToggleBtn.setTooltip(new Tooltip(
+                "Colour cells by their neighborhood's cell-type diversity (Shannon, 0–1). Non-destructive."));
+        diversityToggleBtn.setOnAction(
+                e -> setColoring(coloring == Coloring.DIVERSITY ? Coloring.NONE : Coloring.DIVERSITY));
         heatmapBtn.setDisable(true);
         heatmapBtn.setTooltip(new Tooltip("Reopen the CN enrichment heatmap + colour key from the last run."));
         heatmapBtn.setOnAction(e -> showHeatmap());
         // Colour/heatmap buttons wrap to as many rows as needed so they never clip.
-        FlowPane colorButtons = new FlowPane(8, 6, toggleBtn, classToggleBtn, heatmapBtn);
+        FlowPane colorButtons = new FlowPane(8, 6, toggleBtn, classToggleBtn, diversityToggleBtn, heatmapBtn);
         // Run/Close get their own right-aligned row so the primary actions are always visible.
         HBox actionButtons = new HBox(10, runBtn, closeBtn);
         actionButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -598,10 +619,12 @@ public class NeighborhoodAnalysisDialog {
                             lastTitle = title;
                             lastKEff = kEff;
                             lastCells = openCells;
+                            cnDisplayColors = categoricalColors(kEff);
                             lastNames.clear();
                             lastClassCount = 0;
                             classToggleBtn.setDisable(true);
                             toggleBtn.setDisable(false);
+                            diversityToggleBtn.setDisable(false);
                             heatmapBtn.setDisable(false);
                             statusLabel.setText(String.format(
                                     Locale.US,
@@ -744,6 +767,14 @@ public class NeighborhoodAnalysisDialog {
             cellList.get(i).getMeasurementList().put(CN_MEASUREMENT, cnValue[i]);
         }
 
+        // Distinct, adjacency-aware CN colours so spatially-touching CNs contrast.
+        int[] cnInt = new int[n];
+        for (int i = 0; i < n; i++) {
+            cnInt[i] = (int) cnValue[i];
+        }
+        double[][] adjacency = NeighborhoodModel.cnAdjacency(neighbors, cnInt, kEff);
+        List<Color> displayColors = assignByAdjacency(kEff, adjacency);
+
         log(String.format(
                 Locale.US, "Done: %d CNs over %,d cells (%,d with empty window → CN=-1).", kEff, nActive, empty));
         for (int c = 0; c < kEff; c++) {
@@ -760,10 +791,12 @@ public class NeighborhoodAnalysisDialog {
             lastTitle = title;
             lastKEff = kEff;
             lastCells = cellList;
+            cnDisplayColors = displayColors;
             lastNames.clear();
             lastClassCount = 0;
             classToggleBtn.setDisable(true);
             toggleBtn.setDisable(false);
+            diversityToggleBtn.setDisable(false);
             heatmapBtn.setDisable(false);
             statusLabel.setText(kEff + " neighborhoods written to the \"CN\" measurement.");
             if (showHeatmap) {
@@ -801,32 +834,95 @@ public class NeighborhoodAnalysisDialog {
                         lastTypeNames,
                         lastCnMean,
                         lastCnCounts,
-                        cnColors(lastKEff),
+                        cnDisplayColors,
                         new LinkedHashMap<>(lastNames),
                         this::applyCnClasses,
-                        this::classColor)
+                        (code, total) -> categoricalColor(code - 1),
+                        this::diversityColor)
                 .show();
     }
 
-    /**
-     * Colour key for CN ids {@code 1..kEff}, computed from the same colormap and
-     * {@code [1, kEff]} display range the viewer toggle uses, so the heatmap
-     * swatches match the on-image CN colouring exactly.
-     */
-    private List<Color> cnColors(int kEff) {
-        List<Color> colors = new ArrayList<>(Math.max(0, kEff));
-        for (int c = 1; c <= kEff; c++) {
-            colors.add(classColor(c, kEff));
-        }
-        return colors;
+    // ── CN colour palettes ──────────────────────────────────────────────────────
+
+    /** A distinct qualitative palette colour for index {@code idx} (cycles if needed). */
+    private static Color categoricalColor(int idx) {
+        int m = CATEGORICAL.length;
+        return CATEGORICAL[((idx % m) + m) % m];
     }
 
-    /** Colour for code {@code c} of {@code total} via the shared colormap over a {@code [1, total]} range. */
-    private Color classColor(int c, int total) {
-        int max = Math.max(2, total);
-        Integer argb = cnColorMap.getColor(c, 1, max);
+    private static List<Color> categoricalColors(int n) {
+        List<Color> list = new ArrayList<>(Math.max(0, n));
+        for (int i = 0; i < n; i++) {
+            list.add(categoricalColor(i));
+        }
+        return list;
+    }
+
+    /** Sequential colour for a diversity value in {@code [0, 1]} (the diversity ramp). */
+    private Color diversityColor(double d) {
+        Integer argb = diversityRamp.getColor(d, 0, 1);
         int v = argb == null ? 0 : argb;
         return Color.rgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+    }
+
+    /**
+     * Assign palette colours to CNs so spatially-adjacent CNs get maximally
+     * contrasting colours. Greedy: process CNs most-connected first; each picks the
+     * palette colour (preferring still-unused entries to stay distinct) that is
+     * farthest in RGB from its already-coloured spatial neighbours.
+     */
+    private static List<Color> assignByAdjacency(int k, double[][] adj) {
+        double[][] w = new double[k][k];
+        double[] degree = new double[k];
+        for (int i = 0; i < k; i++) {
+            for (int j = 0; j < k; j++) {
+                double s = adj[i][j] + adj[j][i];
+                w[i][j] = s;
+                degree[i] += s;
+            }
+        }
+        Integer[] order = new Integer[k];
+        for (int i = 0; i < k; i++) {
+            order[i] = i;
+        }
+        java.util.Arrays.sort(order, (a, b) -> Double.compare(degree[b], degree[a]));
+
+        Color[] chosen = new Color[k];
+        boolean[] used = new boolean[CATEGORICAL.length];
+        int unusedLeft = CATEGORICAL.length;
+        for (Integer cn : order) {
+            int bestP = 0;
+            double bestMin = -1;
+            for (int p = 0; p < CATEGORICAL.length; p++) {
+                if (unusedLeft > 0 && used[p]) {
+                    continue; // keep colours distinct while the palette has spares
+                }
+                double minDist = Double.MAX_VALUE;
+                for (int other = 0; other < k; other++) {
+                    if (other == cn || chosen[other] == null || w[cn][other] <= 0) {
+                        continue;
+                    }
+                    minDist = Math.min(minDist, colorDist(CATEGORICAL[p], chosen[other]));
+                }
+                if (minDist > bestMin) {
+                    bestMin = minDist;
+                    bestP = p;
+                }
+            }
+            chosen[cn] = CATEGORICAL[bestP];
+            if (!used[bestP]) {
+                used[bestP] = true;
+                unusedLeft--;
+            }
+        }
+        return java.util.Arrays.asList(chosen);
+    }
+
+    private static double colorDist(Color a, Color b) {
+        double dr = a.getRed() - b.getRed();
+        double dg = a.getGreen() - b.getGreen();
+        double db = a.getBlue() - b.getBlue();
+        return dr * dr + dg * dg + db * db;
     }
 
     // ── CN class assignment (naming / merge) ────────────────────────────────────
@@ -885,7 +981,7 @@ public class NeighborhoodAnalysisDialog {
         statusLabel.setText(lastClassCount + " CN classes written to \"" + CN_CLASS_MEASUREMENT + "\".");
     }
 
-    // ── Non-destructive overlay colouring (CN or CN class) ──────────────────────
+    // ── Non-destructive overlay colouring (CN / CN class / diversity) ────────────
 
     private void setColoring(Coloring target) {
         QuPathViewer viewer = qupath.getViewer();
@@ -896,25 +992,57 @@ public class NeighborhoodAnalysisDialog {
         OverlayOptions opts = viewer.getOverlayOptions();
         opts.resetMeasurementMapper();
         cnMapper = null;
-        if (target == Coloring.CN) {
-            cnMapper = buildMapper(viewer, CN_MEASUREMENT, lastKEff);
+        Coloring applied = Coloring.NONE;
+        if (target == Coloring.CN && !cnDisplayColors.isEmpty()) {
+            cnMapper = buildMapperFromColors(viewer, CN_MEASUREMENT, cnDisplayColors);
             opts.setMeasurementMapper(cnMapper);
-        } else if (target == Coloring.CLASS) {
-            cnMapper = buildMapper(viewer, CN_CLASS_MEASUREMENT, lastClassCount);
+            applied = Coloring.CN;
+        } else if (target == Coloring.CLASS && lastClassCount > 0) {
+            cnMapper = buildMapperFromColors(viewer, CN_CLASS_MEASUREMENT, categoricalColors(lastClassCount));
             opts.setMeasurementMapper(cnMapper);
+            applied = Coloring.CLASS;
+        } else if (target == Coloring.DIVERSITY && lastCnMean != null) {
+            cnMapper = buildMapperFromColors(viewer, CN_MEASUREMENT, diversityColors());
+            opts.setMeasurementMapper(cnMapper);
+            applied = Coloring.DIVERSITY;
         }
-        coloring = target;
+        coloring = applied;
         toggleBtn.setText(coloring == Coloring.CN ? "Color by: Classification" : "Color by: Neighborhood (CN)");
         classToggleBtn.setText(coloring == Coloring.CLASS ? "Color by: Classification" : "Color by: CN class");
+        diversityToggleBtn.setText(coloring == Coloring.DIVERSITY ? "Color by: Classification" : "Color by: diversity");
         viewer.repaintEntireImage();
     }
 
-    /** Mapper colouring detections by {@code measurement} over a {@code [1, max]} range (matches the key). */
-    private MeasurementMapper buildMapper(QuPathViewer viewer, String measurement, int max) {
+    /** Per-CN diversity colours (Shannon diversity of each CN's mean composition). */
+    private List<Color> diversityColors() {
+        List<Color> out = new ArrayList<>(Math.max(0, lastKEff));
+        for (int c = 0; c < lastKEff && c < lastCnMean.length; c++) {
+            out.add(diversityColor(NeighborhoodModel.compositionDiversity(lastCnMean[c])));
+        }
+        return out;
+    }
+
+    /**
+     * Mapper colouring detections by {@code measurement} over {@code [1, n]} using a
+     * custom colormap built from {@code colors} (one per id), so each CN/class id
+     * paints exactly its key colour and empty (-1) cells keep their phenotype.
+     */
+    private MeasurementMapper buildMapperFromColors(QuPathViewer viewer, String measurement, List<Color> colors) {
         var dets = viewer.getImageData().getHierarchy().getDetectionObjects();
-        MeasurementMapper mm = new MeasurementMapper(cnColorMap, measurement, dets);
+        int n = Math.max(2, colors.size());
+        int[] r = new int[n];
+        int[] g = new int[n];
+        int[] b = new int[n];
+        for (int i = 0; i < n; i++) {
+            Color c = colors.get(Math.min(i, colors.size() - 1));
+            r[i] = (int) Math.round(c.getRed() * 255);
+            g[i] = (int) Math.round(c.getGreen() * 255);
+            b[i] = (int) Math.round(c.getBlue() * 255);
+        }
+        ColorMaps.ColorMap cm = ColorMaps.createColorMap(measurement, r, g, b);
+        MeasurementMapper mm = new MeasurementMapper(cm, measurement, dets);
         mm.setDisplayMinValue(1);
-        mm.setDisplayMaxValue(Math.max(2, max));
+        mm.setDisplayMaxValue(Math.max(2, colors.size()));
         mm.setExcludeOutsideRange(true); // empty (-1) cells keep their phenotype colour
         return mm;
     }

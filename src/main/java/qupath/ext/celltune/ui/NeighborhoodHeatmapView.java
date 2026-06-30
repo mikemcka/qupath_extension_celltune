@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.DoubleFunction;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -42,6 +43,7 @@ import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.IntensityHeatmap;
+import qupath.ext.celltune.model.NeighborhoodModel;
 import qupath.fx.dialogs.Dialogs;
 
 /**
@@ -68,7 +70,9 @@ public class NeighborhoodHeatmapView {
     private final Canvas canvas;
     private final CheckBox showValuesBox;
     private final CheckBox mergeBox;
+    private final CheckBox diversitySwatchBox;
     private final Label summaryLabel;
+    private final DoubleFunction<Color> diversityColorFn; // diversity [0,1] -> colour (nullable)
 
     private final String title;
     private final List<String> typeNames;
@@ -118,7 +122,8 @@ public class NeighborhoodHeatmapView {
             List<Color> cnColors,
             Map<Integer, String> initialNames,
             Consumer<Map<Integer, String>> onApplyNames,
-            BiFunction<Integer, Integer, Color> classColorFn) {
+            BiFunction<Integer, Integer, Color> classColorFn,
+            DoubleFunction<Color> diversityColorFn) {
         this.title = title != null ? title : "Current Image";
         this.typeNames = List.copyOf(typeNames);
         this.meanComposition = meanComposition;
@@ -126,6 +131,7 @@ public class NeighborhoodHeatmapView {
         this.cnColors = cnColors == null ? List.of() : List.copyOf(cnColors);
         this.onApplyNames = onApplyNames;
         this.classColorFn = classColorFn;
+        this.diversityColorFn = diversityColorFn;
         if (initialNames != null) {
             appliedNames.putAll(initialNames);
         }
@@ -145,6 +151,12 @@ public class NeighborhoodHeatmapView {
         mergeBox = new CheckBox("Merge rows by class");
         mergeBox.setSelected(false);
         mergeBox.setOnAction(e -> redraw());
+        diversitySwatchBox = new CheckBox("Swatches by diversity");
+        diversitySwatchBox.setSelected(false);
+        diversitySwatchBox.setDisable(diversityColorFn == null);
+        diversitySwatchBox.setTooltip(new javafx.scene.control.Tooltip(
+                "Colour the row key by cell-type diversity (Shannon) instead of the distinct CN colours."));
+        diversitySwatchBox.setOnAction(e -> redraw());
 
         Button exportPngBtn = new Button("Export as PNG…");
         exportPngBtn.setOnAction(e -> exportAsPng());
@@ -153,10 +165,11 @@ public class NeighborhoodHeatmapView {
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> stage.close());
 
-        HBox buttons = new HBox(8, showValuesBox, mergeBox, new Region(), exportPngBtn, exportCsvBtn, closeBtn);
+        HBox buttons = new HBox(
+                8, showValuesBox, mergeBox, diversitySwatchBox, new Region(), exportPngBtn, exportCsvBtn, closeBtn);
         buttons.setAlignment(Pos.CENTER_LEFT);
         buttons.setPadding(new Insets(8));
-        HBox.setHgrow(buttons.getChildren().get(2), Priority.ALWAYS);
+        HBox.setHgrow(buttons.getChildren().get(3), Priority.ALWAYS);
 
         VBox bottom = new VBox(4, summaryLabel, buttons);
         ScrollPane scroll = new ScrollPane(canvas);
@@ -404,11 +417,15 @@ public class NeighborhoodHeatmapView {
         // Row labels with a colour-key swatch matching the viewer colouring.
         gc.setFont(LABEL_FONT);
         gc.setTextAlign(TextAlignment.LEFT);
+        boolean divSwatch = diversitySwatchBox.isSelected() && diversityColorFn != null;
         for (int i = 0; i < nRows; i++) {
             double cy = gridTop + i * CELL_H + CELL_H / 2.0 + 4;
             double sy = gridTop + i * CELL_H + (CELL_H - SWATCH) / 2.0;
-            if (i < d.colors().size()) {
-                gc.setFill(d.colors().get(i));
+            Color swatch = divSwatch
+                    ? diversityColorFn.apply(NeighborhoodModel.compositionDiversity(d.comp()[i]))
+                    : (i < d.colors().size() ? d.colors().get(i) : null);
+            if (swatch != null) {
+                gc.setFill(swatch);
                 gc.fillRect(4, sy, SWATCH, SWATCH);
                 gc.setStroke(Color.gray(0.5));
                 gc.setLineWidth(0.5);
@@ -515,6 +532,7 @@ public class NeighborhoodHeatmapView {
             header.add("Name");
             header.add("Count");
             header.add("Fraction");
+            header.add("Diversity");
             for (String t : typeNames) {
                 header.add(csvQuote("mean_" + t));
             }
@@ -529,7 +547,9 @@ public class NeighborhoodHeatmapView {
                         .append(',')
                         .append(d.counts()[i])
                         .append(',')
-                        .append(frac);
+                        .append(frac)
+                        .append(',')
+                        .append(NeighborhoodModel.compositionDiversity(d.comp()[i]));
                 for (int j = 0; j < typeNames.size(); j++) {
                     row.append(',').append(d.comp()[i][j]);
                 }

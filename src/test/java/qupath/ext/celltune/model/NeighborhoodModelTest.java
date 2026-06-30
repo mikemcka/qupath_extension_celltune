@@ -193,6 +193,39 @@ class NeighborhoodModelTest {
         assertArrayEqualsD(new double[] {0.0, 1.0}, mean[1]);
     }
 
+    // ── diversity + adjacency ─────────────────────────────────────────────────────
+
+    @Test
+    void compositionDiversityRewardsEvennessAndRichness() {
+        assertEquals(0.0, NeighborhoodModel.compositionDiversity(new double[] {1, 0, 0, 0}), EPS, "single type → 0");
+        assertEquals(0.0, NeighborhoodModel.compositionDiversity(new double[] {0, 0, 0, 0}), EPS, "empty → 0");
+        assertEquals(
+                1.0,
+                NeighborhoodModel.compositionDiversity(new double[] {0.25, 0.25, 0.25, 0.25}),
+                EPS,
+                "even over all types → 1");
+        // Even over 2 of 4 types: ln(2)/ln(4) = 0.5.
+        assertEquals(0.5, NeighborhoodModel.compositionDiversity(new double[] {0.5, 0.5, 0, 0}), EPS);
+        // More even mixes score higher than dominated ones.
+        double mixed = NeighborhoodModel.compositionDiversity(new double[] {0.4, 0.3, 0.3, 0.0});
+        double dominated = NeighborhoodModel.compositionDiversity(new double[] {0.9, 0.05, 0.05, 0.0});
+        assertTrue(mixed > dominated, "more even mix should be more diverse");
+    }
+
+    @Test
+    void cnAdjacencyCountsTouchingPairsBothDirections() {
+        int[] cn = {1, 2, 1};
+        int[][] neighbors = {{1}, {0, 2}, {1}};
+        double[][] adj = NeighborhoodModel.cnAdjacency(neighbors, cn, 2);
+        assertEquals(2.0, adj[0][1], EPS); // CN1 sees CN2: cell0→1 and cell2→1
+        assertEquals(2.0, adj[1][0], EPS); // CN2 sees CN1: cell1→0 and cell1→2
+        // Same-CN neighbours and out-of-range ids contribute nothing.
+        int[] cnWithEmpty = {1, -1, 1};
+        double[][] adj2 = NeighborhoodModel.cnAdjacency(new int[][] {{1, 2}, {0}, {0}}, cnWithEmpty, 2);
+        assertEquals(0.0, adj2[0][0], EPS);
+        assertEquals(0.0, adj2[0][1], EPS);
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────────
 
     private static Set<Integer> bruteForceKnn(double[] xs, double[] ys, int i, int k) {
