@@ -211,11 +211,15 @@ public class NeighborhoodAnalysisDialog {
         cnRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Cell-type checklist ──
+        // Pre-check only types actually present on the open image; extra project
+        // Class-list entries (markers/gating/ROI) are listed but left unchecked so a
+        // default run isn't padded with empty type columns.
+        Set<String> present = presentTypes();
         VBox typeBox = new VBox(3);
         typeBox.setPadding(new Insets(4));
         for (String type : discoverTypes()) {
             CheckBox cb = new CheckBox(type);
-            cb.setSelected(true);
+            cb.setSelected(present.isEmpty() || present.contains(type));
             typeChecks.put(type, cb);
             typeBox.getChildren().add(cb);
         }
@@ -398,6 +402,21 @@ public class NeighborhoodAnalysisDialog {
             }
         }
         return new ArrayList<>(types);
+    }
+
+    /** Distinct non-ignored cell-type labels actually present on the current image. */
+    private Set<String> presentTypes() {
+        Set<String> present = new LinkedHashSet<>();
+        var imageData = qupath.getImageData();
+        if (imageData != null) {
+            for (PathObject cell : cells(imageData)) {
+                PathClass pc = cell.getPathClass();
+                if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) {
+                    present.add(pc.toString());
+                }
+            }
+        }
+        return present;
     }
 
     private static java.util.Collection<PathObject> cells(qupath.lib.images.ImageData<?> imageData) {
@@ -608,14 +627,14 @@ public class NeighborhoodAnalysisDialog {
                                 frac -> Platform.runLater(() -> progressBar.setProgress(frac)));
 
                         String title = "Project (" + sample.imageCount() + " images)";
-                        double[][] cnMean = ar.cnMean();
+                        Pruned pruned = pruneEmptyTypes(typeNames, ar.cnMean());
                         long[] cnCounts = ar.cnCounts();
                         List<PathObject> openCells =
                                 openDataF != null ? new ArrayList<>(cells(openDataF)) : new ArrayList<>();
                         Platform.runLater(() -> {
-                            lastCnMean = cnMean;
+                            lastCnMean = pruned.cnMean();
                             lastCnCounts = cnCounts;
-                            lastTypeNames = typeNames;
+                            lastTypeNames = pruned.types();
                             lastTitle = title;
                             lastKEff = kEff;
                             lastCells = openCells;
@@ -782,12 +801,12 @@ public class NeighborhoodAnalysisDialog {
         }
 
         String title = imageTitle(imageData);
-        List<String> typeNames = new ArrayList<>(selectedTypes);
+        Pruned pruned = pruneEmptyTypes(new ArrayList<>(selectedTypes), cnMean);
         Platform.runLater(() -> {
             imageData.getHierarchy().fireHierarchyChangedEvent(this);
-            lastCnMean = cnMean;
+            lastCnMean = pruned.cnMean();
             lastCnCounts = cnCounts;
-            lastTypeNames = typeNames;
+            lastTypeNames = pruned.types();
             lastTitle = title;
             lastKEff = kEff;
             lastCells = cellList;
@@ -840,6 +859,47 @@ public class NeighborhoodAnalysisDialog {
                         (code, total) -> categoricalColor(code - 1),
                         this::diversityColor)
                 .show();
+    }
+
+    /** A type list + per-CN mean composition with all-zero (unused) type columns removed. */
+    private record Pruned(List<String> types, double[][] cnMean) {}
+
+    /**
+     * Drop type columns that are zero in every CN — these are selected classes that
+     * no cell is actually classified as (e.g. marker/gating/ROI entries from the
+     * project Class list). Keeps the heatmap readable and lets the diversity score
+     * normalise over the types that are genuinely in play.
+     */
+    private static Pruned pruneEmptyTypes(List<String> types, double[][] cnMean) {
+        int nTypes = types.size();
+        boolean[] used = new boolean[nTypes];
+        for (double[] row : cnMean) {
+            for (int j = 0; j < nTypes; j++) {
+                if (row[j] > 0) {
+                    used[j] = true;
+                }
+            }
+        }
+        List<Integer> keep = new ArrayList<>();
+        for (int j = 0; j < nTypes; j++) {
+            if (used[j]) {
+                keep.add(j);
+            }
+        }
+        if (keep.size() == nTypes) {
+            return new Pruned(types, cnMean);
+        }
+        List<String> reducedTypes = new ArrayList<>(keep.size());
+        for (int j : keep) {
+            reducedTypes.add(types.get(j));
+        }
+        double[][] reduced = new double[cnMean.length][keep.size()];
+        for (int c = 0; c < cnMean.length; c++) {
+            for (int k = 0; k < keep.size(); k++) {
+                reduced[c][k] = cnMean[c][keep.get(k)];
+            }
+        }
+        return new Pruned(reducedTypes, reduced);
     }
 
     // ── CN colour palettes ──────────────────────────────────────────────────────
