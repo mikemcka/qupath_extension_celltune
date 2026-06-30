@@ -25,6 +25,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -312,10 +313,12 @@ public class NeighborhoodAnalysisDialog {
         heatmapBtn.setDisable(true);
         heatmapBtn.setTooltip(new Tooltip("Reopen the CN enrichment heatmap + colour key from the last run."));
         heatmapBtn.setOnAction(e -> showHeatmap());
-        HBox buttons =
-                new HBox(8, toggleBtn, classToggleBtn, heatmapBtn, new javafx.scene.layout.Region(), runBtn, closeBtn);
-        buttons.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(buttons.getChildren().get(3), javafx.scene.layout.Priority.ALWAYS);
+        // Colour/heatmap buttons wrap to as many rows as needed so they never clip.
+        FlowPane colorButtons = new FlowPane(8, 6, toggleBtn, classToggleBtn, heatmapBtn);
+        // Run/Close get their own right-aligned row so the primary actions are always visible.
+        HBox actionButtons = new HBox(10, runBtn, closeBtn);
+        actionButtons.setAlignment(Pos.CENTER_RIGHT);
+        VBox buttons = new VBox(8, colorButtons, actionButtons);
         buttons.setPadding(new Insets(4, 0, 0, 0));
 
         VBox root = new VBox(
@@ -348,7 +351,7 @@ public class NeighborhoodAnalysisDialog {
         s.setTitle("Cellular Neighborhoods");
         s.initOwner(qupath.getStage());
         s.initModality(Modality.NONE);
-        s.setScene(new Scene(rootScroll, 480, 820));
+        s.setScene(new Scene(rootScroll, 540, 840));
         return s;
     }
 
