@@ -59,6 +59,7 @@ public class NeighborhoodHeatmapView {
     private final String title;
     private final List<String> typeNames;
     private final List<String> cnLabels;
+    private final List<Color> cnColors; // viewer CN colour per row (may be empty)
     private final double[][] meanComposition; // [nCN][nTypes]
     private final double[][] zScores; // [nCN][nTypes]
     private final long[] cnCounts;
@@ -67,8 +68,10 @@ public class NeighborhoodHeatmapView {
     private static final int CELL_W = 78;
     private static final int CELL_H = 34;
     private static final int LEFT_MARGIN_MIN = 150;
-    private static final int LEFT_MARGIN_MAX = 360;
+    private static final int LEFT_MARGIN_MAX = 380;
     private static final int LABEL_PAD = 16;
+    private static final int SWATCH = 14; // CN colour key swatch
+    private static final int SWATCH_GAP = 6;
     private static final int TOP_MARGIN = 64;
     private static final int BOTTOM_MARGIN = 170;
     private static final int COLORBAR_W = 110;
@@ -83,11 +86,18 @@ public class NeighborhoodHeatmapView {
      * @param typeNames       ordered cell-type column labels
      * @param meanComposition {@code [nCN][nTypes]} mean composition fraction per CN
      * @param cnCounts        number of cells assigned to each CN (row order)
+     * @param cnColors        viewer colour per CN row (the colour key); may be null/empty
      */
     public NeighborhoodHeatmapView(
-            Stage owner, String title, List<String> typeNames, double[][] meanComposition, long[] cnCounts) {
+            Stage owner,
+            String title,
+            List<String> typeNames,
+            double[][] meanComposition,
+            long[] cnCounts,
+            List<Color> cnColors) {
         this.title = title != null ? title : "Current Image";
         this.typeNames = List.copyOf(typeNames);
+        this.cnColors = cnColors == null ? List.of() : List.copyOf(cnColors);
         this.meanComposition = meanComposition;
         this.zScores = IntensityHeatmap.zScoreByColumn(meanComposition);
         this.cnCounts = cnCounts.clone();
@@ -163,7 +173,7 @@ public class NeighborhoodHeatmapView {
             probe.setText(rowLabel(i));
             maxW = Math.max(maxW, probe.getLayoutBounds().getWidth());
         }
-        int needed = (int) Math.ceil(maxW) + LABEL_PAD + 4;
+        int needed = (int) Math.ceil(maxW) + SWATCH + SWATCH_GAP + LABEL_PAD + 8;
         return Math.max(LEFT_MARGIN_MIN, Math.min(LEFT_MARGIN_MAX, needed));
     }
 
@@ -242,12 +252,21 @@ public class NeighborhoodHeatmapView {
             }
         }
 
+        // Row labels with a CN colour-key swatch matching the viewer colouring.
         gc.setFont(LABEL_FONT);
-        gc.setFill(Color.BLACK);
-        gc.setTextAlign(TextAlignment.RIGHT);
+        gc.setTextAlign(TextAlignment.LEFT);
         for (int i = 0; i < nCN; i++) {
             double cy = gridTop + i * CELL_H + CELL_H / 2.0 + 4;
-            gc.fillText(rowLabel(i), gridLeft - LABEL_PAD, cy);
+            double sy = gridTop + i * CELL_H + (CELL_H - SWATCH) / 2.0;
+            if (i < cnColors.size()) {
+                gc.setFill(cnColors.get(i));
+                gc.fillRect(4, sy, SWATCH, SWATCH);
+                gc.setStroke(Color.gray(0.5));
+                gc.setLineWidth(0.5);
+                gc.strokeRect(4, sy, SWATCH, SWATCH);
+            }
+            gc.setFill(Color.BLACK);
+            gc.fillText(rowLabel(i), 4 + SWATCH + SWATCH_GAP, cy);
         }
 
         double bottomY = gridTop + nCN * CELL_H + 8;

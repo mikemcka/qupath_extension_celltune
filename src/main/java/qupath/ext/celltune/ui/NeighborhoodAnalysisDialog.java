@@ -26,6 +26,7 @@ import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
@@ -86,9 +87,19 @@ public class NeighborhoodAnalysisDialog {
     private final Button runBtn = new Button("Run");
     private final Button closeBtn = new Button("Close");
     private final Button toggleBtn = new Button("Color by: Neighborhood (CN)");
+    private final Button heatmapBtn = new Button("Show heatmap");
 
     private final String unit;
+    private final ColorMaps.ColorMap cnColorMap =
+            ColorMaps.getColorMaps().getOrDefault("Viridis", ColorMaps.getDefaultColorMap());
     private MeasurementMapper cnMapper; // cached toggle state
+
+    // Last run's results, cached so the heatmap can be reopened without rerunning.
+    private double[][] lastCnMean;
+    private long[] lastCnCounts;
+    private List<String> lastTypeNames;
+    private String lastTitle;
+    private int lastKEff;
 
     public NeighborhoodAnalysisDialog(QuPathGUI qupath) {
         this.qupath = qupath;
@@ -209,9 +220,12 @@ public class NeighborhoodAnalysisDialog {
         toggleBtn.setDisable(true);
         toggleBtn.setTooltip(new Tooltip("Flip viewer colouring between phenotype and CN. Non-destructive."));
         toggleBtn.setOnAction(e -> toggleCnColoring());
-        HBox buttons = new HBox(10, toggleBtn, new javafx.scene.layout.Region(), runBtn, closeBtn);
+        heatmapBtn.setDisable(true);
+        heatmapBtn.setTooltip(new Tooltip("Reopen the CN enrichment heatmap + colour key from the last run."));
+        heatmapBtn.setOnAction(e -> showHeatmap());
+        HBox buttons = new HBox(10, toggleBtn, heatmapBtn, new javafx.scene.layout.Region(), runBtn, closeBtn);
         buttons.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(buttons.getChildren().get(1), javafx.scene.layout.Priority.ALWAYS);
+        HBox.setHgrow(buttons.getChildren().get(2), javafx.scene.layout.Priority.ALWAYS);
         buttons.setPadding(new Insets(4, 0, 0, 0));
 
         VBox root = new VBox(
@@ -483,10 +497,16 @@ public class NeighborhoodAnalysisDialog {
         List<String> typeNames = new ArrayList<>(selectedTypes);
         Platform.runLater(() -> {
             imageData.getHierarchy().fireHierarchyChangedEvent(this);
+            lastCnMean = cnMean;
+            lastCnCounts = cnCounts;
+            lastTypeNames = typeNames;
+            lastTitle = title;
+            lastKEff = kEff;
             toggleBtn.setDisable(false);
+            heatmapBtn.setDisable(false);
             statusLabel.setText(kEff + " neighborhoods written to the \"CN\" measurement.");
             if (showHeatmap) {
-                new NeighborhoodHeatmapView(stage, title, typeNames, cnMean, cnCounts).show();
+                openHeatmap();
             }
         });
     }
@@ -501,6 +521,37 @@ public class NeighborhoodAnalysisDialog {
             }
         }
         return imageData.getServer().getMetadata().getName();
+    }
+
+    // ── Heatmap + CN colour key ─────────────────────────────────────────────────
+
+    private void showHeatmap() {
+        if (lastCnMean == null) {
+            Dialogs.showInfoNotification("CellTune", "Run the analysis first.");
+            return;
+        }
+        openHeatmap();
+    }
+
+    private void openHeatmap() {
+        new NeighborhoodHeatmapView(stage, lastTitle, lastTypeNames, lastCnMean, lastCnCounts, cnColors(lastKEff))
+                .show();
+    }
+
+    /**
+     * Colour key for CN ids {@code 1..kEff}, computed from the same colormap and
+     * {@code [1, kEff]} display range the viewer toggle uses, so the heatmap
+     * swatches match the on-image CN colouring exactly.
+     */
+    private List<Color> cnColors(int kEff) {
+        List<Color> colors = new ArrayList<>(Math.max(0, kEff));
+        int max = Math.max(2, kEff);
+        for (int c = 1; c <= kEff; c++) {
+            Integer argb = cnColorMap.getColor(c, 1, max);
+            int v = argb == null ? 0 : argb;
+            colors.add(Color.rgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
+        }
+        return colors;
     }
 
     // ── CN color toggle (non-destructive overlay measurement mapper) ────────────
@@ -518,8 +569,12 @@ public class NeighborhoodAnalysisDialog {
             toggleBtn.setText("Color by: Neighborhood (CN)");
         } else {
             var dets = viewer.getImageData().getHierarchy().getDetectionObjects();
-            ColorMaps.ColorMap cm = ColorMaps.getColorMaps().getOrDefault("Viridis", ColorMaps.getDefaultColorMap());
-            cnMapper = new MeasurementMapper(cm, CN_MEASUREMENT, dets);
+            cnMapper = new MeasurementMapper(cnColorMap, CN_MEASUREMENT, dets);
+            // Map CN ids 1..kEff across the full ramp; empty windows (CN = -1) fall
+            // outside the range and keep their phenotype colour. Matches the key.
+            cnMapper.setDisplayMinValue(1);
+            cnMapper.setDisplayMaxValue(Math.max(2, lastKEff));
+            cnMapper.setExcludeOutsideRange(true);
             opts.setMeasurementMapper(cnMapper);
             toggleBtn.setText("Color by: Classification");
         }
