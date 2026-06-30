@@ -210,16 +210,12 @@ public class NeighborhoodAnalysisDialog {
         HBox cnRow = new HBox(8, new Label("Number of CNs ="), cnSpinner);
         cnRow.setAlignment(Pos.CENTER_LEFT);
 
-        // ── Cell-type checklist ──
-        // Pre-check only types actually present on the open image; extra project
-        // Class-list entries (markers/gating/ROI) are listed but left unchecked so a
-        // default run isn't padded with empty type columns.
-        Set<String> present = presentTypes();
+        // ── Cell-type checklist ── (live cell classifications only, all selected)
         VBox typeBox = new VBox(3);
         typeBox.setPadding(new Insets(4));
         for (String type : discoverTypes()) {
             CheckBox cb = new CheckBox(type);
-            cb.setSelected(present.isEmpty() || present.contains(type));
+            cb.setSelected(true);
             typeChecks.put(type, cb);
             typeBox.getChildren().add(cb);
         }
@@ -381,9 +377,10 @@ public class NeighborhoodAnalysisDialog {
     }
 
     /**
-     * Distinct non-ignored cell-type labels — the current image's classes first, then
-     * any remaining classes from the project's Class list (so project-scope runs cover
-     * types absent from the open image).
+     * Distinct non-ignored cell classifications actually assigned to cells on the
+     * current image — the live {@code PathClass}es, NOT the project Class list (which
+     * may still hold old/composite gating classes that no cell carries). In project
+     * scope the open image is assumed representative of the cohort's phenotypes.
      */
     private List<String> discoverTypes() {
         Set<String> types = new LinkedHashSet<>();
@@ -396,27 +393,7 @@ public class NeighborhoodAnalysisDialog {
                 }
             }
         }
-        for (PathClass pc : qupath.getAvailablePathClasses()) {
-            if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) {
-                types.add(pc.toString());
-            }
-        }
         return new ArrayList<>(types);
-    }
-
-    /** Distinct non-ignored cell-type labels actually present on the current image. */
-    private Set<String> presentTypes() {
-        Set<String> present = new LinkedHashSet<>();
-        var imageData = qupath.getImageData();
-        if (imageData != null) {
-            for (PathObject cell : cells(imageData)) {
-                PathClass pc = cell.getPathClass();
-                if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) {
-                    present.add(pc.toString());
-                }
-            }
-        }
-        return present;
     }
 
     private static java.util.Collection<PathObject> cells(qupath.lib.images.ImageData<?> imageData) {
