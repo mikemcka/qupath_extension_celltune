@@ -65,6 +65,15 @@ public class NeighborhoodAnalysisDialog {
     /** Measurement name written per cell; also the value the color toggle maps. */
     public static final String CN_MEASUREMENT = "CN";
 
+    /** Measurement holding the user-assigned CN class code (after naming/merge). */
+    public static final String CN_CLASS_MEASUREMENT = "CN class";
+
+    private enum Coloring {
+        NONE,
+        CN,
+        CLASS
+    }
+
     private final QuPathGUI qupath;
     private final Stage stage;
 
@@ -87,12 +96,14 @@ public class NeighborhoodAnalysisDialog {
     private final Button runBtn = new Button("Run");
     private final Button closeBtn = new Button("Close");
     private final Button toggleBtn = new Button("Color by: Neighborhood (CN)");
+    private final Button classToggleBtn = new Button("Color by: CN class");
     private final Button heatmapBtn = new Button("Show heatmap");
 
     private final String unit;
     private final ColorMaps.ColorMap cnColorMap =
             ColorMaps.getColorMaps().getOrDefault("Viridis", ColorMaps.getDefaultColorMap());
-    private MeasurementMapper cnMapper; // cached toggle state
+    private MeasurementMapper cnMapper; // active overlay mapper (CN or CN class)
+    private Coloring coloring = Coloring.NONE;
 
     // Last run's results, cached so the heatmap can be reopened without rerunning.
     private double[][] lastCnMean;
@@ -100,6 +111,9 @@ public class NeighborhoodAnalysisDialog {
     private List<String> lastTypeNames;
     private String lastTitle;
     private int lastKEff;
+    private java.util.List<PathObject> lastCells;
+    private final Map<Integer, String> lastNames = new LinkedHashMap<>(); // CN id -> name
+    private int lastClassCount; // distinct CN classes after the last apply
 
     public NeighborhoodAnalysisDialog(QuPathGUI qupath) {
         this.qupath = qupath;
@@ -219,13 +233,18 @@ public class NeighborhoodAnalysisDialog {
         closeBtn.setOnAction(e -> stage.close());
         toggleBtn.setDisable(true);
         toggleBtn.setTooltip(new Tooltip("Flip viewer colouring between phenotype and CN. Non-destructive."));
-        toggleBtn.setOnAction(e -> toggleCnColoring());
+        toggleBtn.setOnAction(e -> setColoring(coloring == Coloring.CN ? Coloring.NONE : Coloring.CN));
+        classToggleBtn.setDisable(true);
+        classToggleBtn.setTooltip(
+                new Tooltip("Colour by the assigned CN class (after naming/merge in the heatmap). Non-destructive."));
+        classToggleBtn.setOnAction(e -> setColoring(coloring == Coloring.CLASS ? Coloring.NONE : Coloring.CLASS));
         heatmapBtn.setDisable(true);
         heatmapBtn.setTooltip(new Tooltip("Reopen the CN enrichment heatmap + colour key from the last run."));
         heatmapBtn.setOnAction(e -> showHeatmap());
-        HBox buttons = new HBox(10, toggleBtn, heatmapBtn, new javafx.scene.layout.Region(), runBtn, closeBtn);
+        HBox buttons =
+                new HBox(8, toggleBtn, classToggleBtn, heatmapBtn, new javafx.scene.layout.Region(), runBtn, closeBtn);
         buttons.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(buttons.getChildren().get(2), javafx.scene.layout.Priority.ALWAYS);
+        HBox.setHgrow(buttons.getChildren().get(3), javafx.scene.layout.Priority.ALWAYS);
         buttons.setPadding(new Insets(4, 0, 0, 0));
 
         VBox root = new VBox(
@@ -502,6 +521,10 @@ public class NeighborhoodAnalysisDialog {
             lastTypeNames = typeNames;
             lastTitle = title;
             lastKEff = kEff;
+            lastCells = cellList;
+            lastNames.clear();
+            lastClassCount = 0;
+            classToggleBtn.setDisable(true);
             toggleBtn.setDisable(false);
             heatmapBtn.setDisable(false);
             statusLabel.setText(kEff + " neighborhoods written to the \"CN\" measurement.");
@@ -534,7 +557,16 @@ public class NeighborhoodAnalysisDialog {
     }
 
     private void openHeatmap() {
-        new NeighborhoodHeatmapView(stage, lastTitle, lastTypeNames, lastCnMean, lastCnCounts, cnColors(lastKEff))
+        new NeighborhoodHeatmapView(
+                        stage,
+                        lastTitle,
+                        lastTypeNames,
+                        lastCnMean,
+                        lastCnCounts,
+                        cnColors(lastKEff),
+                        new LinkedHashMap<>(lastNames),
+                        this::applyCnClasses,
+                        this::classColor)
                 .show();
     }
 
@@ -545,40 +577,108 @@ public class NeighborhoodAnalysisDialog {
      */
     private List<Color> cnColors(int kEff) {
         List<Color> colors = new ArrayList<>(Math.max(0, kEff));
-        int max = Math.max(2, kEff);
         for (int c = 1; c <= kEff; c++) {
-            Integer argb = cnColorMap.getColor(c, 1, max);
-            int v = argb == null ? 0 : argb;
-            colors.add(Color.rgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
+            colors.add(classColor(c, kEff));
         }
         return colors;
     }
 
-    // ── CN color toggle (non-destructive overlay measurement mapper) ────────────
+    /** Colour for code {@code c} of {@code total} via the shared colormap over a {@code [1, total]} range. */
+    private Color classColor(int c, int total) {
+        int max = Math.max(2, total);
+        Integer argb = cnColorMap.getColor(c, 1, max);
+        int v = argb == null ? 0 : argb;
+        return Color.rgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+    }
 
-    private void toggleCnColoring() {
+    // ── CN class assignment (naming / merge) ────────────────────────────────────
+
+    /**
+     * Record the user's CN naming/merge as a numeric {@code "CN class"} measurement
+     * per cell: distinct names (in CN-id order) get integer codes 1..m, so naming
+     * two CNs the same merges them under one code. Non-destructive — phenotype
+     * {@code getPathClass()} is untouched. Empty-window cells (CN = -1) get -1.
+     */
+    private void applyCnClasses(Map<Integer, String> names) {
+        if (lastCells == null) {
+            return;
+        }
+        lastNames.clear();
+        lastNames.putAll(names);
+
+        // Distinct effective names → codes, in CN-id order.
+        Map<String, Integer> codes = new LinkedHashMap<>();
+        for (int id = 1; id <= lastKEff; id++) {
+            String nm = names.get(id);
+            if (nm == null || nm.isBlank()) {
+                nm = "CN " + id;
+            }
+            codes.computeIfAbsent(nm, k -> codes.size() + 1);
+        }
+        lastClassCount = codes.size();
+
+        for (PathObject cell : lastCells) {
+            double cnVal = cell.getMeasurementList().get(CN_MEASUREMENT);
+            int code = -1;
+            if (!Double.isNaN(cnVal) && cnVal >= 1) {
+                int id = (int) Math.round(cnVal);
+                String nm = names.get(id);
+                if (nm == null || nm.isBlank()) {
+                    nm = "CN " + id;
+                }
+                Integer c = codes.get(nm);
+                code = c != null ? c : -1;
+            }
+            cell.getMeasurementList().put(CN_CLASS_MEASUREMENT, code);
+        }
+
+        var imageData = qupath.getImageData();
+        if (imageData != null) {
+            imageData.getHierarchy().fireHierarchyChangedEvent(this);
+        }
+        classToggleBtn.setDisable(false);
+        if (coloring == Coloring.CLASS) {
+            setColoring(Coloring.CLASS); // refresh mapper range for the new class count
+        }
+        log(lastClassCount + " CN class(es) written to the \"" + CN_CLASS_MEASUREMENT + "\" measurement:");
+        for (var e : codes.entrySet()) {
+            log("  " + e.getValue() + " = " + e.getKey());
+        }
+        statusLabel.setText(lastClassCount + " CN classes written to \"" + CN_CLASS_MEASUREMENT + "\".");
+    }
+
+    // ── Non-destructive overlay colouring (CN or CN class) ──────────────────────
+
+    private void setColoring(Coloring target) {
         QuPathViewer viewer = qupath.getViewer();
         if (viewer == null || viewer.getImageData() == null) {
             Dialogs.showWarningNotification("CellTune", "No active viewer to recolour.");
             return;
         }
         OverlayOptions opts = viewer.getOverlayOptions();
-        if (cnMapper != null && opts.getMeasurementMapper() == cnMapper) {
-            opts.resetMeasurementMapper(); // revert to classification colouring
-            cnMapper = null;
-            toggleBtn.setText("Color by: Neighborhood (CN)");
-        } else {
-            var dets = viewer.getImageData().getHierarchy().getDetectionObjects();
-            cnMapper = new MeasurementMapper(cnColorMap, CN_MEASUREMENT, dets);
-            // Map CN ids 1..kEff across the full ramp; empty windows (CN = -1) fall
-            // outside the range and keep their phenotype colour. Matches the key.
-            cnMapper.setDisplayMinValue(1);
-            cnMapper.setDisplayMaxValue(Math.max(2, lastKEff));
-            cnMapper.setExcludeOutsideRange(true);
+        opts.resetMeasurementMapper();
+        cnMapper = null;
+        if (target == Coloring.CN) {
+            cnMapper = buildMapper(viewer, CN_MEASUREMENT, lastKEff);
             opts.setMeasurementMapper(cnMapper);
-            toggleBtn.setText("Color by: Classification");
+        } else if (target == Coloring.CLASS) {
+            cnMapper = buildMapper(viewer, CN_CLASS_MEASUREMENT, lastClassCount);
+            opts.setMeasurementMapper(cnMapper);
         }
+        coloring = target;
+        toggleBtn.setText(coloring == Coloring.CN ? "Color by: Classification" : "Color by: Neighborhood (CN)");
+        classToggleBtn.setText(coloring == Coloring.CLASS ? "Color by: Classification" : "Color by: CN class");
         viewer.repaintEntireImage();
+    }
+
+    /** Mapper colouring detections by {@code measurement} over a {@code [1, max]} range (matches the key). */
+    private MeasurementMapper buildMapper(QuPathViewer viewer, String measurement, int max) {
+        var dets = viewer.getImageData().getHierarchy().getDetectionObjects();
+        MeasurementMapper mm = new MeasurementMapper(cnColorMap, measurement, dets);
+        mm.setDisplayMinValue(1);
+        mm.setDisplayMaxValue(Math.max(2, max));
+        mm.setExcludeOutsideRange(true); // empty (-1) cells keep their phenotype colour
+        return mm;
     }
 
     // ── Spinner helpers ─────────────────────────────────────────────────────────
