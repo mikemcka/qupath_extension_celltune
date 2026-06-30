@@ -1,5 +1,6 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -31,6 +32,7 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.NeighborhoodCohort;
 import qupath.ext.celltune.model.NeighborhoodModel;
 import qupath.ext.celltune.model.NeighborhoodModel.ClusterResult;
 import qupath.ext.celltune.model.ScatterMath;
@@ -40,9 +42,11 @@ import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.tools.MeasurementMapper;
 import qupath.lib.gui.viewer.OverlayOptions;
 import qupath.lib.gui.viewer.QuPathViewer;
+import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassTools;
+import qupath.lib.projects.Project;
 
 /**
  * Non-modal control dialog for cellular-neighborhood (CN) spatial clustering on
@@ -89,6 +93,14 @@ public class NeighborhoodAnalysisDialog {
     private final CheckBox showHeatmapBox = new CheckBox("Show enrichment heatmap after run");
     private final TextField pixelSizeField = new TextField();
     private final Map<String, CheckBox> typeChecks = new LinkedHashMap<>();
+
+    // Scope: current image vs whole project (cohort)
+    private final ToggleGroup scopeGroup = new ToggleGroup();
+    private final RadioButton currentScopeRadio = new RadioButton("Current image");
+    private final RadioButton projectScopeRadio = new RadioButton("Whole project");
+    private final Map<String, CheckBox> imageChecks = new LinkedHashMap<>();
+    private final ScrollPane imageScroll = new ScrollPane();
+    private final Spinner<Integer> sampleSpinner = new Spinner<>();
 
     private final TextArea logArea = new TextArea();
     private final ProgressBar progressBar = new ProgressBar(0);
@@ -219,6 +231,65 @@ public class NeighborhoodAnalysisDialog {
         HBox pxRow = new HBox(6, new Label("Pixel size:"), pixelSizeField, new Label("µm/pixel (optional)"));
         pxRow.setAlignment(Pos.CENTER_LEFT);
 
+        // ── Scope (current image vs whole project) ──
+        var project = qupath.getProject();
+        currentScopeRadio.setToggleGroup(scopeGroup);
+        projectScopeRadio.setToggleGroup(scopeGroup);
+        currentScopeRadio.setSelected(true);
+        HBox scopeRow = new HBox(12, new Label("Scope:"), currentScopeRadio, projectScopeRadio);
+        scopeRow.setAlignment(Pos.CENTER_LEFT);
+
+        VBox imgBox = new VBox(3);
+        imgBox.setPadding(new Insets(4));
+        if (project != null) {
+            for (var entry : project.getImageList()) {
+                String name = entry.getImageName();
+                if (name == null) {
+                    continue;
+                }
+                CheckBox cb = new CheckBox(name);
+                cb.setSelected(true);
+                imageChecks.put(name, cb);
+                imgBox.getChildren().add(cb);
+            }
+        }
+        if (imageChecks.isEmpty()) {
+            imgBox.getChildren().add(new Label("No project images."));
+        }
+        imageScroll.setContent(imgBox);
+        imageScroll.setFitToWidth(true);
+        imageScroll.setPrefHeight(120);
+        imageScroll.setStyle("-fx-border-color: #ccc;");
+        Button allImgs = new Button("All");
+        Button noneImgs = new Button("None");
+        allImgs.setOnAction(e -> imageChecks.values().forEach(cb -> cb.setSelected(true)));
+        noneImgs.setOnAction(e -> imageChecks.values().forEach(cb -> cb.setSelected(false)));
+        HBox imgButtons = new HBox(6, new Label("Images:"), allImgs, noneImgs);
+        imgButtons.setAlignment(Pos.CENTER_LEFT);
+
+        sampleSpinner.setValueFactory(
+                new SpinnerValueFactory.IntegerSpinnerValueFactory(1000, 5_000_000, 50_000, 10_000));
+        sampleSpinner.setEditable(true);
+        sampleSpinner.setPrefWidth(120);
+        sampleSpinner.setTooltip(new Tooltip("Composition windows pooled across images to FIT the CN clusters once. "
+                + "Every cell is still assigned afterwards — 50k is plenty for stable centroids."));
+        HBox sampleRow = new HBox(8, new Label("Sample windows for fit:"), sampleSpinner);
+        sampleRow.setAlignment(Pos.CENTER_LEFT);
+
+        Label projectHint =
+                new Label("Project scope pools windows from the selected images, clusters once, then writes a "
+                        + "consistent CN to every selected image (each image is saved).");
+        projectHint.setWrapText(true);
+        projectHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        VBox projectBox = new VBox(6, imgButtons, imageScroll, sampleRow, projectHint);
+
+        projectScopeRadio.setDisable(project == null);
+        Runnable syncScope = () -> projectBox.setDisable(!projectScopeRadio.isSelected());
+        scopeGroup.selectedToggleProperty().addListener((o, a, b) -> syncScope.run());
+        syncScope.run();
+
+        VBox scopeSection = new VBox(6, scopeRow, projectBox);
+
         // ── Log / progress ──
         logArea.setEditable(false);
         logArea.setPrefHeight(150);
@@ -249,6 +320,8 @@ public class NeighborhoodAnalysisDialog {
 
         VBox root = new VBox(
                 10,
+                scopeSection,
+                new Separator(),
                 new Label("Neighborhood window:"),
                 knnRow,
                 radiusRow,
@@ -268,15 +341,22 @@ public class NeighborhoodAnalysisDialog {
                 buttons);
         root.setPadding(new Insets(14));
 
+        ScrollPane rootScroll = new ScrollPane(root);
+        rootScroll.setFitToWidth(true);
+
         Stage s = new Stage();
         s.setTitle("Cellular Neighborhoods");
         s.initOwner(qupath.getStage());
         s.initModality(Modality.NONE);
-        s.setScene(new Scene(root, 460, 760));
+        s.setScene(new Scene(rootScroll, 480, 820));
         return s;
     }
 
-    /** Distinct non-ignored cell-type labels on the current image, in first-seen order. */
+    /**
+     * Distinct non-ignored cell-type labels — the current image's classes first, then
+     * any remaining classes from the project's Class list (so project-scope runs cover
+     * types absent from the open image).
+     */
     private List<String> discoverTypes() {
         Set<String> types = new LinkedHashSet<>();
         var imageData = qupath.getImageData();
@@ -286,6 +366,11 @@ public class NeighborhoodAnalysisDialog {
                 if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) {
                     types.add(pc.toString());
                 }
+            }
+        }
+        for (PathClass pc : qupath.getAvailablePathClasses()) {
+            if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) {
+                types.add(pc.toString());
             }
         }
         return new ArrayList<>(types);
@@ -357,6 +442,22 @@ public class NeighborhoodAnalysisDialog {
         }
         final Double pxSize = pxOverride;
 
+        if (projectScopeRadio.isSelected()) {
+            commitSpinner(sampleSpinner);
+            runCohort(
+                    knn,
+                    k,
+                    radius,
+                    nCN,
+                    includeCenter,
+                    standardize,
+                    showHeatmap,
+                    pxSize,
+                    selectedTypes,
+                    sampleSpinner.getValue());
+            return;
+        }
+
         runBtn.setDisable(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         logArea.clear();
@@ -387,6 +488,140 @@ public class NeighborhoodAnalysisDialog {
                     }
                 },
                 "CellTune-Neighborhoods");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    // ── Project-wide (cohort) CN ────────────────────────────────────────────────
+
+    private void runCohort(
+            boolean knn,
+            int k,
+            double radius,
+            int nCN,
+            boolean includeCenter,
+            boolean standardize,
+            boolean showHeatmap,
+            Double pxSize,
+            List<String> selectedTypes,
+            int sampleCap) {
+        if (qupath.getProject() == null) {
+            log("ERROR: No project is open.");
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        Project<BufferedImage> project = (Project<BufferedImage>) (Object) qupath.getProject();
+
+        List<String> images = new ArrayList<>();
+        for (var e : imageChecks.entrySet()) {
+            if (e.getValue().isSelected()) {
+                images.add(e.getKey());
+            }
+        }
+        if (images.isEmpty()) {
+            log("ERROR: Select at least one image.");
+            return;
+        }
+
+        ImageData<BufferedImage> openData = qupath.getImageData();
+        String openName = null;
+        if (openData != null) {
+            var entry = project.getEntry(openData);
+            if (entry != null) {
+                openName = entry.getImageName();
+            }
+        }
+        final String openNameF = openName;
+        final ImageData<BufferedImage> openDataF = openData;
+        final List<String> typeNames = new ArrayList<>(selectedTypes);
+        var params = new NeighborhoodCohort.Params(knn, k, radius, includeCenter, pxSize);
+
+        runBtn.setDisable(true);
+        progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        logArea.clear();
+        log("Project CN over " + images.size() + " image(s); sampling up to " + sampleCap + " windows…");
+
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        var sample =
+                                NeighborhoodCohort.sample(project, images, typeNames, params, sampleCap, this::log);
+                        if (sample.sampled() < 2) {
+                            log("ERROR: Too few non-empty windows across the project to cluster.");
+                            return;
+                        }
+                        log(String.format(
+                                Locale.US,
+                                "Pooled %,d windows from %d image(s); fitting %d CNs…",
+                                sample.sampled(),
+                                sample.imageCount(),
+                                nCN));
+
+                        int nTypes = typeNames.size();
+                        double[] mean = null;
+                        double[] sd = null;
+                        double[][] forFit = sample.rows();
+                        if (standardize) {
+                            mean = new double[nTypes];
+                            sd = new double[nTypes];
+                            forFit = ScatterMath.standardizeColumns(sample.rows(), mean, sd);
+                        }
+                        ClusterResult fit = NeighborhoodModel.clusterCompositions(forFit, nCN);
+                        int kEff = fit.kEffective();
+
+                        log("Assigning CN across the project (writing + saving each image)…");
+                        var ar = NeighborhoodCohort.assignAcrossProject(
+                                project,
+                                images,
+                                typeNames,
+                                params,
+                                mean,
+                                sd,
+                                fit.centroids(),
+                                openDataF,
+                                openNameF,
+                                this::log,
+                                frac -> Platform.runLater(() -> progressBar.setProgress(frac)));
+
+                        String title = "Project (" + sample.imageCount() + " images)";
+                        double[][] cnMean = ar.cnMean();
+                        long[] cnCounts = ar.cnCounts();
+                        List<PathObject> openCells =
+                                openDataF != null ? new ArrayList<>(cells(openDataF)) : new ArrayList<>();
+                        Platform.runLater(() -> {
+                            lastCnMean = cnMean;
+                            lastCnCounts = cnCounts;
+                            lastTypeNames = typeNames;
+                            lastTitle = title;
+                            lastKEff = kEff;
+                            lastCells = openCells;
+                            lastNames.clear();
+                            lastClassCount = 0;
+                            classToggleBtn.setDisable(true);
+                            toggleBtn.setDisable(false);
+                            heatmapBtn.setDisable(false);
+                            statusLabel.setText(String.format(
+                                    Locale.US,
+                                    "%d CNs written across %d images (%,d cells, %,d empty).",
+                                    kEff,
+                                    sample.imageCount(),
+                                    ar.assigned(),
+                                    ar.empty()));
+                            if (showHeatmap) {
+                                openHeatmap();
+                            }
+                        });
+                    } catch (Exception ex) {
+                        logger.warn("Project CN run failed", ex);
+                        log("ERROR: " + ex.getMessage());
+                    } finally {
+                        Platform.runLater(() -> {
+                            runBtn.setDisable(false);
+                            progressBar.setProgress(0);
+                        });
+                    }
+                },
+                "CellTune-Neighborhoods-Cohort");
         worker.setDaemon(true);
         worker.start();
     }
