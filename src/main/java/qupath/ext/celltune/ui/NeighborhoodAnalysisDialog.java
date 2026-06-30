@@ -113,8 +113,9 @@ public class NeighborhoodAnalysisDialog {
     private final ToggleGroup scopeGroup = new ToggleGroup();
     private final RadioButton currentScopeRadio = new RadioButton("Current image");
     private final RadioButton projectScopeRadio = new RadioButton("Whole project");
-    private final Map<String, CheckBox> imageChecks = new LinkedHashMap<>();
-    private final ScrollPane imageScroll = new ScrollPane();
+    private final List<String> allImageNames = new ArrayList<>();
+    private List<String> selectedImages = new ArrayList<>(); // chosen project images (defaults to all)
+    private final Label imagesCountLabel = new Label();
     private final Spinner<Integer> sampleSpinner = new Spinner<>();
 
     private final TextArea logArea = new TextArea();
@@ -256,32 +257,19 @@ public class NeighborhoodAnalysisDialog {
         HBox scopeRow = new HBox(12, new Label("Scope:"), currentScopeRadio, projectScopeRadio);
         scopeRow.setAlignment(Pos.CENTER_LEFT);
 
-        VBox imgBox = new VBox(3);
-        imgBox.setPadding(new Insets(4));
         if (project != null) {
             for (var entry : project.getImageList()) {
                 String name = entry.getImageName();
-                if (name == null) {
-                    continue;
+                if (name != null) {
+                    allImageNames.add(name);
                 }
-                CheckBox cb = new CheckBox(name);
-                cb.setSelected(true);
-                imageChecks.put(name, cb);
-                imgBox.getChildren().add(cb);
             }
         }
-        if (imageChecks.isEmpty()) {
-            imgBox.getChildren().add(new Label("No project images."));
-        }
-        imageScroll.setContent(imgBox);
-        imageScroll.setFitToWidth(true);
-        imageScroll.setPrefHeight(120);
-        imageScroll.setStyle("-fx-border-color: #ccc;");
-        Button allImgs = new Button("All");
-        Button noneImgs = new Button("None");
-        allImgs.setOnAction(e -> imageChecks.values().forEach(cb -> cb.setSelected(true)));
-        noneImgs.setOnAction(e -> imageChecks.values().forEach(cb -> cb.setSelected(false)));
-        HBox imgButtons = new HBox(6, new Label("Images:"), allImgs, noneImgs);
+        selectedImages = new ArrayList<>(allImageNames); // default: all images
+        Button imagesBtn = new Button("Choose images…");
+        imagesBtn.setOnAction(e -> chooseImages());
+        imagesCountLabel.setText(imageCountText());
+        HBox imgButtons = new HBox(8, new Label("Images:"), imagesBtn, imagesCountLabel);
         imgButtons.setAlignment(Pos.CENTER_LEFT);
 
         sampleSpinner.setValueFactory(
@@ -298,7 +286,7 @@ public class NeighborhoodAnalysisDialog {
                         + "consistent CN to every selected image (each image is saved).");
         projectHint.setWrapText(true);
         projectHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
-        VBox projectBox = new VBox(6, imgButtons, imageScroll, sampleRow, projectHint);
+        VBox projectBox = new VBox(6, imgButtons, sampleRow, projectHint);
 
         projectScopeRadio.setDisable(project == null);
         Runnable syncScope = () -> projectBox.setDisable(!projectScopeRadio.isSelected());
@@ -394,6 +382,39 @@ public class NeighborhoodAnalysisDialog {
             }
         }
         return new ArrayList<>(types);
+    }
+
+    /** Open the dual-list image picker (reuses {@link ImageSelectionPane}) for project scope. */
+    private void chooseImages() {
+        if (allImageNames.isEmpty()) {
+            Dialogs.showInfoNotification("CellTune", "No project images found.");
+            return;
+        }
+        List<String> chosen =
+                new ImageSelectionPane(qupath.getStage(), allImageNames, currentImageName()).showAndWait();
+        if (chosen != null) {
+            selectedImages = chosen;
+            imagesCountLabel.setText(imageCountText());
+        }
+    }
+
+    private String imageCountText() {
+        int n = selectedImages.size();
+        int total = allImageNames.size();
+        return n == total ? ("All " + total + " images") : (n + " of " + total + " images");
+    }
+
+    /** Display name of the currently-open image (or null). */
+    private String currentImageName() {
+        var open = qupath.getImageData();
+        var project = qupath.getProject();
+        if (open != null && project != null) {
+            var entry = project.getEntry(open);
+            if (entry != null) {
+                return entry.getImageName();
+            }
+        }
+        return null;
     }
 
     private static java.util.Collection<PathObject> cells(qupath.lib.images.ImageData<?> imageData) {
@@ -532,14 +553,9 @@ public class NeighborhoodAnalysisDialog {
         @SuppressWarnings("unchecked")
         Project<BufferedImage> project = (Project<BufferedImage>) (Object) qupath.getProject();
 
-        List<String> images = new ArrayList<>();
-        for (var e : imageChecks.entrySet()) {
-            if (e.getValue().isSelected()) {
-                images.add(e.getKey());
-            }
-        }
+        List<String> images = new ArrayList<>(selectedImages);
         if (images.isEmpty()) {
-            log("ERROR: Select at least one image.");
+            log("ERROR: Select at least one image (use \"Choose images…\").");
             return;
         }
 
