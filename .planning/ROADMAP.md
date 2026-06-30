@@ -6,6 +6,7 @@
 - [ ] v1.1 Reliability and Verification Hardening (in progress)
 - [x] v1.2 Cohort Outlier Analytics (shipped 2026-04-30)
 - [ ] v1.3 Cross-Project Binary Ground Truth Portability (planned)
+- [ ] v1.4 Cellular Neighborhood Analytics (planned)
 
 ## Milestone v1.1 - Reliability and Verification Hardening
 
@@ -124,6 +125,26 @@ Plans:
 - [ ] 12-01-PLAN.md - Build bundle contract, persistence hooks, and automated round-trip tests
 - [ ] 12-02-PLAN.md - Wire QuPath menu actions and guided import/export workflow with verification checkpoint
 
+## Milestone v1.4 - Cellular Neighborhood Analytics
+
+Goal: Partition tissue into recurring spatial micro-environments by clustering each cell on its local cell-type composition (Schürch/Nolan cellular neighborhoods), non-destructively, on the current image.
+
+### Phase 13 - CN Spatial Clustering
+
+Goal: Add cellular-neighborhood (CN) spatial clustering: per-cell local composition vectors → k-means → non-destructive CN measurement, with an enrichment heatmap, CN-frequency CSV, and a Classification ⟷ CN viewer color toggle.
+Depends on: Existing scatter/cluster machinery (ScatterPlotView, ScatterMath, CohortClusterModel), DistanceMeasurementsDialog STRtree pattern, and IntensityHeatmapView.
+Requirements: CN-01, CN-02, CN-03, CN-04
+Success Criteria:
+1. Each cell on the current image gets a CN from its local-neighborhood cell-type composition (kNN or radius) derived from live classifications.
+2. CN is stored as a non-destructive numeric measurement; phenotype (getPathClass()) is unchanged.
+3. Dialog provides a CN × cell-type enrichment heatmap, a per-image CN-frequency CSV, and a non-destructive Classification ⟷ CN color toggle.
+4. Automated tests cover neighbor finding (kNN + radius, self-excluded), composition normalization, clustering, and per-CN mean composition.
+Plans: 1 plan
+
+Plans:
+- [ ] 13-01-PLAN.md - Build NeighborhoodModel + dialog + enrichment heatmap/CSV + menu wiring with unit tests (filed from prior plan-mode draft)
+
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -136,3 +157,4 @@ Plans:
 | 10. Documentation and Governance Refresh | v1.1 | GOV-01,DOC-01,DOC-02 | 1/1 | Complete (2026-04-29) |
 | 11. Project Summary Cohort Outlier Analytics | v1.2 | COH-01,COH-02,COH-03,COH-04 | 2/2 | Complete (2026-04-30) |
 | 12. Binary Ground Truth Bundle Export/Import | v1.3 | XFER-01,XFER-02,XFER-03,XFER-04 | 0/2 | Not started |
+| 13. CN Spatial Clustering | v1.4 | CN-01,CN-02,CN-03,CN-04 | 0/1 | Planned |

@@ -2,11 +2,11 @@
 
 ## Current Position
 
-- Milestone: v1.1 Reliability and Verification Hardening
-- Phase: 5 complete, 10 complete, preparing Phase 6
-- Plan: phase 5 plans complete (05-01, 05-02) and phase 10 plan complete (10-01)
-- Status: documentation/governance refresh executed; reliability and validation hardening remains pending
-- Last activity: 2026-04-30 - executed phase 11 cohort outlier analytics plans (11-01, 11-02)
+- Milestone: v1.4 Cellular Neighborhood Analytics (Phase 13 planned, not started)
+- Phase: 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
+- Plan: 13-01-PLAN.md filed (CN spatial clustering) — relocated from a stray plan-mode draft
+- Status: phase 13 ready to execute; v1.1 reliability/validation hardening (phases 6-9) remains pending
+- Last activity: 2026-06-30 - filed CN spatial-clustering plan into GSD as v1.4 / Phase 13
 
 ## Carry-Forward Context
 
@@ -27,5 +27,5 @@
 
 ## Session Continuity
 
-- Recommended next command: /gsd-plan-phase 6
-- Resume target: continue v1.1 hardening flow at Phase 6 Nyquist validation coverage
+- Recommended next command: /gsd-execute-phase 13 (CN spatial clustering, plan filed and ready)
+- Alternative: /gsd-plan-phase 6 to resume the v1.1 hardening flow (Nyquist validation coverage)

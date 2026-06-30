@@ -62,6 +62,13 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - [ ] XFER-03: Import supports explicit merge/replace behavior per marker and reports schema mismatches without mutating unaffected markers.
 - [ ] XFER-04: Automated tests verify bundle round-trip fidelity plus malformed-bundle and schema-mismatch handling.
 
+### Cellular Neighborhood Analytics
+
+- [ ] CN-01: Each cell on the current image gets a local-neighborhood cell-type composition vector (kNN or radius) built from its live PathClass classification.
+- [ ] CN-02: Composition vectors are k-means clustered into cellular neighborhoods stored as a non-destructive numeric CN measurement, leaving getPathClass() unchanged.
+- [ ] CN-03: A CN × cell-type enrichment heatmap, a per-image CN-frequency CSV, and a non-destructive Classification ⟷ CN viewer color toggle are available from the dialog.
+- [ ] CN-04: Automated tests cover kNN/radius neighbor finding (self-excluded), composition normalization, clustering, and per-CN mean composition.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -98,10 +105,14 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | XFER-02 | Phase 12 | Pending |
 | XFER-03 | Phase 12 | Pending |
 | XFER-04 | Phase 12 | Pending |
+| CN-01 | Phase 13 | Pending |
+| CN-02 | Phase 13 | Pending |
+| CN-03 | Phase 13 | Pending |
+| CN-04 | Phase 13 | Pending |
 
 Coverage:
-- requirements listed in this file: 26
-- mapped to phases: 24
+- requirements listed in this file: 30
+- mapped to phases: 28
 - unmapped: 2 (COMP-06, COMP-07)
 
 ---
