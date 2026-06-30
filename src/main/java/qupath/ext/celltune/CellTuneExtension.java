@@ -736,6 +736,10 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         AnalysisViews.showScatterPlot(qupath, predAll, featureNormalizer, () -> showClassControl(qupath));
     }
 
+    void showCellularNeighborhoods(QuPathGUI qupath) {
+        AnalysisViews.showCellularNeighborhoods(qupath);
+    }
+
     // ── Placeholder actions (wired in later phases) ────────────────────────────
 
     /**

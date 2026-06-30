@@ -114,6 +114,10 @@ final class MenuItemFactory {
                                 enabled,
                                 () -> ext.showImagePixelPrescreen(qupath)),
                         item("Scatter Plots and Clustering...", enabled, () -> ext.showScatterPlot(qupath)),
+                        item(
+                                resources.getString("menu.neighborhoods"),
+                                enabled,
+                                () -> ext.showCellularNeighborhoods(qupath)),
                         item("Generate Distance Measurements...", enabled, () -> ext.showDistanceMeasurements(qupath)),
                         new SeparatorMenuItem(),
                         exportMenu,
