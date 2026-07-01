@@ -1175,7 +1175,7 @@ If **Show enrichment heatmap** is on (or click **Show heatmap** later), you get 
 
 **Giving two CNs the same name merges them** under one name and one code — the intended way to collapse the redundant CNs that a high **Number of CNs** produces (e.g. name three tumour-dominated CNs all "Tumour"). Merging only affects `CN Class` / `CN Class code`; the raw `CN` measurement keeps every original cluster id (1..k).
 
-> **Saving & scope.** Apply names writes into the in-memory hierarchy but does **not** auto-save — press **Ctrl+S** to persist. In **project scope** it applies to the **currently-open image only**; the numeric `CN` is saved cohort-wide by the run, but the names must be applied per open image.
+> **Saving & scope.** In **project scope**, Apply names is **cohort-wide**: it streams every image from the run (in parallel, reusing the **Parallel workers** count), writes `CN Class` / `CN Class code` to each cell from its saved `CN` id, and **saves every image** — so the whole cohort gets consistent, named classes in one click. The open image is updated live and saved too; the log streams per-image progress. In **current-image scope** it writes to the open image only and does **not** auto-save — press **Ctrl+S** to persist.
 
 **Export:** **Export as PNG…** saves the heatmap; **Export CN frequencies CSV…** saves the sample-by-CN frequency table — the key output for cohort analysis and for checking whether a CN's abundance tracks your biological groups (signal) or your staining batches (a batch effect to rule out).
 

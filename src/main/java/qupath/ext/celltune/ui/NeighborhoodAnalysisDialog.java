@@ -156,6 +156,9 @@ public class NeighborhoodAnalysisDialog {
     private java.util.List<PathObject> lastCells;
     private final Map<Integer, String> lastNames = new LinkedHashMap<>(); // CN id -> name
     private int lastClassCount; // distinct CN classes after the last apply
+    private boolean lastCohort; // was the last run whole-project scope?
+    private List<String> lastCohortImages = List.of(); // images in the last cohort run (for cohort-wide naming)
+    private int lastWorkers = 1; // worker count from the last cohort run (reused for cohort-wide naming)
 
     public NeighborhoodAnalysisDialog(QuPathGUI qupath) {
         this.qupath = qupath;
@@ -659,6 +662,9 @@ public class NeighborhoodAnalysisDialog {
                             lastTitle = title;
                             lastKEff = kEff;
                             lastCells = openCells;
+                            lastCohort = true;
+                            lastCohortImages = new ArrayList<>(images);
+                            lastWorkers = workers;
                             cnDisplayColors = categoricalColors(kEff);
                             lastNames.clear();
                             lastClassCount = 0;
@@ -831,6 +837,8 @@ public class NeighborhoodAnalysisDialog {
             lastTitle = title;
             lastKEff = kEff;
             lastCells = cellList;
+            lastCohort = false;
+            lastCohortImages = List.of();
             cnDisplayColors = displayColors;
             lastNames.clear();
             lastClassCount = 0;
@@ -1041,6 +1049,19 @@ public class NeighborhoodAnalysisDialog {
         }
         lastClassCount = codes.size();
 
+        // CN id (1-based) → effective name / code, reused to name every cell (open image here,
+        // and the rest of the cohort in applyNamesAcrossCohort).
+        Map<Integer, String> nameByCn = new LinkedHashMap<>();
+        Map<Integer, Integer> codeByCn = new LinkedHashMap<>();
+        for (int id = 1; id <= lastKEff; id++) {
+            String nm = names.get(id);
+            if (nm == null || nm.isBlank()) {
+                nm = "CN " + id;
+            }
+            nameByCn.put(id, nm);
+            codeByCn.put(id, codes.get(nm));
+        }
+
         for (PathObject cell : lastCells) {
             double cnVal = cell.getMeasurementList().get(CN_MEASUREMENT);
             int code = -1;
@@ -1067,13 +1088,97 @@ public class NeighborhoodAnalysisDialog {
         if (coloring == Coloring.CLASS) {
             setColoring(Coloring.CLASS); // refresh mapper range for the new class count
         }
-        log(lastClassCount + " CN class(es) written — name to the \"" + CN_CLASS_METADATA
-                + "\" metadata column, code to the \"" + CN_CLASS_MEASUREMENT + "\" measurement:");
+        log(lastClassCount + " CN Class(es) — name → \"" + CN_CLASS_METADATA + "\" metadata, code → \""
+                + CN_CLASS_MEASUREMENT + "\" measurement:");
         for (var e : codes.entrySet()) {
             log("  " + e.getValue() + " = " + e.getKey());
         }
-        statusLabel.setText(lastClassCount + " CN classes written (name → \"" + CN_CLASS_METADATA + "\", code → \""
-                + CN_CLASS_MEASUREMENT + "\").");
+
+        if (lastCohort) {
+            // Whole-project run: name every image in the cohort, not just the open one.
+            applyNamesAcrossCohort(nameByCn, codeByCn);
+        } else {
+            statusLabel.setText(lastClassCount + " CN Classes written to the open image (name → \"" + CN_CLASS_METADATA
+                    + "\", code → \"" + CN_CLASS_MEASUREMENT + "\"). Ctrl+S to save.");
+        }
+    }
+
+    /**
+     * Apply the naming/merge to <b>every image</b> in the last whole-project run. The open image was
+     * just named in memory (above), so here we persist it and then stream all the other cohort images
+     * in parallel — reading each cell's saved {@code CN} id and writing {@code CN Class} /
+     * {@code CN Class code} — reusing the run's worker count. Runs off the FX thread.
+     */
+    private void applyNamesAcrossCohort(Map<Integer, String> nameByCn, Map<Integer, Integer> codeByCn) {
+        if (qupath.getProject() == null) {
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        Project<BufferedImage> project = (Project<BufferedImage>) (Object) qupath.getProject();
+        final ImageData<BufferedImage> openData = qupath.getImageData();
+        final String openName = currentImageName();
+
+        // Every cohort image except the open one (open was named in memory; we only save it).
+        List<String> others = new ArrayList<>();
+        for (String name : lastCohortImages) {
+            if (openName == null || !openName.equals(name)) {
+                others.add(name);
+            }
+        }
+        final int workers = lastWorkers;
+        final int totalImages = lastCohortImages.size();
+
+        runBtn.setDisable(true);
+        progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        log("Applying CN Classes across " + totalImages + " project image(s) using "
+                + Math.max(1, Math.min(workers, Math.max(1, others.size()))) + " worker(s)…");
+
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        // Persist the open image (its cells were named in memory above).
+                        if (openData != null) {
+                            var entry = project.getEntry(openData);
+                            if (entry != null) {
+                                entry.saveImageData(openData);
+                            }
+                        }
+                        long updated = NeighborhoodCohort.applyNamesAcrossProject(
+                                project,
+                                others,
+                                nameByCn,
+                                codeByCn,
+                                UNASSIGNED_CN_NAME,
+                                CN_CLASS_MEASUREMENT,
+                                CN_CLASS_METADATA,
+                                workers,
+                                this::log,
+                                frac -> Platform.runLater(() -> progressBar.setProgress(frac)));
+                        log(String.format(
+                                Locale.US,
+                                "Done — CN Classes written to %,d cells across %d other image(s).",
+                                updated,
+                                others.size()));
+                    } catch (Exception ex) {
+                        logger.warn("Cohort CN Class apply failed", ex);
+                        log("ERROR: " + ex.getMessage());
+                    } finally {
+                        Platform.runLater(() -> {
+                            runBtn.setDisable(false);
+                            progressBar.setProgress(0);
+                            statusLabel.setText(String.format(
+                                    Locale.US,
+                                    "%d CN Classes written across %d image(s) (name → \"%s\", code → \"%s\").",
+                                    lastClassCount,
+                                    totalImages,
+                                    CN_CLASS_METADATA,
+                                    CN_CLASS_MEASUREMENT));
+                        });
+                    }
+                },
+                "CellTune-Neighborhoods-Naming");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     // ── Non-destructive overlay colouring (CN / CN class / diversity) ────────────

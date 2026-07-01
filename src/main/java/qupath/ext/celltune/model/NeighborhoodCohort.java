@@ -9,6 +9,7 @@ import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import javafx.application.Platform;
@@ -355,6 +356,118 @@ public final class NeighborhoodCohort {
         }
         log.accept(String.format("[%s] CN assigned to %,d of %,d cells", name, imgAssigned, n));
         return new ImageAssign(imgAssigned, empty, cnCounts, cnMeanSum);
+    }
+
+    // ── Pass 3: apply names (cohort-wide) ─────────────────────────────────────────
+
+    /**
+     * Write the user's CN naming/merge to every cell of the given {@code images}, in parallel.
+     * Each cell's already-saved {@code CN} id (1-based; {@code -1} = empty window) is mapped through
+     * {@code nameByCn} / {@code codeByCn} to a name string (written to metadata key {@code nameKey}) and
+     * a numeric code (written to measurement {@code codeKey}); empty/unknown cells get
+     * {@code unassignedName} / {@code -1}. Each image is read, updated, and saved. Non-destructive —
+     * the cell phenotype ({@code getPathClass()}) is untouched.
+     *
+     * @return the total number of cells updated across all images
+     */
+    public static long applyNamesAcrossProject(
+            Project<BufferedImage> project,
+            List<String> images,
+            Map<Integer, String> nameByCn,
+            Map<Integer, Integer> codeByCn,
+            String unassignedName,
+            String codeKey,
+            String nameKey,
+            int workers,
+            Consumer<String> log,
+            DoubleConsumer progress) {
+        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
+        int nImages = images.size();
+        int parallelism = Math.max(1, Math.min(workers, Math.max(1, nImages)));
+        ExecutorService pool = BackgroundExecutors.newFixedPool(parallelism, "CellTune-CN-Naming");
+        AtomicInteger done = new AtomicInteger(0);
+        AtomicLong updated = new AtomicLong(0);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (String name : images) {
+                ProjectImageEntry<BufferedImage> entry = byName.get(name);
+                futures.add(pool.submit(() -> {
+                    try {
+                        updated.addAndGet(applyNamesOneImage(
+                                entry, name, nameByCn, codeByCn, unassignedName, codeKey, nameKey, log));
+                    } finally {
+                        progress.accept(nImages == 0 ? 1.0 : done.incrementAndGet() / (double) nImages);
+                    }
+                }));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    // per-image failures are already logged inside the task
+                }
+            }
+            return updated.get();
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** Map every cell's {@code CN} id to a name/code and write both, then save the image. */
+    private static long applyNamesOneImage(
+            ProjectImageEntry<BufferedImage> entry,
+            String name,
+            Map<Integer, String> nameByCn,
+            Map<Integer, Integer> codeByCn,
+            String unassignedName,
+            String codeKey,
+            String nameKey,
+            Consumer<String> log) {
+        if (entry == null) {
+            log.accept("[" + name + "] not in project — skipped");
+            return 0;
+        }
+        ImageData<BufferedImage> imageData;
+        try {
+            imageData = entry.readImageData();
+        } catch (Exception e) {
+            log.accept("[" + name + "] could not load — skipped");
+            return 0;
+        }
+        if (imageData == null) {
+            return 0;
+        }
+        var hierarchy = imageData.getHierarchy();
+        var cellsCol = hierarchy.getCellObjects();
+        List<PathObject> cells = new ArrayList<>(cellsCol.isEmpty() ? hierarchy.getDetectionObjects() : cellsCol);
+
+        long updated = 0;
+        for (PathObject cell : cells) {
+            double cnVal = cell.getMeasurementList().get(CN_MEASUREMENT);
+            int code = -1;
+            String nm = unassignedName;
+            if (!Double.isNaN(cnVal) && cnVal >= 1) {
+                int id = (int) Math.round(cnVal);
+                String n = nameByCn.get(id);
+                if (n != null) {
+                    nm = n;
+                }
+                Integer c = codeByCn.get(id);
+                code = c != null ? c : -1;
+            }
+            cell.getMeasurementList().put(codeKey, code);
+            cell.getMetadata().put(nameKey, nm);
+            updated++;
+        }
+
+        try {
+            entry.saveImageData(imageData);
+        } catch (Exception e) {
+            logger.error("Failed to save {}", name, e);
+            log.accept("[" + name + "] save failed: " + e.getMessage());
+        }
+        log.accept(String.format("[%s] CN Class written to %,d cells", name, updated));
+        return updated;
     }
 
     // ── Shared helpers ──────────────────────────────────────────────────────────
