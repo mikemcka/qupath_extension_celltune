@@ -1202,7 +1202,7 @@ Three one-click, non-destructive recolourings drive the viewer from the last run
 - **Color by: CN Class** — colours the merged, named classes after you **Apply names** (driven by the numeric `CN Class code`).
 - **Color by: diversity** — colours each cell by its neighbourhood's cell-type **Shannon diversity** (0 = one type dominates, 1 = an even mix), useful for finding mixing zones and interfaces.
 
-Each toggle flips back to the classification colouring on a second click.
+Each toggle flips back to the classification colouring on a second click, and **closing the dialog automatically reverts the viewer to phenotype classifications** (so an active CN overlay never lingers and hides your classes).
 
 ### 18.8 Tips & cautions
 

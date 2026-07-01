@@ -408,6 +408,9 @@ public class NeighborhoodAnalysisDialog {
         s.initOwner(qupath.getStage());
         s.initModality(Modality.NONE);
         s.setScene(new Scene(rootScroll, 540, 840));
+        // Closing the dialog reverts the viewer to phenotype colouring — a lingering CN measurement
+        // mapper would otherwise hide the classifications. Covers both Close and the window's X.
+        s.setOnHidden(e -> clearOverlayColoring());
         return s;
     }
 
@@ -1255,6 +1258,26 @@ public class NeighborhoodAnalysisDialog {
     }
 
     // ── Non-destructive overlay colouring (CN / CN class / diversity) ────────────
+
+    /**
+     * Remove any active CN measurement-mapper overlay so the viewer shows phenotype classifications
+     * again. Null-safe and silent (no warning) — called when the dialog closes.
+     */
+    private void clearOverlayColoring() {
+        if (coloring == Coloring.NONE) {
+            return;
+        }
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer != null) {
+            viewer.getOverlayOptions().resetMeasurementMapper();
+            viewer.repaintEntireImage();
+        }
+        cnMapper = null;
+        coloring = Coloring.NONE;
+        toggleBtn.setText("Color by: Neighborhood (CN)");
+        classToggleBtn.setText("Color by: CN Class");
+        diversityToggleBtn.setText("Color by: diversity");
+    }
 
     private void setColoring(Coloring target) {
         QuPathViewer viewer = qupath.getViewer();
