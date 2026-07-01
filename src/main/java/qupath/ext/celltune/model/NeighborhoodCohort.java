@@ -20,7 +20,6 @@ import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassTools;
-import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 
 /**
@@ -84,28 +83,27 @@ public final class NeighborhoodCohort {
      * rows; the caller standardises/fits.
      */
     public static SampleResult sample(
-            Project<BufferedImage> project,
-            List<String> images,
+            List<ProjectImageEntry<BufferedImage>> entries,
             List<String> typeNames,
             Params params,
             int sampleCap,
             int workers,
             Consumer<String> log) {
-        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
         Map<String, Integer> typeIndex = typeIndex(typeNames);
         int nTypes = typeNames.size();
-        int perImage = Math.max(1, sampleCap / Math.max(1, images.size()));
+        int perImage = Math.max(1, sampleCap / Math.max(1, entries.size()));
 
         // One task per image (each an independent read + composition build). Each image
         // draws its own seeded sub-sample so the pooled fit set is deterministic no matter
         // the order tasks finish in — reproducibility the single shared RNG used to give.
-        int parallelism = Math.max(1, Math.min(workers, images.size()));
+        // Entries may span more than one project; each reads (and later saves) its own project.
+        int parallelism = Math.max(1, Math.min(workers, Math.max(1, entries.size())));
         ExecutorService pool = BackgroundExecutors.newFixedPool(parallelism, "CellTune-CN-Sample");
         try {
             List<Future<ImageSample>> futures = new ArrayList<>();
-            for (int idx = 0; idx < images.size(); idx++) {
-                String name = images.get(idx);
-                ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            for (int idx = 0; idx < entries.size(); idx++) {
+                ProjectImageEntry<BufferedImage> entry = entries.get(idx);
+                String name = entry.getImageName();
                 long seed = 42L + idx;
                 futures.add(
                         pool.submit(() -> sampleOneImage(entry, name, typeIndex, nTypes, params, perImage, seed, log)));
@@ -187,45 +185,42 @@ public final class NeighborhoodCohort {
      *
      * @param centroids fitted centroids in the same space as the (optionally standardised) sample
      * @param openData  open image's live data (nullable); its hierarchy is mutated on the FX thread
-     * @param openName  name of the open image (nullable)
+     * @param openEntry project entry of the open image (nullable); matched by identity to reuse
+     *                  {@code openData} instead of reloading, and to write on the FX thread
      */
     public static AssignResult assignAcrossProject(
-            Project<BufferedImage> project,
-            List<String> images,
+            List<ProjectImageEntry<BufferedImage>> entries,
             List<String> typeNames,
             Params params,
             double[] mean,
             double[] sd,
             double[][] centroids,
             ImageData<BufferedImage> openData,
-            String openName,
+            ProjectImageEntry<BufferedImage> openEntry,
             int workers,
             Consumer<String> log,
             DoubleConsumer progress) {
 
-        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
         Map<String, Integer> typeIndex = typeIndex(typeNames);
         int nTypes = typeNames.size();
         int kc = centroids.length;
         boolean standardize = mean != null && sd != null;
-        int nImages = images.size();
+        int nImages = entries.size();
 
         // Per-image classify+write+save, one task each. Each image mutates only its own
-        // ImageData, so the only shared state is the merged tally (done after join) and the
-        // progress counter (atomic). The open image still writes on the FX thread inside
-        // applyMeasurements; closed images write on their worker thread.
-        int parallelism = Math.max(1, Math.min(workers, nImages));
+        // ImageData (and saves to its own project), so the only shared state is the merged tally
+        // (done after join) and the progress counter (atomic). The open image still writes on the FX
+        // thread inside applyMeasurements; closed images write on their worker thread.
+        int parallelism = Math.max(1, Math.min(workers, Math.max(1, nImages)));
         ExecutorService pool = BackgroundExecutors.newFixedPool(parallelism, "CellTune-CN-Assign");
         AtomicInteger done = new AtomicInteger(0);
         try {
             List<Future<ImageAssign>> futures = new ArrayList<>();
-            for (String name : images) {
-                ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            for (ProjectImageEntry<BufferedImage> entry : entries) {
                 futures.add(pool.submit(() -> {
                     try {
                         return assignOneImage(
                                 entry,
-                                name,
                                 typeIndex,
                                 nTypes,
                                 params,
@@ -235,7 +230,7 @@ public final class NeighborhoodCohort {
                                 centroids,
                                 kc,
                                 openData,
-                                openName,
+                                openEntry,
                                 log);
                     } finally {
                         progress.accept(done.incrementAndGet() / (double) nImages);
@@ -284,7 +279,6 @@ public final class NeighborhoodCohort {
     /** Classify every cell in one image to its nearest centroid, write the CN measurement, and save. */
     private static ImageAssign assignOneImage(
             ProjectImageEntry<BufferedImage> entry,
-            String name,
             Map<String, Integer> typeIndex,
             int nTypes,
             Params params,
@@ -294,15 +288,15 @@ public final class NeighborhoodCohort {
             double[][] centroids,
             int kc,
             ImageData<BufferedImage> openData,
-            String openName,
+            ProjectImageEntry<BufferedImage> openEntry,
             Consumer<String> log) {
         long[] cnCounts = new long[kc];
         double[][] cnMeanSum = new double[kc][nTypes];
         if (entry == null) {
-            log.accept("[" + name + "] not in project — skipped");
             return new ImageAssign(0, 0, cnCounts, cnMeanSum);
         }
-        boolean isOpen = name.equals(openName);
+        String name = entry.getImageName();
+        boolean isOpen = openEntry != null && entry.equals(openEntry) && openData != null;
         ImageData<BufferedImage> imageData;
         try {
             imageData = isOpen ? openData : entry.readImageData();
@@ -371,8 +365,7 @@ public final class NeighborhoodCohort {
      * @return the total number of cells updated across all images
      */
     public static long applyNamesAcrossProject(
-            Project<BufferedImage> project,
-            List<String> images,
+            List<ProjectImageEntry<BufferedImage>> entries,
             Map<Integer, String> nameByCn,
             Map<Integer, Integer> codeByCn,
             String unassignedName,
@@ -381,20 +374,25 @@ public final class NeighborhoodCohort {
             int workers,
             Consumer<String> log,
             DoubleConsumer progress) {
-        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
-        int nImages = images.size();
+        int nImages = entries.size();
         int parallelism = Math.max(1, Math.min(workers, Math.max(1, nImages)));
         ExecutorService pool = BackgroundExecutors.newFixedPool(parallelism, "CellTune-CN-Naming");
         AtomicInteger done = new AtomicInteger(0);
         AtomicLong updated = new AtomicLong(0);
         try {
             List<Future<?>> futures = new ArrayList<>();
-            for (String name : images) {
-                ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            for (ProjectImageEntry<BufferedImage> entry : entries) {
                 futures.add(pool.submit(() -> {
                     try {
                         updated.addAndGet(applyNamesOneImage(
-                                entry, name, nameByCn, codeByCn, unassignedName, codeKey, nameKey, log));
+                                entry,
+                                entry.getImageName(),
+                                nameByCn,
+                                codeByCn,
+                                unassignedName,
+                                codeKey,
+                                nameKey,
+                                log));
                     } finally {
                         progress.accept(nImages == 0 ? 1.0 : done.incrementAndGet() / (double) nImages);
                     }
@@ -562,13 +560,5 @@ public final class NeighborhoodCohort {
             idx.put(t, idx.size());
         }
         return idx;
-    }
-
-    private static Map<String, ProjectImageEntry<BufferedImage>> entriesByName(Project<BufferedImage> project) {
-        Map<String, ProjectImageEntry<BufferedImage>> map = new LinkedHashMap<>();
-        for (ProjectImageEntry<BufferedImage> entry : project.getImageList()) {
-            map.put(entry.getImageName(), entry);
-        }
-        return map;
     }
 }

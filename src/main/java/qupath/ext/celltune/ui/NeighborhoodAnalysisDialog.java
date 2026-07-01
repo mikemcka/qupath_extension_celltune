@@ -1,6 +1,7 @@
 package qupath.ext.celltune.ui;
 
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,6 +39,7 @@ import qupath.ext.celltune.model.NeighborhoodModel;
 import qupath.ext.celltune.model.NeighborhoodModel.ClusterResult;
 import qupath.ext.celltune.model.ScatterMath;
 import qupath.fx.dialogs.Dialogs;
+import qupath.fx.dialogs.FileChoosers;
 import qupath.lib.color.ColorMaps;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.tools.MeasurementMapper;
@@ -48,6 +50,8 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassTools;
 import qupath.lib.projects.Project;
+import qupath.lib.projects.ProjectIO;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Non-modal control dialog for cellular-neighborhood (CN) spatial clustering on
@@ -130,6 +134,10 @@ public class NeighborhoodAnalysisDialog {
     private final Spinner<Integer> sampleSpinner = new Spinner<>();
     private final Spinner<Integer> workersSpinner = new Spinner<>();
 
+    // Extra projects to pool into the cohort fit (read/written in place — no data duplication).
+    private final List<Project<BufferedImage>> extraProjects = new ArrayList<>();
+    private final Label extraProjectsLabel = new Label();
+
     private final TextArea logArea = new TextArea();
     private final ProgressBar progressBar = new ProgressBar(0);
     private final Label statusLabel = new Label("Configure and click Run.");
@@ -157,7 +165,7 @@ public class NeighborhoodAnalysisDialog {
     private final Map<Integer, String> lastNames = new LinkedHashMap<>(); // CN id -> name
     private int lastClassCount; // distinct CN classes after the last apply
     private boolean lastCohort; // was the last run whole-project scope?
-    private List<String> lastCohortImages = List.of(); // images in the last cohort run (for cohort-wide naming)
+    private List<ProjectImageEntry<BufferedImage>> lastCohortEntries = List.of(); // entries in the last cohort run
     private int lastWorkers = 1; // worker count from the last cohort run (reused for cohort-wide naming)
 
     public NeighborhoodAnalysisDialog(QuPathGUI qupath) {
@@ -307,12 +315,25 @@ public class NeighborhoodAnalysisDialog {
         HBox workersRow = new HBox(8, new Label("Parallel workers:"), workersSpinner);
         workersRow.setAlignment(Pos.CENTER_LEFT);
 
-        Label projectHint =
-                new Label("Project scope pools windows from the selected images, clusters once, then writes a "
-                        + "consistent CN to every selected image (each image is saved).");
+        // Optionally pool images from other QuPath projects into the same fit — read/written in place,
+        // no data duplication (so no disk-quota blow-up from copying cells between projects).
+        Button addProjectBtn = new Button("Add project…");
+        addProjectBtn.setOnAction(e -> addProject());
+        Button clearProjectsBtn = new Button("Clear");
+        clearProjectsBtn.setOnAction(e -> {
+            extraProjects.clear();
+            updateExtraProjectsLabel();
+        });
+        updateExtraProjectsLabel();
+        HBox extraProjRow = new HBox(8, new Label("Also cluster projects:"), addProjectBtn, clearProjectsBtn);
+        extraProjRow.setAlignment(Pos.CENTER_LEFT);
+
+        Label projectHint = new Label("Project scope pools windows from all selected images (this project plus any "
+                + "added projects), clusters once, then writes a consistent CN back into each image's own "
+                + "project. Added projects contribute all their images and must share the same cell-class names.");
         projectHint.setWrapText(true);
         projectHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
-        VBox projectBox = new VBox(6, imgButtons, sampleRow, workersRow, projectHint);
+        VBox projectBox = new VBox(6, imgButtons, extraProjRow, extraProjectsLabel, sampleRow, workersRow, projectHint);
 
         projectScopeRadio.setDisable(project == null);
         Runnable syncScope = () -> projectBox.setDisable(!projectScopeRadio.isSelected());
@@ -428,6 +449,69 @@ public class NeighborhoodAnalysisDialog {
         int n = selectedImages.size();
         int total = allImageNames.size();
         return n == total ? ("All " + total + " images") : (n + " of " + total + " images");
+    }
+
+    /** Load another QuPath project (from its {@code .qpproj}) whose images are pooled into the cohort fit. */
+    private void addProject() {
+        File f = FileChoosers.promptForFile(
+                "Select another QuPath project (.qpproj)",
+                FileChoosers.createExtensionFilter("QuPath project", "*.qpproj"));
+        if (f == null) {
+            return;
+        }
+        try {
+            Project<BufferedImage> p = ProjectIO.loadProject(f, BufferedImage.class);
+            extraProjects.add(p);
+            updateExtraProjectsLabel();
+            log("Added project \"" + f.getParentFile().getName() + "\" ("
+                    + p.getImageList().size() + " images).");
+        } catch (Exception ex) {
+            logger.warn("Could not load project {}", f, ex);
+            Dialogs.showErrorNotification("CellTune", "Could not load project: " + ex.getMessage());
+        }
+    }
+
+    private void updateExtraProjectsLabel() {
+        int imgs = 0;
+        for (Project<BufferedImage> p : extraProjects) {
+            imgs += p.getImageList().size();
+        }
+        String text = extraProjects.isEmpty()
+                ? "No extra projects — this project only."
+                : (extraProjects.size() + " added project(s), +" + imgs + " images");
+        extraProjectsLabel.setText(text);
+        extraProjectsLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+    }
+
+    /** The currently-open project, typed. */
+    @SuppressWarnings("unchecked")
+    private Project<BufferedImage> currentProject() {
+        return (Project<BufferedImage>) (Object) qupath.getProject();
+    }
+
+    /**
+     * The full list of entries the cohort run operates on: the selected images of the open project,
+     * followed by every image of each added project. Entries carry their own project, so each reads
+     * and saves in place — no copying between projects.
+     */
+    private List<ProjectImageEntry<BufferedImage>> buildCohortEntries(Project<BufferedImage> current) {
+        List<ProjectImageEntry<BufferedImage>> entries = new ArrayList<>();
+        if (current != null) {
+            Map<String, ProjectImageEntry<BufferedImage>> byName = new LinkedHashMap<>();
+            for (ProjectImageEntry<BufferedImage> e : current.getImageList()) {
+                byName.put(e.getImageName(), e);
+            }
+            for (String name : selectedImages) {
+                ProjectImageEntry<BufferedImage> e = byName.get(name);
+                if (e != null) {
+                    entries.add(e);
+                }
+            }
+        }
+        for (Project<BufferedImage> p : extraProjects) {
+            entries.addAll(p.getImageList());
+        }
+        return entries;
     }
 
     /** Display name of the currently-open image (or null). */
@@ -575,43 +659,40 @@ public class NeighborhoodAnalysisDialog {
             List<String> selectedTypes,
             int sampleCap,
             int workers) {
-        if (qupath.getProject() == null) {
+        Project<BufferedImage> project = currentProject();
+        if (project == null && extraProjects.isEmpty()) {
             log("ERROR: No project is open.");
             return;
         }
-        @SuppressWarnings("unchecked")
-        Project<BufferedImage> project = (Project<BufferedImage>) (Object) qupath.getProject();
 
-        List<String> images = new ArrayList<>(selectedImages);
-        if (images.isEmpty()) {
-            log("ERROR: Select at least one image (use \"Choose images…\").");
+        List<ProjectImageEntry<BufferedImage>> entries = buildCohortEntries(project);
+        if (entries.isEmpty()) {
+            log("ERROR: No images selected (use \"Choose images…\" or add a project).");
             return;
         }
 
         ImageData<BufferedImage> openData = qupath.getImageData();
-        String openName = null;
-        if (openData != null) {
-            var entry = project.getEntry(openData);
-            if (entry != null) {
-                openName = entry.getImageName();
-            }
-        }
-        final String openNameF = openName;
+        ProjectImageEntry<BufferedImage> openEntry =
+                (openData != null && project != null) ? project.getEntry(openData) : null;
+        final ProjectImageEntry<BufferedImage> openEntryF = openEntry;
         final ImageData<BufferedImage> openDataF = openData;
+        final List<ProjectImageEntry<BufferedImage>> entriesF = entries;
         final List<String> typeNames = new ArrayList<>(selectedTypes);
         var params = new NeighborhoodCohort.Params(knn, k, radius, includeCenter, pxSize);
 
         runBtn.setDisable(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         logArea.clear();
-        log("Project CN over " + images.size() + " image(s); sampling up to " + sampleCap + " windows using "
-                + Math.max(1, Math.min(workers, images.size())) + " worker(s)…");
+        int projectCount = (project != null ? 1 : 0) + extraProjects.size();
+        log("Project CN over " + entries.size() + " image(s)"
+                + (projectCount > 1 ? " across " + projectCount + " projects" : "") + "; sampling up to " + sampleCap
+                + " windows using " + Math.max(1, Math.min(workers, entries.size())) + " worker(s)…");
 
         Thread worker = new Thread(
                 () -> {
                     try {
-                        var sample = NeighborhoodCohort.sample(
-                                project, images, typeNames, params, sampleCap, workers, this::log);
+                        var sample =
+                                NeighborhoodCohort.sample(entriesF, typeNames, params, sampleCap, workers, this::log);
                         if (sample.sampled() < 2) {
                             log("ERROR: Too few non-empty windows across the project to cluster.");
                             return;
@@ -637,15 +718,14 @@ public class NeighborhoodAnalysisDialog {
 
                         log("Assigning CN across the project (writing + saving each image)…");
                         var ar = NeighborhoodCohort.assignAcrossProject(
-                                project,
-                                images,
+                                entriesF,
                                 typeNames,
                                 params,
                                 mean,
                                 sd,
                                 fit.centroids(),
                                 openDataF,
-                                openNameF,
+                                openEntryF,
                                 workers,
                                 this::log,
                                 frac -> Platform.runLater(() -> progressBar.setProgress(frac)));
@@ -663,7 +743,7 @@ public class NeighborhoodAnalysisDialog {
                             lastKEff = kEff;
                             lastCells = openCells;
                             lastCohort = true;
-                            lastCohortImages = new ArrayList<>(images);
+                            lastCohortEntries = new ArrayList<>(entriesF);
                             lastWorkers = workers;
                             cnDisplayColors = categoricalColors(kEff);
                             lastNames.clear();
@@ -838,7 +918,7 @@ public class NeighborhoodAnalysisDialog {
             lastKEff = kEff;
             lastCells = cellList;
             lastCohort = false;
-            lastCohortImages = List.of();
+            lastCohortEntries = List.of();
             cnDisplayColors = displayColors;
             lastNames.clear();
             lastClassCount = 0;
@@ -1110,41 +1190,34 @@ public class NeighborhoodAnalysisDialog {
      * {@code CN Class code} — reusing the run's worker count. Runs off the FX thread.
      */
     private void applyNamesAcrossCohort(Map<Integer, String> nameByCn, Map<Integer, Integer> codeByCn) {
-        if (qupath.getProject() == null) {
-            return;
-        }
-        @SuppressWarnings("unchecked")
-        Project<BufferedImage> project = (Project<BufferedImage>) (Object) qupath.getProject();
+        Project<BufferedImage> project = currentProject();
         final ImageData<BufferedImage> openData = qupath.getImageData();
-        final String openName = currentImageName();
+        final ProjectImageEntry<BufferedImage> openEntry =
+                (openData != null && project != null) ? project.getEntry(openData) : null;
 
-        // Every cohort image except the open one (open was named in memory; we only save it).
-        List<String> others = new ArrayList<>();
-        for (String name : lastCohortImages) {
-            if (openName == null || !openName.equals(name)) {
-                others.add(name);
+        // Every cohort entry except the open one (open was named in memory; we only save it).
+        List<ProjectImageEntry<BufferedImage>> others = new ArrayList<>();
+        for (ProjectImageEntry<BufferedImage> e : lastCohortEntries) {
+            if (openEntry == null || !e.equals(openEntry)) {
+                others.add(e);
             }
         }
         final int workers = lastWorkers;
-        final int totalImages = lastCohortImages.size();
+        final int totalImages = lastCohortEntries.size();
 
         runBtn.setDisable(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
-        log("Applying CN Classes across " + totalImages + " project image(s) using "
+        log("Applying CN Classes across " + totalImages + " image(s) using "
                 + Math.max(1, Math.min(workers, Math.max(1, others.size()))) + " worker(s)…");
 
         Thread worker = new Thread(
                 () -> {
                     try {
                         // Persist the open image (its cells were named in memory above).
-                        if (openData != null) {
-                            var entry = project.getEntry(openData);
-                            if (entry != null) {
-                                entry.saveImageData(openData);
-                            }
+                        if (openData != null && openEntry != null) {
+                            openEntry.saveImageData(openData);
                         }
                         long updated = NeighborhoodCohort.applyNamesAcrossProject(
-                                project,
                                 others,
                                 nameByCn,
                                 codeByCn,

@@ -1147,11 +1147,17 @@ At the top of the dialog, **Scope** chooses what you cluster:
   1. **Sample (fit):** pool a bounded random sample of windows across the selected images — drawn evenly per image so no single large slide dominates — and fit k-means once on that pool. The **Sample windows for fit** spinner caps the pool (50k is plenty for stable centroids); every cell is still assigned afterward.
   2. **Assign:** stream image-by-image, recompute every cell's composition, assign it to its nearest fitted centroid, write the `CN` measurement, and **save each image**.
 
-  Choosing project scope reveals **Choose images…**, the **Sample windows for fit** spinner, and the **Parallel workers** spinner (§18.6).
+  Choosing project scope reveals **Choose images…**, **Add project…**, the **Sample windows for fit** spinner, and the **Parallel workers** spinner (§18.6).
+
+#### Clustering more than one project together
+
+To pool several QuPath projects into **one** fit — e.g. two staining batches or two cohorts — click **Add project…** and select the other project's `project.qpproj`. Each added project contributes **all** its images; the fit pools this project's selected images plus every added project's images, and the assign pass writes CN back into **each image's own project** (each is read and saved in place). Nothing is copied between projects, so there's **no data duplication and no disk-quota blow-up** from merging `.qpdata` files. **Add project…** → **Clear** removes the added projects.
+
+> Two requirements for pooling to be valid: the projects must use the **same cell-class names** (compositions are keyed by class-name string), and be mindful of **batch effects** between separately-stained cohorts — check the CN-frequencies CSV for a per-project split, and consider **Standardize compositions** (§18.2). The cell-type checklist is read from the **open** image, so open a representative slide before running.
 
 ### 18.4 Running it — step by step
 
-1. Open **Cellular Neighborhoods…**. Pick **Scope** (and, for project scope, **Choose images…**).
+1. Open **Cellular Neighborhoods…**. Pick **Scope** (and, for project scope, **Choose images…**, plus **Add project…** to pool other projects).
 2. Choose the **Neighborhood window**: **k nearest neighbours** (set `k`) or **within radius** (set the radius). Radius in tissue units is the more physically interpretable choice when calibrated.
 3. Set **Number of CNs** (paper default 10). Fewer = coarser regions; more = finer, but expect redundancy you can merge later.
 4. Tick the **Cell types** to include (**All** / **None** shortcuts). Leave out debris/ignore classes.
