@@ -70,8 +70,19 @@ public class NeighborhoodAnalysisDialog {
     /** Measurement name written per cell; also the value the color toggle maps. */
     public static final String CN_MEASUREMENT = "CN";
 
-    /** Measurement holding the user-assigned CN class code (after naming/merge). */
-    public static final String CN_CLASS_MEASUREMENT = "CN class";
+    /**
+     * Numeric measurement holding the CN class <em>code</em> (1..m after naming/merge) — drives the
+     * "Color by: CN class" overlay, which needs a number. The human-readable name goes to
+     * {@link #CN_CLASS_METADATA} instead.
+     */
+    public static final String CN_CLASS_MEASUREMENT = "CN Class code";
+
+    /**
+     * Metadata key holding the user-assigned CN class <em>name</em> (e.g. "tumour") as a string —
+     * QuPath measurements are numeric-only, so the name lives in the per-object metadata map, where it
+     * shows as a text column in the detection table and in exports. Non-destructive.
+     */
+    public static final String CN_CLASS_METADATA = "CN Class";
 
     private enum Coloring {
         NONE,
@@ -117,6 +128,7 @@ public class NeighborhoodAnalysisDialog {
     private List<String> selectedImages = new ArrayList<>(); // chosen project images (defaults to all)
     private final Label imagesCountLabel = new Label();
     private final Spinner<Integer> sampleSpinner = new Spinner<>();
+    private final Spinner<Integer> workersSpinner = new Spinner<>();
 
     private final TextArea logArea = new TextArea();
     private final ProgressBar progressBar = new ProgressBar(0);
@@ -124,7 +136,7 @@ public class NeighborhoodAnalysisDialog {
     private final Button runBtn = new Button("Run");
     private final Button closeBtn = new Button("Close");
     private final Button toggleBtn = new Button("Color by: Neighborhood (CN)");
-    private final Button classToggleBtn = new Button("Color by: CN class");
+    private final Button classToggleBtn = new Button("Color by: CN Class");
     private final Button diversityToggleBtn = new Button("Color by: diversity");
     private final Button heatmapBtn = new Button("Show heatmap");
 
@@ -281,12 +293,23 @@ public class NeighborhoodAnalysisDialog {
         HBox sampleRow = new HBox(8, new Label("Sample windows for fit:"), sampleSpinner);
         sampleRow.setAlignment(Pos.CENTER_LEFT);
 
+        int cpu = Runtime.getRuntime().availableProcessors();
+        int defaultWorkers = Math.max(1, Math.min(8, cpu - 1));
+        workersSpinner.setValueFactory(
+                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, Math.max(1, cpu), defaultWorkers, 1));
+        workersSpinner.setEditable(true);
+        workersSpinner.setPrefWidth(80);
+        workersSpinner.setTooltip(new Tooltip("Images processed in parallel during the sample and assign passes. "
+                + "Each worker loads a full image, so higher = faster but more memory (" + cpu + " CPUs detected)."));
+        HBox workersRow = new HBox(8, new Label("Parallel workers:"), workersSpinner);
+        workersRow.setAlignment(Pos.CENTER_LEFT);
+
         Label projectHint =
                 new Label("Project scope pools windows from the selected images, clusters once, then writes a "
                         + "consistent CN to every selected image (each image is saved).");
         projectHint.setWrapText(true);
         projectHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
-        VBox projectBox = new VBox(6, imgButtons, sampleRow, projectHint);
+        VBox projectBox = new VBox(6, imgButtons, sampleRow, workersRow, projectHint);
 
         projectScopeRadio.setDisable(project == null);
         Runnable syncScope = () -> projectBox.setDisable(!projectScopeRadio.isSelected());
@@ -312,7 +335,7 @@ public class NeighborhoodAnalysisDialog {
         toggleBtn.setOnAction(e -> setColoring(coloring == Coloring.CN ? Coloring.NONE : Coloring.CN));
         classToggleBtn.setDisable(true);
         classToggleBtn.setTooltip(
-                new Tooltip("Colour by the assigned CN class (after naming/merge in the heatmap). Non-destructive."));
+                new Tooltip("Colour by the assigned CN Class (after naming/merge in the heatmap). Non-destructive."));
         classToggleBtn.setOnAction(e -> setColoring(coloring == Coloring.CLASS ? Coloring.NONE : Coloring.CLASS));
         diversityToggleBtn.setDisable(true);
         diversityToggleBtn.setTooltip(new Tooltip(
@@ -485,6 +508,7 @@ public class NeighborhoodAnalysisDialog {
 
         if (projectScopeRadio.isSelected()) {
             commitSpinner(sampleSpinner);
+            commitSpinner(workersSpinner);
             runCohort(
                     knn,
                     k,
@@ -495,7 +519,8 @@ public class NeighborhoodAnalysisDialog {
                     showHeatmap,
                     pxSize,
                     selectedTypes,
-                    sampleSpinner.getValue());
+                    sampleSpinner.getValue(),
+                    workersSpinner.getValue());
             return;
         }
 
@@ -545,7 +570,8 @@ public class NeighborhoodAnalysisDialog {
             boolean showHeatmap,
             Double pxSize,
             List<String> selectedTypes,
-            int sampleCap) {
+            int sampleCap,
+            int workers) {
         if (qupath.getProject() == null) {
             log("ERROR: No project is open.");
             return;
@@ -575,13 +601,14 @@ public class NeighborhoodAnalysisDialog {
         runBtn.setDisable(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         logArea.clear();
-        log("Project CN over " + images.size() + " image(s); sampling up to " + sampleCap + " windows…");
+        log("Project CN over " + images.size() + " image(s); sampling up to " + sampleCap + " windows using "
+                + Math.max(1, Math.min(workers, images.size())) + " worker(s)…");
 
         Thread worker = new Thread(
                 () -> {
                     try {
-                        var sample =
-                                NeighborhoodCohort.sample(project, images, typeNames, params, sampleCap, this::log);
+                        var sample = NeighborhoodCohort.sample(
+                                project, images, typeNames, params, sampleCap, workers, this::log);
                         if (sample.sampled() < 2) {
                             log("ERROR: Too few non-empty windows across the project to cluster.");
                             return;
@@ -616,6 +643,7 @@ public class NeighborhoodAnalysisDialog {
                                 fit.centroids(),
                                 openDataF,
                                 openNameF,
+                                workers,
                                 this::log,
                                 frac -> Platform.runLater(() -> progressBar.setProgress(frac)));
 
@@ -980,11 +1008,20 @@ public class NeighborhoodAnalysisDialog {
 
     // ── CN class assignment (naming / merge) ────────────────────────────────────
 
+    /** Metadata name given to empty-window cells (CN = -1) so the column is never blank. */
+    private static final String UNASSIGNED_CN_NAME = "Unassigned";
+
     /**
-     * Record the user's CN naming/merge as a numeric {@code "CN class"} measurement
-     * per cell: distinct names (in CN-id order) get integer codes 1..m, so naming
-     * two CNs the same merges them under one code. Non-destructive — phenotype
-     * {@code getPathClass()} is untouched. Empty-window cells (CN = -1) get -1.
+     * Record the user's CN naming/merge onto each cell, non-destructively (phenotype
+     * {@code getPathClass()} is untouched). Two representations are written:
+     * <ul>
+     *   <li>the <b>name</b> as a {@code "CN Class"} <em>metadata string</em> (e.g. "tumour") — the
+     *       human-readable label shown in QuPath's detection table and exports; and</li>
+     *   <li>a {@code "CN Class code"} <em>numeric measurement</em> (1..m) that powers the colour
+     *       overlay (measurements can't hold text).</li>
+     * </ul>
+     * Distinct names (in CN-id order) share a code, so naming two CNs the same merges them under one
+     * name and one code. Empty-window cells (CN = -1) get name {@value #UNASSIGNED_CN_NAME} / code -1.
      */
     private void applyCnClasses(Map<Integer, String> names) {
         if (lastCells == null) {
@@ -1007,16 +1044,19 @@ public class NeighborhoodAnalysisDialog {
         for (PathObject cell : lastCells) {
             double cnVal = cell.getMeasurementList().get(CN_MEASUREMENT);
             int code = -1;
+            String name = UNASSIGNED_CN_NAME;
             if (!Double.isNaN(cnVal) && cnVal >= 1) {
                 int id = (int) Math.round(cnVal);
                 String nm = names.get(id);
                 if (nm == null || nm.isBlank()) {
                     nm = "CN " + id;
                 }
+                name = nm;
                 Integer c = codes.get(nm);
                 code = c != null ? c : -1;
             }
             cell.getMeasurementList().put(CN_CLASS_MEASUREMENT, code);
+            cell.getMetadata().put(CN_CLASS_METADATA, name);
         }
 
         var imageData = qupath.getImageData();
@@ -1027,11 +1067,13 @@ public class NeighborhoodAnalysisDialog {
         if (coloring == Coloring.CLASS) {
             setColoring(Coloring.CLASS); // refresh mapper range for the new class count
         }
-        log(lastClassCount + " CN class(es) written to the \"" + CN_CLASS_MEASUREMENT + "\" measurement:");
+        log(lastClassCount + " CN class(es) written — name to the \"" + CN_CLASS_METADATA
+                + "\" metadata column, code to the \"" + CN_CLASS_MEASUREMENT + "\" measurement:");
         for (var e : codes.entrySet()) {
             log("  " + e.getValue() + " = " + e.getKey());
         }
-        statusLabel.setText(lastClassCount + " CN classes written to \"" + CN_CLASS_MEASUREMENT + "\".");
+        statusLabel.setText(lastClassCount + " CN classes written (name → \"" + CN_CLASS_METADATA + "\", code → \""
+                + CN_CLASS_MEASUREMENT + "\").");
     }
 
     // ── Non-destructive overlay colouring (CN / CN class / diversity) ────────────
@@ -1061,7 +1103,7 @@ public class NeighborhoodAnalysisDialog {
         }
         coloring = applied;
         toggleBtn.setText(coloring == Coloring.CN ? "Color by: Classification" : "Color by: Neighborhood (CN)");
-        classToggleBtn.setText(coloring == Coloring.CLASS ? "Color by: Classification" : "Color by: CN class");
+        classToggleBtn.setText(coloring == Coloring.CLASS ? "Color by: Classification" : "Color by: CN Class");
         diversityToggleBtn.setText(coloring == Coloring.DIVERSITY ? "Color by: Classification" : "Color by: diversity");
         viewer.repaintEntireImage();
     }
