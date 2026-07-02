@@ -37,6 +37,7 @@ Windows and boxes can be expanded or contracted by clicking and dragging corners
     - [11.3 Apply Clusters — assign classes to clusters](#113-apply-clusters--assign-classes-to-clusters)
     - [11.4 Cluster-within-clusters (hierarchical gating)](#114-cluster-within-clusters-hierarchical-gating)
     - [11.5 Project-wide clustering across images](#115-project-wide-clustering-across-images)
+    - [11.6 Clustering method: k-means vs Leiden](#116-clustering-method-k-means-vs-leiden)
 12. [Exporting results](#12-exporting-results)
     - [12.1 Cell table export](#121-cell-table-export)
     - [12.2 Ground truth export & import](#122-ground-truth-export--import)
@@ -606,8 +607,9 @@ Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for t
 ## 11. Cell scatter plot — clustering & gating
 
 **Extensions → CellTune Classifier → Scatter Plots and Clustering...** opens an interactive
-2D scatter plot for **unsupervised exploration**: cells are clustered by k-means
-on their marker measurements and projected into a 2D embedding so you can see,
+2D scatter plot for **unsupervised exploration**: cells are clustered — by
+k-means or, optionally, graph-based Leiden clustering (§[11.6](#116-clustering-method-k-means-vs-leiden))
+— on their marker measurements and projected into a 2D embedding so you can see,
 label, and sub-cluster populations. This is independent of the trained
 classifier — it writes to QuPath classifications, not CellTune training labels.
 
@@ -631,11 +633,15 @@ embedding on a background thread.
   shows e.g. *"309,584 clustered · 19,432 plotted"*). Tick **Full UMAP** to embed
   every cell instead — much slower and more memory-hungry on large images, but
   nothing is left out of the plot. PCA always plots all cells.
+- **Method** — `k-means` (default) or `Leiden`. Choosing Leiden replaces
+  **Clusters (k)** with a **Resolution** control and a reproducibility toggle —
+  see §[11.6](#116-clustering-method-k-means-vs-leiden).
 - **Clusters (k)** — number of k-means clusters (2–50). The legend shrinks to
-  keep all clusters visible and clickable.
-- **Recompute** — re-fit k-means + the embedding on the current rows (the open
-  image, or the project sample). It does **not** re-sample — use **Images…** in
-  project scope for that.
+  keep all clusters visible and clickable. *k-means only* — Leiden decides its
+  own cluster count from the resolution instead (§11.6).
+- **Recompute** — re-fit the selected clustering method + the embedding on the
+  current rows (the open image, or the project sample). It does **not**
+  re-sample — use **Images…** in project scope for that.
 - **Scope: Current image / Project** — a toggle. *Current image* (default)
   clusters every cell of the open image with full viewer interaction. *Project*
   fits **one** k-means on a sample pooled across images you choose and drives the
@@ -661,8 +667,9 @@ embedding on a background thread.
   least 2 markers must be ticked.
 
 **Bottom row**
-- **Colour by** — `CLUSTER` (k-means id), `CLASS` (current/predicted class), or
-  `MARKER` (single-marker intensity gradient; pick the marker alongside).
+- **Colour by** — `CLUSTER` (k-means or Leiden cluster id), `CLASS`
+  (current/predicted class), or `MARKER` (single-marker intensity gradient; pick
+  the marker alongside).
 - **Select: Box / Lasso** — drag on the plot to select those cells (in the viewer
   in current-image scope; a plot-only highlight in project scope — see §11.2).
 - **Apply Clusters… / Assign Clusters…** — see §11.3. The button's label follows
@@ -736,13 +743,15 @@ e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
 ### 11.5 Project-wide clustering across images
 
 To cluster a **whole cohort consistently**, flip the **Scope** toggle to
-**Project**. CellTune fits **one** k-means model on a sample pooled across the
+**Project**. CellTune fits **one** model on a sample pooled across the
 images you choose, then (when you assign) maps *every* cell in *every* selected
-image to its nearest cohort centroid — so cluster 3 means the same phenotype in
+image to that same cohort clustering — so cluster 3 means the same phenotype in
 every image (unlike clustering each image separately, which gives non-comparable
 cluster ids). It all happens in the same window, so every tool — colour-by-marker,
 within-class gating, the cluster-marker subset, the centroid heatmap — is
 available for naming the cohort's clusters.
+**k-means** assigns by nearest cohort centroid; **Leiden** assigns by kNN label
+transfer against the labelled fitted sample — see §[11.6](#116-clustering-method-k-means-vs-leiden).
 
 **Entering project scope**
 
@@ -773,9 +782,11 @@ highlights on the plot only (§11.2). Everything else applies:
 **Assigning across the cohort**
 
 Click **Assign Clusters…**. The shared assignment dialog (§11.3) shows the
-centroid heatmap and a class dropdown per cluster. On confirm, CellTune streams
-each selected image, assigns all matching cells to their nearest centroid, writes
-the mapped classes, and **saves each image**, with progress in the status bar.
+per-cluster mean marker heatmap and a class dropdown per cluster. On confirm,
+CellTune streams each selected image, assigns all matching cells to their cluster
+(nearest centroid for k-means; kNN label transfer against the fitted sample for
+Leiden — §[11.6](#116-clustering-method-k-means-vs-leiden)), writes the mapped
+classes, and **saves each image**, with progress in the status bar.
 
 > **Measurement scaling & batch effects.** Clustering applies CellTune's feature
 > normalisation (§[4.2](#42-normalise-features)) — the **same** arcsinh / sqrt
@@ -783,6 +794,65 @@ the mapped classes, and **saves each image**, with progress in the status bar.
 > at fit time. So if you've configured normalisation, it shapes the clusters and
 > the colour-by-marker view too. (The normalizer is captured when the window
 > opens; change it via *Normalise Features* and reopen the plot to pick it up.)
+
+### 11.6 Clustering method: k-means vs Leiden
+
+The **Method** selector (§11.1) switches the clustering algorithm; everything
+else in this section — the embedding, colouring, selection, within-class gating,
+cluster-marker subsetting, and cluster→class assignment — works identically for
+both, because both ultimately produce the same per-cell cluster label array.
+
+- **k-means** (default) partitions cells into a **fixed** number of clusters (the
+  **Clusters (k)** spinner, 2–50). It assumes clusters are roughly spherical and
+  similarly sized, and you must pick `k` up front.
+- **Leiden** is graph-based community detection — the same family of algorithm
+  used by scanpy, scimap, and SPACEc for single-cell / multiplex-imaging
+  phenotyping (it traces back to PhenoGraph). Instead of a fixed `k`, CellTune
+  builds a nearest-neighbour graph over the z-scored marker matrix, weights edges
+  by neighbourhood similarity (Jaccard), and runs the Leiden algorithm — the
+  **number of clusters is decided by the data**, not chosen in advance. This finds
+  non-spherical and unequal-size populations — including rare cell types — that
+  k-means tends to under-resolve or merge into a larger neighbour.
+
+**Controls when Method = Leiden**
+
+- **Resolution** (0.1–3.0, default 1.0) — replaces **Clusters (k)**. Higher
+  resolution finds **more, smaller** communities; lower resolution finds **fewer,
+  larger** ones. There is no fixed cluster count to set — after **Recompute** the
+  status bar reports how many clusters Leiden found, e.g.
+  *"…· Leiden found 7 cluster(s)"*. If you want more (or fewer) populations,
+  raise (or lower) the resolution and **Recompute** again.
+- **Sample multiple seeds** (checkbox) — mirrors k-means' multi-restart
+  reproducibility: when ticked, Leiden runs several random-seeded passes and keeps
+  the best-quality partition, so repeated runs with the same settings return
+  identical clusters. Left unticked, Leiden runs a single faster pass whose exact
+  result may vary run to run (the same *populations* are still found — only which
+  integer id each gets can shift).
+
+The kNN graph-neighbour count and edge-weighting scheme are fixed, sensible
+defaults (not exposed as controls in this release) — see the design note in the
+repository for the full recipe and rationale.
+
+**Cohort (project scope) assignment differs by method**
+
+Leiden has no centroids to assign new cells to — averaging a non-spherical
+community into one point would defeat the method. So in **Project** scope
+(§11.5), Leiden fits once on the pooled sample exactly like k-means does, but the
+**assignment** pass differs:
+
+- **k-means** assigns each cell to its **nearest cohort centroid** (Euclidean, in
+  z-scored marker space).
+- **Leiden** assigns each cell by **kNN label transfer**: it finds that cell's
+  nearest neighbours *within the labelled fitted sample* and takes a majority vote
+  of their Leiden labels — the same approach scanpy uses (`sc.tl.ingest`) to map
+  new cells onto an existing clustering. Per-cluster mean marker profiles are
+  still computed for the assignment-pane heatmap either way — only the
+  per-cell assignment mechanism differs.
+
+Both methods otherwise share the exact same pipeline: the same z-scored active
+marker matrix, the same `cluster[]` label array driving plot colour/legend/box
+selection, and the same **Apply Clusters… / Assign Clusters…** dialog for naming
+populations.
 > Even so, per-marker normalisation does not fully correct **per-image** staining
 > differences, so when cells are pooled across a cohort, comparable staining still
 > matters: globally brighter slides can shift the pooled clusters. Normalise
