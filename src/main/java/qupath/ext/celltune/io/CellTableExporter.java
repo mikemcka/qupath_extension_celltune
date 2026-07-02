@@ -104,7 +104,7 @@ public class CellTableExporter {
             List<PathObject> cellList = (cells instanceof List<PathObject> l) ? l : new ArrayList<>(cells);
             int nCells = cellList.size();
 
-            float[][] featureRows = new float[nCells][];
+            String[][] featureRows = new String[nCells][];
             if (!featureNames.isEmpty()) {
                 IntStream.range(0, nCells)
                         .parallel()
@@ -183,9 +183,9 @@ public class CellTableExporter {
                 }
 
                 if (!featureNames.isEmpty()) {
-                    float[] fv = featureRows[idx];
-                    for (float v : fv) {
-                        row.append(DELIMITER).append(Float.isNaN(v) ? "NA" : v);
+                    String[] fv = featureRows[idx];
+                    for (String v : fv) {
+                        row.append(DELIMITER).append(v);
                     }
                 }
 
@@ -199,13 +199,27 @@ public class CellTableExporter {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /** Extract named measurements from a cell as a float array. */
-    private static float[] extractFeatures(PathObject cell, List<String> names) {
+    /**
+     * Extract named columns from a cell as CSV-ready strings.
+     * <p>
+     * Each name is resolved as a numeric measurement first; if absent (NaN), it is
+     * resolved as a string metadata value (e.g. "CN Class", "… original class").
+     * Numeric values are written as their float value, metadata values are written
+     * verbatim (CSV-quoted), and anything unresolved is written as {@code NA}.
+     */
+    private static String[] extractFeatures(PathObject cell, List<String> names) {
         var mlist = cell.getMeasurementList();
-        float[] row = new float[names.size()];
+        var metadata = cell.getMetadata();
+        String[] row = new String[names.size()];
         for (int i = 0; i < names.size(); i++) {
-            double v = mlist.get(names.get(i));
-            row[i] = Double.isNaN(v) ? Float.NaN : (float) v;
+            String name = names.get(i);
+            double v = mlist.get(name);
+            if (!Double.isNaN(v)) {
+                row[i] = Float.toString((float) v);
+            } else {
+                String meta = metadata.get(name);
+                row[i] = (meta != null) ? csvQuote(meta) : "NA";
+            }
         }
         return row;
     }

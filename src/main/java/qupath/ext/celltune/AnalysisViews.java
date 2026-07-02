@@ -24,12 +24,15 @@ import qupath.ext.celltune.ui.DistanceMeasurementsDialog;
 import qupath.ext.celltune.ui.FeatureImportanceView;
 import qupath.ext.celltune.ui.FeatureSelectionPane;
 import qupath.ext.celltune.ui.IntensityHeatmapView;
+import qupath.ext.celltune.ui.NeighborhoodAnalysisDialog;
 import qupath.ext.celltune.ui.PixelPrescreenView;
 import qupath.ext.celltune.ui.ScatterPlotView;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectFilter;
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.classes.PathClassTools;
 import qupath.lib.projects.ProjectImageEntry;
 
 /**
@@ -195,6 +198,43 @@ final class AnalysisViews {
                         openClassControl,
                         normalizer)
                 .show();
+    }
+
+    /**
+     * Open the cellular-neighborhood (CN) spatial-clustering dialog for the
+     * current image: cluster each cell by the cell-type composition of its local
+     * spatial window into recurring micro-environments, written back as a
+     * non-destructive {@code "CN"} measurement. Validates that an image is open,
+     * has cells, and carries at least two distinct non-ignored classes (the CN
+     * composition is meaningless with a single type).
+     */
+    static void showCellularNeighborhoods(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+        var hierarchy = imageData.getHierarchy();
+        var cells = hierarchy.getCellObjects().isEmpty() ? hierarchy.getDetectionObjects() : hierarchy.getCellObjects();
+        if (cells.isEmpty()) {
+            Dialogs.showErrorMessage(EXTENSION_NAME, "No detections found. Run cell detection first.");
+            return;
+        }
+        java.util.Set<PathClass> distinct = new java.util.LinkedHashSet<>();
+        for (PathObject cell : cells) {
+            PathClass pc = cell.getPathClass();
+            if (pc != null && pc.isValid() && !PathClassTools.isIgnoredClass(pc)) {
+                distinct.add(pc);
+            }
+        }
+        if (distinct.size() < 2) {
+            Dialogs.showErrorMessage(
+                    EXTENSION_NAME,
+                    "Cellular neighborhoods need at least two distinct cell classes. " + "Classify cells first (found "
+                            + distinct.size() + ").");
+            return;
+        }
+        new NeighborhoodAnalysisDialog(qupath).show();
     }
 
     /**
