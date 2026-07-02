@@ -1127,12 +1127,12 @@ It is fully **non-destructive**: the CN id is written as a numeric `CN` measurem
 The pipeline is the same four steps whether you run one image or the whole project:
 
 1. **Neighbour window** — for every cell, find its local spatial neighbourhood, in one of two modes:
-   - **k nearest neighbours** — each cell's `k` closest cells of *any* type (Euclidean on centroids; paper default `k = 10`).
+   - **k nearest neighbours** — each cell's `k` closest *other* cells of *any* type (Euclidean on centroids). With **Include centre cell** on, the window is the **centre plus `k` neighbours**, so the default **`k = 9` gives a 10-cell window that matches the paper** (Schürch et al. use the 10 nearest neighbours *including the cell itself*).
    - **within radius** — every cell within a fixed radius (in µm when calibrated, else px).
 
-   Both use a spatially-indexed search (JTS `STRtree`), so it scales to hundreds of thousands of cells per image. A cell's own coordinates are excluded from its neighbour list.
+   Both use a spatially-indexed search (JTS `STRtree`), so it scales to hundreds of thousands of cells per image. A cell's own coordinates are excluded from its neighbour list (the centre is added back separately by the option below).
 
-2. **Composition vector** — each window becomes a vector of **cell-type fractions** (what proportion of the window is Tumour, CD4 T, Treg, …), over the cell types you ticked. With **Include centre cell in its own window** on (paper default), the cell's own type is counted too. Cells whose class you didn't select — or that are unclassified/ignored — are excluded from the fractions. A window that ends up empty (no selected-type neighbours) is flagged `CN = -1` and left out of clustering.
+2. **Composition vector** — each window becomes a vector of **cell-type fractions** (what proportion of the window is Tumour, CD4 T, Treg, …), over the cell types you ticked. With **Include centre cell in its own window** on (paper default), the cell's own type is counted too. Cells whose class you didn't select — or that are unclassified/ignored — are excluded from the fractions. A window that ends up empty (no selected-type neighbours) is flagged `CN = -1` and left out of clustering. (The paper clusters raw type *counts*; for a fixed-size kNN window that is mathematically identical to clustering fractions, since every window is scaled by the same `k`.)
 
 3. **k-means clustering** — the composition vectors are clustered into **Number of CNs** groups with k-means. Each resulting cluster is one cellular neighborhood; every cell gets its cluster id written to the `CN` measurement (1-based; empty windows = `-1`).
 
@@ -1161,10 +1161,10 @@ To pool several QuPath projects into **one** fit — e.g. two staining batches o
 
 ![The Cellular Neighborhoods dialog](doc_images/cellular_neighbourhoods.png)
 
-*The dialog set for a whole-project run: 41 images pooled, a 500k-window fit sample, kNN window (`k = 10`), 10 CNs, the cell-type checklist, and the three option tick-boxes. See §18.2 for what each option does.*
+*The dialog set for a whole-project run: 41 images pooled, a 500k-window fit sample, a kNN window, 10 CNs, the cell-type checklist, and the three option tick-boxes. (This screenshot pre-dates the default change; the paper-matching default is now `k = 9` — see §18.2.) See §18.2 for what each option does.*
 
 1. Open **Cellular Neighborhoods…**. Pick **Scope** (and, for project scope, **Choose images…**, plus **Add project…** to pool other projects).
-2. Choose the **Neighborhood window**: **k nearest neighbours** (set `k`) or **within radius** (set the radius). Radius in tissue units is the more physically interpretable choice when calibrated.
+2. Choose the **Neighborhood window**: **k nearest neighbours** (set `k`; default `9` → a 10-cell window with the centre cell, matching the paper — see §18.2) or **within radius** (set the radius). Radius in tissue units is the more physically interpretable choice when calibrated.
 3. Set **Number of CNs** (paper default 10). Fewer = coarser regions; more = finer, but expect redundancy you can merge later.
 4. Tick the **Cell types** to include (**All** / **None** shortcuts). Leave out debris/ignore classes.
 5. Options: **Include centre cell** (leave on to match the paper), **Standardize compositions** (see §18.2), **Show enrichment heatmap after run**.

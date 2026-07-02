@@ -203,10 +203,12 @@ public class NeighborhoodAnalysisDialog {
         radiusRadio.setToggleGroup(modeGroup);
         knnRadio.setSelected(true);
 
-        kSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(2, 100, 10));
+        kSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(2, 100, 9));
         kSpinner.setEditable(true);
         kSpinner.setPrefWidth(90);
-        kSpinner.setTooltip(new Tooltip("Window size: each cell's k nearest neighbours (paper default 10)."));
+        kSpinner.setTooltip(new Tooltip("Window size: each cell's k nearest neighbours. With \"Include centre cell\" "
+                + "on, the window is the centre plus k neighbours — so the default k=9 gives a 10-cell window, "
+                + "matching the paper (Schürch et al. use k=10 nearest neighbours including the cell itself)."));
 
         radiusSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(5, 500, 50, 5));
         radiusSpinner.setEditable(true);
@@ -259,6 +261,8 @@ public class NeighborhoodAnalysisDialog {
 
         // ── Options ──
         includeCenterBox.setSelected(true);
+        includeCenterBox.setTooltip(new Tooltip("Count the centre cell's own type in its window (paper default on). "
+                + "With this on, the kNN window is the centre plus k neighbours."));
         standardizeBox.setSelected(false); // paper clusters raw frequency vectors
         standardizeBox.setTooltip(new Tooltip("Off matches the paper (cluster raw fractions). "
                 + "On z-scores composition columns, up-weighting rare cell types."));
