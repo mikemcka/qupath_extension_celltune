@@ -2,7 +2,9 @@ package qupath.ext.celltune.model;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjectTools;
 
@@ -57,6 +59,26 @@ public class CellFeatureExtractor {
      */
     public static List<String> discoverFeatureNames(Collection<PathObject> detections) {
         return new ArrayList<>(PathObjectTools.getAvailableFeatures(detections));
+    }
+
+    /**
+     * Discover all string metadata keys attached to a collection of detection objects.
+     * <p>
+     * Unlike {@link #discoverFeatureNames}, which returns only the numeric
+     * measurement-list columns, this scans each object's metadata map (e.g. the
+     * per-cell "CN Class", neighborhood name, or imported "… original class"
+     * string values). These keys are string-valued and therefore never appear in
+     * {@link PathObjectTools#getAvailableFeatures}.
+     *
+     * @param detections detection objects to scan
+     * @return ordered list of unique metadata keys found across all detections
+     */
+    public static List<String> discoverMetadataKeys(Collection<PathObject> detections) {
+        Set<String> keys = new LinkedHashSet<>();
+        for (PathObject det : detections) {
+            keys.addAll(det.getMetadata().keySet());
+        }
+        return new ArrayList<>(keys);
     }
 
     /**

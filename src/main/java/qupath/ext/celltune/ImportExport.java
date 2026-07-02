@@ -161,7 +161,13 @@ final class ImportExport {
         Collection<PathObject> currentCells = imageData.getHierarchy().getObjects(null, PathObject.class).stream()
                 .filter(PathObjectFilter.DETECTIONS_ALL)
                 .toList();
-        List<String> allCurrentFeatures = CellFeatureExtractor.discoverFeatureNames(currentCells);
+        List<String> allCurrentFeatures = new ArrayList<>(CellFeatureExtractor.discoverFeatureNames(currentCells));
+        // Append string metadata keys (e.g. "CN Class", "… original class") so they
+        // can be selected as export columns. These are string-valued and never
+        // appear among the numeric measurement columns above.
+        for (String metaKey : CellFeatureExtractor.discoverMetadataKeys(currentCells)) {
+            if (!allCurrentFeatures.contains(metaKey)) allCurrentFeatures.add(metaKey);
+        }
         if (allCurrentFeatures.isEmpty()) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No cell measurements found to export.");
             return;
