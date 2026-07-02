@@ -1134,11 +1134,13 @@ The pipeline is the same four steps whether you run one image or the whole proje
 
 2. **Composition vector** — each window becomes a vector of **cell-type fractions** (what proportion of the window is Tumour, CD4 T, Treg, …), over the cell types you ticked. With **Include centre cell in its own window** on (paper default), the cell's own type is counted too. Cells whose class you didn't select — or that are unclassified/ignored — are excluded from the fractions. A window that ends up empty (no selected-type neighbours) is flagged `CN = -1` and left out of clustering. (The paper clusters raw type *counts*; for a fixed-size kNN window that is mathematically identical to clustering fractions, since every window is scaled by the same `k`.)
 
-3. **k-means clustering** — the composition vectors are clustered into **Number of CNs** groups with k-means. Each resulting cluster is one cellular neighborhood; every cell gets its cluster id written to the `CN` measurement (1-based; empty windows = `-1`).
+3. **k-means clustering** — the composition vectors are clustered into **Number of CNs** groups with k-means. Each resulting cluster is one cellular neighborhood; every cell gets its cluster id written to the `CN` measurement (1-based; empty windows = `-1`). By default k-means is run several times from different seeds and the tightest (lowest-inertia) fit is kept — see the reproducibility note below.
 
 4. **Interpretation** — the mean composition of each CN feeds the enrichment heatmap and the diversity overlay.
 
 > **Raw vs standardized (the most important knob).** By default k-means clusters the **raw fractions**, matching the paper — this tends to resolve the *dominant* architecture (a tumour-purity gradient, stroma, interface). Tick **Standardize compositions before clustering** to z-score each cell-type column first, putting rare and common types on equal footing. Standardization pulls out **specific immune niches** far more sharply (each rare population tends to claim its own CN), but it **coarsens the tumour/stroma bulk** (much of the tissue collapses into one or two large CNs). Neither is "more correct" — pick by your question: architecture → leave it off; immune contexture → turn it on. If you want both, standardize at a higher **Number of CNs** (12–15) and merge the redundant tumour CNs afterward (§18.5).
+
+> **Seed reproducibility.** k-means starts from a random guess, so a single run is a dice roll — on validation data (the Schürch/Nolan replication) agreement with the published neighborhoods swung by ~0.3 (ARI) on seed alone. Tick **Sample multiple k-means seeds** (on by default) to run the clustering 10× and keep the lowest-inertia result, so runs are **reproducible** and unlucky seeds are avoided. Untick it for a single, faster run when iterating on parameters. It does not change *what* the method finds, only which local optimum you land in.
 
 ### 18.3 Scope: current image vs whole project
 
@@ -1161,13 +1163,13 @@ To pool several QuPath projects into **one** fit — e.g. two staining batches o
 
 ![The Cellular Neighborhoods dialog](doc_images/cellular_neighbourhoods.png)
 
-*The dialog set for a whole-project run: 41 images pooled, a 500k-window fit sample, a kNN window, 10 CNs, the cell-type checklist, and the three option tick-boxes. (This screenshot pre-dates the default change; the paper-matching default is now `k = 9` — see §18.2.) See §18.2 for what each option does.*
+*The dialog set for a whole-project run: 41 images pooled, a 500k-window fit sample, a kNN window, 10 CNs, the cell-type checklist, and the option tick-boxes. (This screenshot pre-dates the default change; the paper-matching default is now `k = 9`, and a fourth option — **Sample multiple k-means seeds** — has since been added — see §18.2.) See §18.2 for what each option does.*
 
 1. Open **Cellular Neighborhoods…**. Pick **Scope** (and, for project scope, **Choose images…**, plus **Add project…** to pool other projects).
 2. Choose the **Neighborhood window**: **k nearest neighbours** (set `k`; default `9` → a 10-cell window with the centre cell, matching the paper — see §18.2) or **within radius** (set the radius). Radius in tissue units is the more physically interpretable choice when calibrated.
 3. Set **Number of CNs** (paper default 10). Fewer = coarser regions; more = finer, but expect redundancy you can merge later.
 4. Tick the **Cell types** to include (**All** / **None** shortcuts). Leave out debris/ignore classes.
-5. Options: **Include centre cell** (leave on to match the paper), **Standardize compositions** (see §18.2), **Show enrichment heatmap after run**.
+5. Options: **Include centre cell** (leave on to match the paper), **Standardize compositions** (see §18.2), **Sample multiple k-means seeds** (leave on for reproducible results — see §18.2), **Show enrichment heatmap after run**.
 6. **Pixel size** (µm/pixel) — optional; pre-filled from the image calibration. Set it if your images are uncalibrated and you want the radius interpreted in microns.
 7. For project scope, set **Sample windows for fit** and **Parallel workers**.
 8. Click **Run**. The log streams progress; in project scope you'll see per-image `sampled …` then `CN assigned …` lines, interleaved across workers.
@@ -1212,7 +1214,7 @@ Both cohort passes (sample and assign) process images **in parallel**, one worke
 - **Each worker loads a full image's cell hierarchy**, so higher worker counts are faster but use more memory. Dial it back on very large slides (hundreds of thousands of cells each).
 - **Many small images:** raise the worker count.
 - **A few very large images:** 2–4 workers is often the sweet spot.
-- Results are **deterministic regardless of worker count** — each image is sampled with its own fixed seed, so the fit is reproducible run to run.
+- Results are **deterministic regardless of worker count** — each image is sampled with its own fixed seed, so the fit is reproducible run to run (and with **Sample multiple k-means seeds** on, the k-means fit itself is stabilised too — §18.2).
 
 ### 18.7 Viewer overlays
 
