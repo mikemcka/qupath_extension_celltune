@@ -39,6 +39,13 @@ dependencies {
     implementation("com.github.haifengl:smile-core:3.1.1")
     shadow("com.github.haifengl:smile-core:3.1.1")
 
+    // CWTS networkanalysis — the reference Leiden / Louvain community-detection
+    // implementation (Traag, van Eck & Waltman; same authors as the Python
+    // leidenalg that scanpy/scimap use). Smile has no graph clustering. Used for
+    // graph-based phenotype clustering in the scatter-plot workflow. Bundled.
+    implementation("nl.cwts:networkanalysis:1.3.0")
+    shadow("nl.cwts:networkanalysis:1.3.0")
+
     // For testing
     testImplementation(libs.bundles.qupath)
     testImplementation(libs.junit)
