@@ -182,6 +182,54 @@ class NeighborhoodModelTest {
         assertEquals(3, res.kEffective(), "kEffective must be min(k, nRows)");
     }
 
+    @Test
+    void multiRestartNeverWorseThanSingleInitOnHardProblem() {
+        // Uniform-random high-dim cloud with k=10 has many local optima, so a
+        // single k-means run is init-sensitive. Keeping the best of nInit restarts
+        // must yield a partition at least as tight (lower/equal inertia) as one run.
+        Random rng = new Random(7);
+        int n = 600;
+        int dim = 12;
+        double[][] comp = new double[n][dim];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < dim; j++) {
+                comp[i][j] = rng.nextDouble();
+            }
+        }
+        double singleInertia = inertia(NeighborhoodModel.clusterCompositions(comp, 10, 1), comp);
+        double multiInertia = inertia(NeighborhoodModel.clusterCompositions(comp, 10, 20), comp);
+        assertTrue(
+                multiInertia <= singleInertia + EPS,
+                "n_init=20 (" + multiInertia + ") should not be worse than n_init=1 (" + singleInertia + ")");
+    }
+
+    @Test
+    void clusterTreatsNonPositiveNInitAsSingleRun() {
+        // nInit is clamped to >= 1: zero/negative must still cluster, not crash.
+        double[][] comp = {{1, 0}, {0.95, 0.05}, {0, 1}, {0.05, 0.95}};
+        ClusterResult res = NeighborhoodModel.clusterCompositions(comp, 2, 0);
+        assertEquals(2, res.kEffective());
+        assertTrue(purity(res.labels(), 0, 2) > 0.95 && purity(res.labels(), 2, 4) > 0.95, "Blobs not recovered");
+    }
+
+    /** Within-cluster sum of squared distances of rows to their assigned cluster mean. */
+    private static double inertia(ClusterResult res, double[][] data) {
+        double[][] c = res.centroids();
+        int[] labels = res.labels();
+        double sum = 0;
+        for (int i = 0; i < data.length; i++) {
+            int g = labels[i];
+            if (g < 0 || g >= c.length) {
+                continue;
+            }
+            for (int j = 0; j < data[i].length; j++) {
+                double d = data[i][j] - c[g][j];
+                sum += d * d;
+            }
+        }
+        return sum;
+    }
+
     // ── cnMeanComposition ──────────────────────────────────────────────────────
 
     @Test

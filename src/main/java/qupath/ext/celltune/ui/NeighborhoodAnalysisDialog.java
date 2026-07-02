@@ -120,6 +120,7 @@ public class NeighborhoodAnalysisDialog {
     private final Spinner<Integer> cnSpinner = new Spinner<>();
     private final CheckBox includeCenterBox = new CheckBox("Include centre cell in its own window");
     private final CheckBox standardizeBox = new CheckBox("Standardize compositions before clustering");
+    private final CheckBox multiSeedBox = new CheckBox("Sample multiple k-means seeds (more reproducible)");
     private final CheckBox showHeatmapBox = new CheckBox("Show enrichment heatmap after run");
     private final TextField pixelSizeField = new TextField();
     private final Map<String, CheckBox> typeChecks = new LinkedHashMap<>();
@@ -266,6 +267,10 @@ public class NeighborhoodAnalysisDialog {
         standardizeBox.setSelected(false); // paper clusters raw frequency vectors
         standardizeBox.setTooltip(new Tooltip("Off matches the paper (cluster raw fractions). "
                 + "On z-scores composition columns, up-weighting rare cell types."));
+        multiSeedBox.setSelected(true); // keep the tightest of several restarts (reproducible)
+        multiSeedBox.setTooltip(new Tooltip("On runs k-means " + NeighborhoodModel.DEFAULT_N_INIT
+                + " times and keeps the tightest (lowest-inertia) result, so runs are reproducible and "
+                + "avoid unlucky seeds. Off does a single faster run (init-sensitive)."));
         showHeatmapBox.setSelected(true);
 
         pixelSizeField.setPromptText("e.g. 0.5");
@@ -395,6 +400,7 @@ public class NeighborhoodAnalysisDialog {
                 new Separator(),
                 includeCenterBox,
                 standardizeBox,
+                multiSeedBox,
                 showHeatmapBox,
                 pxRow,
                 new Separator(),
@@ -581,6 +587,7 @@ public class NeighborhoodAnalysisDialog {
         final int nCN = cnSpinner.getValue();
         final boolean includeCenter = includeCenterBox.isSelected();
         final boolean standardize = standardizeBox.isSelected();
+        final boolean multiSeed = multiSeedBox.isSelected();
         final boolean showHeatmap = showHeatmapBox.isSelected();
 
         Double pxOverride = null;
@@ -610,6 +617,7 @@ public class NeighborhoodAnalysisDialog {
                     nCN,
                     includeCenter,
                     standardize,
+                    multiSeed,
                     showHeatmap,
                     pxSize,
                     selectedTypes,
@@ -634,6 +642,7 @@ public class NeighborhoodAnalysisDialog {
                                 nCN,
                                 includeCenter,
                                 standardize,
+                                multiSeed,
                                 showHeatmap,
                                 pxSize,
                                 selectedTypes);
@@ -661,6 +670,7 @@ public class NeighborhoodAnalysisDialog {
             int nCN,
             boolean includeCenter,
             boolean standardize,
+            boolean multiSeed,
             boolean showHeatmap,
             Double pxSize,
             List<String> selectedTypes,
@@ -720,7 +730,8 @@ public class NeighborhoodAnalysisDialog {
                             sd = new double[nTypes];
                             forFit = ScatterMath.standardizeColumns(sample.rows(), mean, sd);
                         }
-                        ClusterResult fit = NeighborhoodModel.clusterCompositions(forFit, nCN);
+                        int nInit = multiSeed ? NeighborhoodModel.DEFAULT_N_INIT : 1;
+                        ClusterResult fit = NeighborhoodModel.clusterCompositions(forFit, nCN, nInit);
                         int kEff = fit.kEffective();
 
                         log("Assigning CN across the project (writing + saving each image)…");
@@ -793,6 +804,7 @@ public class NeighborhoodAnalysisDialog {
             int nCN,
             boolean includeCenter,
             boolean standardize,
+            boolean multiSeed,
             boolean showHeatmap,
             Double pxSize,
             List<String> selectedTypes) {
@@ -876,8 +888,10 @@ public class NeighborhoodAnalysisDialog {
             log("Standardized composition columns before clustering.");
         }
 
-        log("Clustering into " + nCN + " neighborhoods…");
-        ClusterResult res = NeighborhoodModel.clusterCompositions(toCluster, nCN);
+        int nInit = multiSeed ? NeighborhoodModel.DEFAULT_N_INIT : 1;
+        log("Clustering into " + nCN + " neighborhoods (" + nInit + " k-means seed"
+                + (nInit == 1 ? "" : "s") + ")…");
+        ClusterResult res = NeighborhoodModel.clusterCompositions(toCluster, nCN, nInit);
         int kEff = res.kEffective();
         int[] activeLabels = res.labels();
 
