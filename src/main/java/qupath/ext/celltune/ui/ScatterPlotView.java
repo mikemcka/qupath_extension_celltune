@@ -41,6 +41,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CohortClusterModel;
 import qupath.ext.celltune.model.FeatureNormalizer;
+import qupath.ext.celltune.model.LeidenModel;
 import qupath.ext.celltune.model.PopulationSet;
 import qupath.ext.celltune.model.ScatterMath;
 import qupath.ext.celltune.util.JvmModuleOpener;
@@ -94,6 +95,21 @@ public class ScatterPlotView {
         PROJECT
     }
 
+    /** Clustering algorithm: fixed-k k-means, or resolution-driven graph-based Leiden. */
+    private enum ClusterMethod {
+        KMEANS,
+        LEIDEN
+    }
+
+    /** Feature-space kNN graph neighbours for Leiden (hidden default; scanpy-style). */
+    private static final int LEIDEN_GRAPH_K = 15;
+    /** Leiden random-starts when the reproducibility toggle is OFF. */
+    private static final int LEIDEN_SINGLE_START = 1;
+    /** Leiden random-starts when the reproducibility toggle is ON (mirrors k-means n_init). */
+    private static final int LEIDEN_REPRODUCIBLE_STARTS = 10;
+    /** Fixed seed used when the reproducibility toggle is ON, for run-to-run identical labels. */
+    private static final long LEIDEN_SEED = 42L;
+
     // ── Per-row state (all arrays aligned by index 0..nRows-1; rebuilt on toggle)
     private Scope scope = Scope.CURRENT_IMAGE;
     private int nRows; // number of plotted rows
@@ -115,6 +131,15 @@ public class ScatterPlotView {
     private double[][] fitCentroids; // [k][selMarkers] z-scored centroids
     private List<String> fitMarkers; // selected markers the fit used (column order)
     private String fitClassFilter; // within-class filter active at fit time
+    // Effective cluster count of the latest fit: kSpinner's value for k-means, or
+    // Leiden's own decided community count. Sizes clusterCounts/fitCentroids/mapping
+    // uniformly for both methods (Leiden picks this; the user does not).
+    private int fitNClusters;
+    // Reference used by the Leiden cohort-assign path (kNN label transfer): the
+    // fitted sample's z-scored active rows + their Leiden labels. Null for k-means
+    // (which uses fitCentroids/nearestCentroid instead) or before any Leiden fit.
+    private double[][] fitLeidenReference;
+    private int[] fitLeidenReferenceLabels;
 
     // ── Project scope ──────────────────────────────────────────────────────────
     private List<String> projectImages = new ArrayList<>();
@@ -137,7 +162,12 @@ public class ScatterPlotView {
     private ScatterPlotCanvas plot;
     private final ComboBox<Embedding> embeddingCombo;
     private final CheckBox fullUmapCheck;
+    private final ComboBox<ClusterMethod> methodCombo;
     private final Spinner<Integer> kSpinner;
+    private final Spinner<Double> resolutionSpinner;
+    private final CheckBox reproducibleCheck;
+    private final Label kLabel;
+    private final Label resolutionLabel;
     private final ComboBox<ScatterPlotCanvas.ColorMode> colorCombo;
     private final ComboBox<String> markerCombo;
     private final TextField annotationField;
@@ -233,6 +263,60 @@ public class ScatterPlotView {
         kSpinner = new Spinner<>(2, 50, 8);
         kSpinner.setEditable(true);
         kSpinner.setPrefWidth(70);
+
+        methodCombo = new ComboBox<>();
+        methodCombo.getItems().addAll(ClusterMethod.KMEANS, ClusterMethod.LEIDEN);
+        methodCombo.setValue(ClusterMethod.KMEANS);
+        methodCombo.setTooltip(new javafx.scene.control.Tooltip(
+                "k-means needs a fixed cluster count (k) and assumes roughly spherical, "
+                        + "equal-size clusters. Leiden is graph-based: it builds a "
+                        + "feature-space nearest-neighbour graph and lets a resolution "
+                        + "parameter decide the cluster count — no fixed k, better at "
+                        + "finding rare/irregular populations (the scanpy/scimap/SPACEc "
+                        + "phenotyping standard)."));
+
+        kLabel = new Label("Clusters (k):");
+
+        resolutionSpinner = new Spinner<>(0.1, 3.0, 1.0, 0.1);
+        resolutionSpinner.setEditable(true);
+        resolutionSpinner.setPrefWidth(70);
+        resolutionSpinner.setTooltip(
+                new javafx.scene.control.Tooltip("Leiden resolution: higher values find more, smaller communities; "
+                        + "lower values find fewer, larger ones. Unlike k-means there is "
+                        + "no fixed cluster count — Leiden decides it from the graph."));
+        resolutionSpinner.focusedProperty().addListener((o, was, isNow) -> {
+            if (!isNow) {
+                commitSpinnerEditor(resolutionSpinner, 0.1, 3.0);
+            }
+        });
+        resolutionLabel = new Label("Resolution:");
+
+        reproducibleCheck = new CheckBox("Sample multiple seeds");
+        reproducibleCheck.setTooltip(
+                new javafx.scene.control.Tooltip("Run Leiden from several random starts (like k-means' multi-restart) "
+                        + "and keep the best-quality partition, so repeated runs with the "
+                        + "same settings give identical clusters. Off runs a single, faster "
+                        + "pass whose result may vary run to run."));
+
+        boolean methodIsLeiden = methodCombo.getValue() == ClusterMethod.LEIDEN;
+        kLabel.managedProperty().bind(kLabel.visibleProperty());
+        kSpinner.managedProperty().bind(kSpinner.visibleProperty());
+        resolutionLabel.managedProperty().bind(resolutionLabel.visibleProperty());
+        resolutionSpinner.managedProperty().bind(resolutionSpinner.visibleProperty());
+        reproducibleCheck.managedProperty().bind(reproducibleCheck.visibleProperty());
+        kLabel.setVisible(!methodIsLeiden);
+        kSpinner.setVisible(!methodIsLeiden);
+        resolutionLabel.setVisible(methodIsLeiden);
+        resolutionSpinner.setVisible(methodIsLeiden);
+        reproducibleCheck.setVisible(methodIsLeiden);
+        methodCombo.valueProperty().addListener((o, a, b) -> {
+            boolean leiden = b == ClusterMethod.LEIDEN;
+            kLabel.setVisible(!leiden);
+            kSpinner.setVisible(!leiden);
+            resolutionLabel.setVisible(leiden);
+            resolutionSpinner.setVisible(leiden);
+            reproducibleCheck.setVisible(leiden);
+        });
 
         annotationField = new TextField();
         annotationField.setPromptText("name (blank = all cells)");
@@ -422,8 +506,14 @@ public class ScatterPlotView {
                 new Label("Embedding:"),
                 embeddingCombo,
                 fullUmapCheck,
-                new Label("Clusters (k):"),
+                new Separator(Orientation.VERTICAL),
+                new Label("Method:"),
+                methodCombo,
+                kLabel,
                 kSpinner,
+                resolutionLabel,
+                resolutionSpinner,
+                reproducibleCheck,
                 recomputeBtn,
                 new Separator(Orientation.VERTICAL),
                 new Label("Scope:"),
@@ -589,6 +679,9 @@ public class ScatterPlotView {
         fitCentroids = null;
         fitMarkers = null;
         fitClassFilter = null;
+        fitNClusters = 0;
+        fitLeidenReference = null;
+        fitLeidenReferenceLabels = null;
     }
 
     /** Show the scatter plot window. */
@@ -611,7 +704,10 @@ public class ScatterPlotView {
             return;
         }
         final Embedding embedding = embeddingCombo.getValue();
+        final ClusterMethod method = methodCombo.getValue();
         final int k = kSpinner.getValue();
+        final double resolution = resolutionSpinner.getValue();
+        final boolean reproducible = reproducibleCheck.isSelected();
         final int n = nRows;
         final String keyword = annotationField.getText();
         final String classKeyword = classField.getValue();
@@ -685,29 +781,52 @@ public class ScatterPlotView {
                                 double[] sd = new double[selCols.length];
                                 double[][] active = ScatterMath.standardizeColumns(activeRaw, mean, sd);
 
-                                // ── k-means on the active subset ─────────────────────────────────
-                                int kEff = Math.min(k, m);
+                                // ── Cluster the active subset (k-means or Leiden) ────────────────
                                 int[] subCluster = new int[m];
-                                if (kEff >= 2) {
-                                    KMeans km = KMeans.fit(active, kEff);
-                                    System.arraycopy(km.y, 0, subCluster, 0, m);
+                                int nClustersEff;
+                                double[][] leidenRef = null;
+                                int[] leidenRefLabels = null;
+                                if (method == ClusterMethod.LEIDEN) {
+                                    int randomStarts = reproducible ? LEIDEN_REPRODUCIBLE_STARTS : LEIDEN_SINGLE_START;
+                                    long seed = reproducible ? LEIDEN_SEED : System.nanoTime();
+                                    LeidenModel.LeidenResult leidenResult =
+                                            LeidenModel.cluster(active, LEIDEN_GRAPH_K, resolution, randomStarts, seed);
+                                    System.arraycopy(leidenResult.labels(), 0, subCluster, 0, m);
+                                    nClustersEff = Math.max(1, leidenResult.nClusters());
+                                    // Retained for the cohort-scope Leiden assign path (kNN label
+                                    // transfer against this labelled sample, Task 5).
+                                    leidenRef = active;
+                                    leidenRefLabels = subCluster.clone();
+                                } else {
+                                    int kEff = Math.min(k, m);
+                                    if (kEff >= 2) {
+                                        KMeans km = KMeans.fit(active, kEff);
+                                        System.arraycopy(km.y, 0, subCluster, 0, m);
+                                    }
+                                    nClustersEff = k;
                                 }
                                 for (int j = 0; j < m; j++) {
                                     newCluster[activeIdx[j]] = subCluster[j];
                                 }
 
-                                // Per-cluster z-scored centroids (k rows; empty clusters stay 0).
-                                // Retained for the cohort assign and the assignment heatmap.
-                                double[][] cents = new double[k][selCols.length];
-                                int[] centCount = new int[k];
+                                // Per-cluster z-scored centroids (nClustersEff rows; empty clusters
+                                // stay 0). Retained for the cohort assign and the assignment
+                                // heatmap — computed post-hoc for Leiden exactly like k-means, for
+                                // DISPLAY only (Leiden's cohort assignment itself uses kNN label
+                                // transfer against fitLeidenReference, not these centroids).
+                                double[][] cents = new double[nClustersEff][selCols.length];
+                                int[] centCount = new int[nClustersEff];
                                 for (int j = 0; j < m; j++) {
                                     int lab = subCluster[j];
+                                    if (lab < 0 || lab >= nClustersEff) {
+                                        continue;
+                                    }
                                     centCount[lab]++;
                                     for (int c = 0; c < selCols.length; c++) {
                                         cents[lab][c] += active[j][c];
                                     }
                                 }
-                                for (int lab = 0; lab < k; lab++) {
+                                for (int lab = 0; lab < nClustersEff; lab++) {
                                     if (centCount[lab] > 0) {
                                         for (int c = 0; c < selCols.length; c++) {
                                             cents[lab][c] /= centCount[lab];
@@ -718,6 +837,9 @@ public class ScatterPlotView {
                                 final double[] fSd = sd;
                                 final double[][] fCents = cents;
                                 final List<String> fMarkers = markerNamesFor(selCols);
+                                final int fNClusters = nClustersEff;
+                                final double[][] fLeidenRef = leidenRef;
+                                final int[] fLeidenRefLabels = leidenRefLabels;
 
                                 // ── Embedding on the active subset ───────────────────────────────
                                 double[] subX = new double[m];
@@ -764,6 +886,9 @@ public class ScatterPlotView {
                                     notice = notice
                                             + String.format(" · %d/%d markers", selCols.length, markerFeatures.size());
                                 }
+                                if (method == ClusterMethod.LEIDEN) {
+                                    notice = notice + String.format(" · Leiden found %d cluster(s)", fNClusters);
+                                }
 
                                 final String fNotice = notice;
                                 final String fClassFilter = classKeyword;
@@ -776,6 +901,9 @@ public class ScatterPlotView {
                                     fitCentroids = fCents;
                                     fitMarkers = fMarkers;
                                     fitClassFilter = fClassFilter;
+                                    fitNClusters = fNClusters;
+                                    fitLeidenReference = fLeidenRef;
+                                    fitLeidenReferenceLabels = fLeidenRefLabels;
                                     progress.setVisible(false);
                                     setControlsDisabled(false);
                                     plot.redraw();
@@ -937,7 +1065,10 @@ public class ScatterPlotView {
         if (applying) {
             return;
         }
-        final int k = kSpinner.getValue();
+        // fitNClusters is the effective cluster count of the last Recompute: the
+        // k-spinner's value for k-means, or Leiden's own decided community count
+        // (Leiden picks this — the user does not select a k for it).
+        final int k = fitNClusters > 0 ? fitNClusters : kSpinner.getValue();
         int[] counts = clusterCounts(k);
         if (counts == null) {
             Dialogs.showWarningNotification("CellTune", "No clusters available yet — run Recompute first.");
@@ -1350,6 +1481,30 @@ public class ScatterPlotView {
             }
         } catch (RuntimeException ex) {
             // Unparseable text: restore the editor to the last valid value.
+            spinner.getEditor().setText(factory.getConverter().toString(factory.getValue()));
+        }
+    }
+
+    /**
+     * Forces an editable {@code Spinner<Double>} to commit its typed text to the
+     * value, clamping to {@code [min, max]} (mirrors the {@code Integer} overload
+     * above; the Leiden resolution spinner uses this).
+     */
+    private static void commitSpinnerEditor(Spinner<Double> spinner, double min, double max) {
+        if (!spinner.isEditable()) {
+            return;
+        }
+        var factory = spinner.getValueFactory();
+        if (factory == null) {
+            return;
+        }
+        try {
+            Double parsed =
+                    factory.getConverter().fromString(spinner.getEditor().getText());
+            if (parsed != null) {
+                factory.setValue(Math.max(min, Math.min(max, parsed)));
+            }
+        } catch (RuntimeException ex) {
             spinner.getEditor().setText(factory.getConverter().toString(factory.getValue()));
         }
     }
