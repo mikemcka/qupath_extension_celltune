@@ -889,8 +889,7 @@ public class NeighborhoodAnalysisDialog {
         }
 
         int nInit = multiSeed ? NeighborhoodModel.DEFAULT_N_INIT : 1;
-        log("Clustering into " + nCN + " neighborhoods (" + nInit + " k-means seed"
-                + (nInit == 1 ? "" : "s") + ")…");
+        log("Clustering into " + nCN + " neighborhoods (" + nInit + " k-means seed" + (nInit == 1 ? "" : "s") + ")…");
         ClusterResult res = NeighborhoodModel.clusterCompositions(toCluster, nCN, nInit);
         int kEff = res.kEffective();
         int[] activeLabels = res.labels();
