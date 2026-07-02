@@ -2,11 +2,11 @@
 
 ## Current Position
 
-- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 14 planned, not started)
-- Phase: 14 planned; 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
-- Plan: 14-01-PLAN.md filed (Leiden phenotype clustering); 13-01-PLAN.md filed (CN spatial clustering)
-- Status: phases 13 and 14 ready to execute; v1.1 reliability/validation hardening (phases 6-9) remains pending
-- Last activity: 2026-07-02 - filed Leiden phenotype-clustering plan into GSD as v1.5 / Phase 14 (research note: notes/leiden-clustering-design.md)
+- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 14 executing — at manual verification checkpoint)
+- Phase: 14 tasks 1-6 complete + Task 7 automated gate green, awaiting manual in-QuPath verification; 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
+- Plan: 14-01 executed (commits f30c8aa..82532da), SUMMARY filed; 13-01-PLAN.md filed (CN spatial clustering)
+- Status: phase 14 code + build/test/shadowJar green; blocked only on manual QuPath GUI verification (Task 7); v1.1 hardening (phases 6-9) remains pending
+- Last activity: 2026-07-02 - executed Leiden phenotype clustering (LeidenModel + Method selector + cohort kNN transfer + CWTS dep + tests); fat JAR built at build/libs/qupath-extension-celltune-0.2.0-all.jar, awaiting user manual verification
 
 ## Carry-Forward Context
 
@@ -27,5 +27,5 @@
 
 ## Session Continuity
 
-- Recommended next command: /gsd-execute-phase 14 (Leiden phenotype clustering, plan filed and ready)
+- Recommended next action: manually verify phase 14 Leiden flow in QuPath (load build/libs/qupath-extension-celltune-0.2.0-all.jar), then confirm to mark Task 7 / phase 14 complete
 - Alternative: /gsd-execute-phase 13 (CN spatial clustering, plan filed) or /gsd-plan-phase 6 to resume the v1.1 hardening flow
