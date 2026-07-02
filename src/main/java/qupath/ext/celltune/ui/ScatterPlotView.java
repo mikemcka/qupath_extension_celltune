@@ -1162,6 +1162,11 @@ public class ScatterPlotView {
         final double[] sd = fitSd;
         final double[][] cents = fitCentroids;
         final String classFilter = fitClassFilter;
+        // Leiden cohort assign uses kNN label transfer against the labelled fitted
+        // sample (Task 5); non-null exactly when the last Recompute used Leiden.
+        final double[][] leidenRef = fitLeidenReference;
+        final int[] leidenRefLabels = fitLeidenReferenceLabels;
+        final int nClustersForAssign = fitNClusters;
 
         applying = true;
         setControlsDisabled(true);
@@ -1180,20 +1185,41 @@ public class ScatterPlotView {
                                         openName = openEntry.getImageName();
                                     }
                                 }
-                                long total = CohortClusterModel.assignAcrossProject(
-                                        project,
-                                        images,
-                                        markers,
-                                        mean,
-                                        sd,
-                                        cents,
-                                        mapping,
-                                        classFilter,
-                                        normalizer,
-                                        openData,
-                                        openName,
-                                        msg -> Platform.runLater(() -> statusLabel.setText(msg)),
-                                        frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                long total;
+                                if (leidenRef != null && leidenRefLabels != null) {
+                                    total = CohortClusterModel.assignAcrossProjectLeiden(
+                                            project,
+                                            images,
+                                            markers,
+                                            mean,
+                                            sd,
+                                            leidenRef,
+                                            leidenRefLabels,
+                                            LEIDEN_GRAPH_K,
+                                            nClustersForAssign,
+                                            mapping,
+                                            classFilter,
+                                            normalizer,
+                                            openData,
+                                            openName,
+                                            msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                            frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                } else {
+                                    total = CohortClusterModel.assignAcrossProject(
+                                            project,
+                                            images,
+                                            markers,
+                                            mean,
+                                            sd,
+                                            cents,
+                                            mapping,
+                                            classFilter,
+                                            normalizer,
+                                            openData,
+                                            openName,
+                                            msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                            frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                }
                                 final long fTotal = total;
                                 Platform.runLater(() -> {
                                     QuPathViewer viewer = qupath.getViewer();

@@ -184,6 +184,105 @@ public final class CohortClusterModel {
             String openName,
             Consumer<String> log,
             DoubleConsumer progress) {
+        return assignAcrossProject(
+                project,
+                images,
+                markers,
+                mean,
+                sd,
+                mapping,
+                classFilter,
+                normalizer,
+                openData,
+                openName,
+                log,
+                progress,
+                rows -> {
+                    int[] labels = new int[rows.length];
+                    for (int i = 0; i < rows.length; i++) {
+                        labels[i] = nearestCentroid(rows[i], centroids);
+                    }
+                    return labels;
+                });
+    }
+
+    /**
+     * Stream over {@code images}, assigning every matching cell a class via Leiden
+     * kNN label transfer against the labelled pooled sample (scanpy {@code
+     * sc.tl.ingest} style), instead of nearest-centroid assignment. The reference
+     * ({@code referenceRows}/{@code referenceLabels}) is the SAME z-scored sample
+     * rows Leiden was fit on (Task 4's {@code fitLeidenReference}/{@code
+     * fitLeidenReferenceLabels}), so the reference kNN index is built once here and
+     * reused across every cell/image in the stream — the reference stays bounded by
+     * the Sample spinner cap for the whole pass.
+     * <p>
+     * Mirrors the k-means overload's semantics (same {@code mean}/{@code sd}
+     * z-scoring, same {@code classFilter}, same per-image stream/save/progress
+     * contract) so callers can pick either assign path with an otherwise identical
+     * call shape.
+     *
+     * @param referenceRows   labelled reference: the z-scored, Leiden-labelled
+     *                        pooled sample rows (same column order as {@code markers})
+     * @param referenceLabels Leiden community label per reference row
+     * @param transferK       number of nearest reference rows to vote over
+     * @param nClusters       number of distinct Leiden labels (for the vote histogram)
+     */
+    public static long assignAcrossProjectLeiden(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            double[] mean,
+            double[] sd,
+            double[][] referenceRows,
+            int[] referenceLabels,
+            int transferK,
+            int nClusters,
+            Map<Integer, PathClass> mapping,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress) {
+        return assignAcrossProject(
+                project,
+                images,
+                markers,
+                mean,
+                sd,
+                mapping,
+                classFilter,
+                normalizer,
+                openData,
+                openName,
+                log,
+                progress,
+                rows -> LeidenModel.transferLabels(rows, referenceRows, referenceLabels, transferK, nClusters));
+    }
+
+    /**
+     * Shared per-image streaming/save/progress driver for
+     * {@link #assignAcrossProject} and {@link #assignAcrossProjectLeiden}: both
+     * differ only in HOW a batch of z-scored rows maps to cluster ids ({@code
+     * labelsForRows}), not in the image-streaming, class-filtering, save, or
+     * progress-reporting mechanics. Batching per-image (rather than one row at a
+     * time) lets the Leiden path make a single {@link LeidenModel#transferLabels}
+     * call per image instead of one kNN search invocation per cell.
+     */
+    private static long assignAcrossProject(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            double[] mean,
+            double[] sd,
+            Map<Integer, PathClass> mapping,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress,
+            java.util.function.Function<double[][], int[]> labelsForRows) {
 
         int nMarkers = markers.size();
         var extractor = new CellFeatureExtractor(markers, normalizer);
@@ -228,9 +327,11 @@ public final class CohortClusterModel {
             }
             float[] flat = extractor.extractMatrix(cells);
 
-            List<PathObject> changedObjs = new ArrayList<>();
-            List<PathClass> changedCls = new ArrayList<>();
-            double[] z = new double[nMarkers];
+            // Z-score every matching cell first, then label the whole image's rows
+            // in one batch call (nearestCentroid: cheap either way; transferLabels:
+            // avoids a separate kNN search invocation per cell).
+            List<PathObject> matchedCells = new ArrayList<>();
+            List<double[]> matchedRows = new ArrayList<>();
             for (int i = 0; i < n; i++) {
                 if (classFilterActive) {
                     PathClass pc = cells.get(i).getPathClass();
@@ -238,16 +339,26 @@ public final class CohortClusterModel {
                         continue;
                     }
                 }
+                double[] z = new double[nMarkers];
                 int off = i * nMarkers;
                 for (int j = 0; j < nMarkers; j++) {
                     double v = flat[off + j];
                     z[j] = sd[j] < 1e-9 ? 0.0 : (v - mean[j]) / sd[j];
                 }
-                int c = nearestCentroid(z, centroids);
-                PathClass pc = mapping.get(c);
-                if (pc != null) {
-                    changedObjs.add(cells.get(i));
-                    changedCls.add(pc);
+                matchedCells.add(cells.get(i));
+                matchedRows.add(z);
+            }
+
+            List<PathObject> changedObjs = new ArrayList<>();
+            List<PathClass> changedCls = new ArrayList<>();
+            if (!matchedRows.isEmpty()) {
+                int[] labels = labelsForRows.apply(matchedRows.toArray(new double[0][]));
+                for (int i = 0; i < matchedCells.size(); i++) {
+                    PathClass pc = mapping.get(labels[i]);
+                    if (pc != null) {
+                        changedObjs.add(matchedCells.get(i));
+                        changedCls.add(pc);
+                    }
                 }
             }
 
