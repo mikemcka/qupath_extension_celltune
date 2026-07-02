@@ -7,6 +7,7 @@
 - [x] v1.2 Cohort Outlier Analytics (shipped 2026-04-30)
 - [ ] v1.3 Cross-Project Binary Ground Truth Portability (planned)
 - [ ] v1.4 Cellular Neighborhood Analytics (planned)
+- [ ] v1.5 Graph-based Phenotype Clustering (planned)
 
 ## Milestone v1.1 - Reliability and Verification Hardening
 
@@ -145,6 +146,26 @@ Plans:
 - [ ] 13-01-PLAN.md - Build NeighborhoodModel + dialog + enrichment heatmap/CSV + menu wiring with unit tests (filed from prior plan-mode draft)
 
 
+## Milestone v1.5 - Graph-based Phenotype Clustering
+
+Goal: Add Leiden graph-based community detection as a selectable alternative to k-means in the interactive Scatter Plots & Clustering (phenotyping) workflow, for both current-image and whole-project scope — the field-standard method (scanpy/scimap/SPACEc) for resolving non-spherical and rare cell populations.
+
+### Phase 14 - Leiden Phenotype Clustering
+
+Goal: Add a Method {k-means, Leiden} selector to the scatter clustering dialog; Leiden builds a feature-space kNN graph (Jaccard-weighted) and runs the CWTS Leiden algorithm with a resolution control and reproducibility toggle, reusing the existing colouring/legend/assignment machinery and adding a kNN label-transfer path for cohort scope.
+Depends on: Existing scatter/cluster machinery (ScatterPlotView, ScatterMath, CohortClusterModel) and the k-means multi-restart reproducibility pattern (NeighborhoodModel). Research: .planning/notes/leiden-clustering-design.md.
+Requirements: LEI-01, LEI-02, LEI-03, LEI-04, LEI-05
+Success Criteria:
+1. Dialog offers Method {k-means, Leiden}; Leiden shows resolution + reproducibility controls and decides the cluster count.
+2. Leiden clusters the same z-scored active matrix via kNN graph + CWTS Leiden and drives colouring/legend/assignment identically to k-means.
+3. Project scope fits Leiden on the pooled sample and assigns all cells across images via kNN label transfer; k-means cohort path unchanged.
+4. Automated tests cover feature kNN, community recovery, resolution behaviour, reproducibility, and label transfer.
+Plans: 1 plan
+
+Plans:
+- [ ] 14-01-PLAN.md - Bundle CWTS Leiden + build LeidenModel (kNN graph/Leiden/label transfer), wire Method selector + resolution/reproducibility controls, cohort kNN-transfer, docs, with unit tests
+
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -158,3 +179,4 @@ Plans:
 | 11. Project Summary Cohort Outlier Analytics | v1.2 | COH-01,COH-02,COH-03,COH-04 | 2/2 | Complete (2026-04-30) |
 | 12. Binary Ground Truth Bundle Export/Import | v1.3 | XFER-01,XFER-02,XFER-03,XFER-04 | 0/2 | Not started |
 | 13. CN Spatial Clustering | v1.4 | CN-01,CN-02,CN-03,CN-04 | 0/1 | Planned |
+| 14. Leiden Phenotype Clustering | v1.5 | LEI-01,LEI-02,LEI-03,LEI-04,LEI-05 | 0/1 | Planned |

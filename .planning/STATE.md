@@ -2,11 +2,11 @@
 
 ## Current Position
 
-- Milestone: v1.4 Cellular Neighborhood Analytics (Phase 13 planned, not started)
-- Phase: 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
-- Plan: 13-01-PLAN.md filed (CN spatial clustering) — relocated from a stray plan-mode draft
-- Status: phase 13 ready to execute; v1.1 reliability/validation hardening (phases 6-9) remains pending
-- Last activity: 2026-06-30 - filed CN spatial-clustering plan into GSD as v1.4 / Phase 13
+- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 14 planned, not started)
+- Phase: 14 planned; 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
+- Plan: 14-01-PLAN.md filed (Leiden phenotype clustering); 13-01-PLAN.md filed (CN spatial clustering)
+- Status: phases 13 and 14 ready to execute; v1.1 reliability/validation hardening (phases 6-9) remains pending
+- Last activity: 2026-07-02 - filed Leiden phenotype-clustering plan into GSD as v1.5 / Phase 14 (research note: notes/leiden-clustering-design.md)
 
 ## Carry-Forward Context
 
@@ -27,5 +27,5 @@
 
 ## Session Continuity
 
-- Recommended next command: /gsd-execute-phase 13 (CN spatial clustering, plan filed and ready)
-- Alternative: /gsd-plan-phase 6 to resume the v1.1 hardening flow (Nyquist validation coverage)
+- Recommended next command: /gsd-execute-phase 14 (Leiden phenotype clustering, plan filed and ready)
+- Alternative: /gsd-execute-phase 13 (CN spatial clustering, plan filed) or /gsd-plan-phase 6 to resume the v1.1 hardening flow
