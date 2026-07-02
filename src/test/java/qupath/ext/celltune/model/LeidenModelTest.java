@@ -75,7 +75,11 @@ class LeidenModelTest {
         fillBlob(rows, rng, per, 2 * per, 20.0, 0.0, 0.3);
         fillBlob(rows, rng, 2 * per, 3 * per, 0.0, 20.0, 0.3);
 
-        LeidenResult res = LeidenModel.cluster(rows, 15, 1.0, 10, 42L);
+        // resolution=0.3: CPM resolution (after association-strength normalization)
+        // has a different natural scale than modularity's familiar "1.0" — for this
+        // small, tightly-sampled synthetic set, resolution=1.0 over-splits each blob
+        // in two, while resolutions well under 1.0 recover the 3 true communities.
+        LeidenResult res = LeidenModel.cluster(rows, 15, 0.3, 10, 42L);
 
         assertTrue(res.nClusters() >= 2, "Expected at least 2 recovered communities, got " + res.nClusters());
         assertTrue(purity(res.labels(), 0, per) > 0.9, "Blob A not pure");
