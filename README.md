@@ -1,8 +1,8 @@
 # CellTune Classifier for QuPath
 
-## This Java extension is an unofficial emulation of some functionality of CellTune by the Keren Lab into QuPath. If you use this tool for your analysis please also cite [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
+## This java extension provides similar functionality as parts of CellTune by the Keren Lab into QuPath. If you use this tool for your analysis please also cite [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
 
-A [QuPath](https://qupath.github.io/) 0.7 extension that brings **CellTune-style active learning** to cell classification. It trains two gradient-boosted models (XGBoost + LightGBM) simultaneously, identifies cells where the models disagree, and presents those disputed cells for human review — creating an iterative loop that progressively improves classification accuracy.
+A [QuPath](https://qupath.github.io/) 0.7 extension that brings **active learning** to cell classification. It trains two gradient-boosted models (XGBoost + LightGBM) simultaneously, identifies cells where the models disagree, and presents those disputed cells for human review — creating an iterative loop that progressively improves classification accuracy.
 
 
 ## Features
@@ -130,18 +130,19 @@ Optional per-feature transforms can be applied before training and inference:
 
 ## License
 
-License to be finalised — this extension builds on prior work and the license is still under
-discussion with the upstream authors.
+Licensed under the **[GNU General Public License v3.0 only](LICENSE)** (GPL-3.0-only).
 
-> **Relevant to the license decision:** the shadow JAR bundles third-party libraries whose own
-> licenses constrain how this extension may be distributed — most notably **Smile**, which is
-> dual-licensed **GPL-3.0 / commercial**. Using Smile under its open-source arm makes the
-> distributed combined work GPL-3.0 (consistent with QuPath, which is itself GPL-3.0). See the
-> bundled-library licenses under [Acknowledgements](#acknowledgements).
+Copyright (C) 2026 mikemcka.
+
+> This extension bundles third-party libraries whose own licenses constrain how it may be
+> distributed — most notably **QuPath** (GPL-3.0) and **Smile** (dual-licensed **GPL-3.0 /
+> commercial**). Using Smile under its open-source arm makes the distributed combined work
+> GPL-3.0, so GPL-3.0 is the strictest license this project is bound by. See the bundled-library
+> licenses under [Acknowledgements](#acknowledgements).
 
 ## Acknowledgements
 
-### Inspiration & references
+### References
 - **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.weizmann.ac.il/mcb/Keren/home) — the active learning cell classification workflow that this extension emulates. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
 - **Cellular neighborhoods** — the CN analysis (§18 of the [User Guide](USER_GUIDE.md)) implements the neighbourhood-clustering method of **Schürch CM, Bhate SS, Barlow GL, et al. "Coordinated Cellular Neighborhoods Orchestrate Antitumoral Immunity at the Colorectal Cancer Invasive Front." *Cell* 182(5):1341–1359.e19 (2020). [doi:10.1016/j.cell.2020.07.005](https://doi.org/10.1016/j.cell.2020.07.005)**. If you use the cellular neighborhoods feature in your analysis, please cite this paper.
 - **[pixel-patrol](https://pypi.org/project/pixel-patrol/)** (MIT) — the whole-image, per-channel pixel-statistics approach behind the **image pixel prescreen** (which summary statistics to compute and how images are flagged) was adapted from pixel-patrol. The Java implementation (`model/ImagePixelStats`, `model/ImagePixelStatsReader`, `model/PixelCohortAnalyzer`) is original to this project.
