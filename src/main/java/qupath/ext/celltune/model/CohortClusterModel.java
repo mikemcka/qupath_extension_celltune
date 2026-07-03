@@ -39,6 +39,15 @@ public final class CohortClusterModel {
 
     private static final Logger logger = LoggerFactory.getLogger(CohortClusterModel.class);
 
+    /**
+     * Numeric per-cell measurement holding the assigned phenotype cluster id (1-based;
+     * -1 = not in the clustered population). Written non-destructively by
+     * {@link #writeClusterAcrossProject} so every image carries a persistent {@code Cluster}
+     * column for downstream analysis and the viewer overlay. Matches
+     * {@code ScatterPlotView.CLUSTER_MEASUREMENT}.
+     */
+    public static final String CLUSTER_MEASUREMENT = "Cluster";
+
     private CohortClusterModel() {}
 
     /**
@@ -258,6 +267,234 @@ public final class CohortClusterModel {
                 log,
                 progress,
                 rows -> LeidenModel.transferLabels(rows, referenceRows, referenceLabels, transferK, nClusters));
+    }
+
+    /**
+     * Stream over {@code images}, assign every (matching) cell to its nearest cohort
+     * centroid, and write the cluster id as a non-destructive numeric
+     * {@link #CLUSTER_MEASUREMENT} (1-based; -1 for cells outside the within-class
+     * population), saving each image. The measurement analogue of
+     * {@link #assignAcrossProject} — it never changes the cell's classification, so a
+     * persistent {@code Cluster} column is added across the cohort for downstream
+     * analysis and the viewer overlay.
+     */
+    public static long writeClusterAcrossProject(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            double[] mean,
+            double[] sd,
+            double[][] centroids,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress) {
+        return writeClusterAcrossProject(
+                project,
+                images,
+                markers,
+                mean,
+                sd,
+                classFilter,
+                normalizer,
+                openData,
+                openName,
+                log,
+                progress,
+                rows -> {
+                    int[] labels = new int[rows.length];
+                    for (int i = 0; i < rows.length; i++) {
+                        labels[i] = nearestCentroid(rows[i], centroids);
+                    }
+                    return labels;
+                });
+    }
+
+    /**
+     * Leiden variant of {@link #writeClusterAcrossProject}: labels each cell by kNN
+     * transfer against the labelled pooled sample (mirrors
+     * {@link #assignAcrossProjectLeiden}) and writes the {@link #CLUSTER_MEASUREMENT}.
+     */
+    public static long writeClusterAcrossProjectLeiden(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            double[] mean,
+            double[] sd,
+            double[][] referenceRows,
+            int[] referenceLabels,
+            int transferK,
+            int nClusters,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress) {
+        return writeClusterAcrossProject(
+                project,
+                images,
+                markers,
+                mean,
+                sd,
+                classFilter,
+                normalizer,
+                openData,
+                openName,
+                log,
+                progress,
+                rows -> LeidenModel.transferLabels(rows, referenceRows, referenceLabels, transferK, nClusters));
+    }
+
+    /**
+     * Shared per-image streaming/save/progress driver for the measurement-writing
+     * cohort passes. Mirrors {@link #assignAcrossProject(Project, List, List, double[],
+     * double[], Map, String, FeatureNormalizer, ImageData, String, Consumer,
+     * DoubleConsumer, java.util.function.Function)} but writes a numeric cluster id to
+     * every cell (matched cells get {@code label + 1}; cells outside the within-class
+     * filter get -1) instead of a classification.
+     */
+    private static long writeClusterAcrossProject(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            double[] mean,
+            double[] sd,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress,
+            java.util.function.Function<double[][], int[]> labelsForRows) {
+
+        int nMarkers = markers.size();
+        var extractor = new CellFeatureExtractor(markers, normalizer);
+        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
+        boolean classFilterActive = classFilter != null && !classFilter.isBlank();
+        String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
+
+        long totalAssigned = 0;
+        int done = 0;
+        for (String name : images) {
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                log.accept("[" + name + "] not in project — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            boolean isOpen = name.equals(openName);
+            ImageData<BufferedImage> imageData;
+            try {
+                imageData = isOpen ? openData : entry.readImageData();
+            } catch (Exception e) {
+                log.accept("[" + name + "] could not load — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            if (imageData == null) {
+                log.accept("[" + name + "] could not load — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+
+            List<PathObject> cells = detections(imageData);
+            int n = cells.size();
+            if (n == 0) {
+                log.accept("[" + name + "] no detections — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            float[] flat = extractor.extractMatrix(cells);
+
+            // Z-score the matching cells, remembering their positions so the labels can be
+            // scattered back into a full [n] value array (non-matching cells stay -1).
+            List<Integer> matchedIdx = new ArrayList<>();
+            List<double[]> matchedRows = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                if (classFilterActive) {
+                    PathClass pc = cells.get(i).getPathClass();
+                    if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
+                        continue;
+                    }
+                }
+                double[] z = new double[nMarkers];
+                int off = i * nMarkers;
+                for (int j = 0; j < nMarkers; j++) {
+                    double v = flat[off + j];
+                    z[j] = sd[j] < 1e-9 ? 0.0 : (v - mean[j]) / sd[j];
+                }
+                matchedIdx.add(i);
+                matchedRows.add(z);
+            }
+
+            double[] values = new double[n];
+            for (int i = 0; i < n; i++) {
+                values[i] = -1.0;
+            }
+            int assigned = 0;
+            if (!matchedRows.isEmpty()) {
+                int[] labels = labelsForRows.apply(matchedRows.toArray(new double[0][]));
+                for (int t = 0; t < matchedIdx.size(); t++) {
+                    if (labels[t] >= 0) {
+                        values[matchedIdx.get(t)] = labels[t] + 1.0;
+                        assigned++;
+                    }
+                }
+            }
+
+            applyMeasurement(imageData, cells, values, isOpen);
+            try {
+                entry.saveImageData(imageData);
+            } catch (Exception e) {
+                logger.error("Failed to save {}", name, e);
+                log.accept("[" + name + "] save failed: " + e.getMessage());
+            }
+            totalAssigned += assigned;
+            log.accept(String.format("[%s] cluster written to %,d of %,d cells", name, assigned, n));
+
+            done++;
+            progress.accept(done / (double) images.size());
+        }
+        return totalAssigned;
+    }
+
+    /** Writes the {@link #CLUSTER_MEASUREMENT}; for the open image this marshals to the FX thread. */
+    private static void applyMeasurement(
+            ImageData<BufferedImage> imageData, List<PathObject> cells, double[] values, boolean isOpen) {
+        Runnable apply = () -> {
+            for (int i = 0; i < cells.size(); i++) {
+                cells.get(i).getMeasurementList().put(CLUSTER_MEASUREMENT, values[i]);
+            }
+            imageData.getHierarchy().fireHierarchyChangedEvent(CohortClusterModel.class);
+        };
+        if (isOpen) {
+            if (Platform.isFxApplicationThread()) {
+                apply.run();
+            } else {
+                var latch = new java.util.concurrent.CountDownLatch(1);
+                Platform.runLater(() -> {
+                    try {
+                        apply.run();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+                try {
+                    latch.await();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        } else {
+            apply.run();
+        }
     }
 
     /**

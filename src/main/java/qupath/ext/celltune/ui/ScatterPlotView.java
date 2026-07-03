@@ -32,6 +32,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -46,7 +47,9 @@ import qupath.ext.celltune.model.PopulationSet;
 import qupath.ext.celltune.model.ScatterMath;
 import qupath.ext.celltune.util.JvmModuleOpener;
 import qupath.fx.dialogs.Dialogs;
+import qupath.lib.color.ColorMaps;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.tools.MeasurementMapper;
 import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
@@ -58,6 +61,7 @@ import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.roi.interfaces.ROI;
 import smile.clustering.KMeans;
+import smile.math.MathEx;
 
 /**
  * Interactive 2D embedding scatter plot of cell detections.
@@ -109,6 +113,18 @@ public class ScatterPlotView {
     private static final int LEIDEN_REPRODUCIBLE_STARTS = 10;
     /** Fixed seed used when the reproducibility toggle is ON, for run-to-run identical labels. */
     private static final long LEIDEN_SEED = 42L;
+    /** k-means restarts (n_init) when the reproducibility toggle is ON; keeps the lowest-distortion fit. */
+    private static final int KMEANS_MULTI_RESTARTS = 10;
+    /** Fixed seed for the reproducible k-means restarts (mirrors {@link #LEIDEN_SEED}). */
+    private static final long KMEANS_SEED = 42L;
+    /**
+     * Numeric per-cell measurement holding the assigned phenotype cluster id (1-based;
+     * -1 = not in the clustered population). Written non-destructively by the "Colour
+     * cells in image → By cluster" overlay so the viewer can paint the tissue by cluster
+     * via a {@link MeasurementMapper} — the phenotype analogue of the CN dialog's {@code CN}
+     * measurement. Never modifies the cell's classification ({@code getPathClass()}).
+     */
+    private static final String CLUSTER_MEASUREMENT = "Cluster";
 
     // ── Per-row state (all arrays aligned by index 0..nRows-1; rebuilt on toggle)
     private Scope scope = Scope.CURRENT_IMAGE;
@@ -177,6 +193,15 @@ public class ScatterPlotView {
     private final ToggleButton boxToggle;
     private final ToggleButton lassoToggle;
     private final Button applyClustersBtn;
+    // Non-destructive viewer-overlay toggles (CN-dialog parity): paint the open image's
+    // cells by their assigned phenotype cluster, or revert to QuPath's native class colours.
+    private final Button clusterOverlayBtn;
+    private final Button classViewBtn;
+    private boolean clusterOverlayActive;
+    // True when the written Cluster measurement no longer matches the current fit (set on
+    // every Recompute / fit change). While false, toggling "By cluster" just re-activates the
+    // overlay display instead of re-running the (potentially cohort-wide, saving) assignment.
+    private boolean clusterMeasurementStale = true;
     private final ProgressIndicator progress;
     // A wide, prominent mirror of {@link #progress} in the status bar, so long
     // assign/apply runs (which lock the controls) show clear, legible progress
@@ -292,11 +317,12 @@ public class ScatterPlotView {
         resolutionLabel = new Label("Resolution:");
 
         reproducibleCheck = new CheckBox("Sample multiple seeds");
-        reproducibleCheck.setTooltip(
-                new javafx.scene.control.Tooltip("Run Leiden from several random starts (like k-means' multi-restart) "
-                        + "and keep the best-quality partition, so repeated runs with the "
-                        + "same settings give identical clusters. Off runs a single, faster "
-                        + "pass whose result may vary run to run."));
+        reproducibleCheck.setTooltip(new javafx.scene.control.Tooltip(
+                "Run clustering from several random starts and keep the best-quality partition "
+                        + "(lowest k-means distortion / best Leiden CPM), so repeated runs with the "
+                        + "same settings give identical, higher-quality clusters. Off runs a single, "
+                        + "faster pass whose result may vary run to run. Applies to both k-means and "
+                        + "Leiden."));
 
         boolean methodIsLeiden = methodCombo.getValue() == ClusterMethod.LEIDEN;
         kLabel.managedProperty().bind(kLabel.visibleProperty());
@@ -308,14 +334,15 @@ public class ScatterPlotView {
         kSpinner.setVisible(!methodIsLeiden);
         resolutionLabel.setVisible(methodIsLeiden);
         resolutionSpinner.setVisible(methodIsLeiden);
-        reproducibleCheck.setVisible(methodIsLeiden);
+        // "Sample multiple seeds" applies to both methods (k-means n_init restarts and
+        // Leiden random starts), so it stays visible regardless of the selected method.
+        reproducibleCheck.setVisible(true);
         methodCombo.valueProperty().addListener((o, a, b) -> {
             boolean leiden = b == ClusterMethod.LEIDEN;
             kLabel.setVisible(!leiden);
             kSpinner.setVisible(!leiden);
             resolutionLabel.setVisible(leiden);
             resolutionSpinner.setVisible(leiden);
-            reproducibleCheck.setVisible(leiden);
         });
 
         annotationField = new TextField();
@@ -495,12 +522,28 @@ public class ScatterPlotView {
         applyClustersBtn = new Button("Apply Clusters…");
         applyClustersBtn.setOnAction(e -> applyClustersToClasses());
 
+        clusterOverlayBtn = new Button("By cluster");
+        clusterOverlayBtn.setTooltip(new javafx.scene.control.Tooltip(
+                "Paint every cell in the open image by its assigned phenotype cluster (a full-tissue "
+                        + "map: each cell is assigned to its nearest cluster — nearest-centroid for k-means, "
+                        + "kNN label transfer for Leiden). Non-destructive: writes a numeric \"Cluster\" "
+                        + "measurement and a viewer overlay, never changing the cell's classification. "
+                        + "Cleared when this window closes."));
+        clusterOverlayBtn.setOnAction(e -> showClusterOverlay());
+
+        classViewBtn = new Button("By classification");
+        classViewBtn.setTooltip(new javafx.scene.control.Tooltip(
+                "Remove the cluster overlay and show QuPath's native classification colours "
+                        + "(the phenotype classes, e.g. those assigned via Apply Clusters)."));
+        classViewBtn.setOnAction(e -> showClassificationView());
+
         Button exportBtn = new Button("Export PNG…");
         exportBtn.setOnAction(e -> exportAsPng());
 
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> stage.close());
 
+        // Row 1 = "what to compute": embedding + clustering method + the Recompute action.
         HBox row1 = new HBox(
                 8,
                 new Label("Embedding:"),
@@ -514,15 +557,19 @@ public class ScatterPlotView {
                 resolutionLabel,
                 resolutionSpinner,
                 reproducibleCheck,
-                recomputeBtn,
-                new Separator(Orientation.VERTICAL),
+                recomputeBtn);
+        row1.setAlignment(Pos.CENTER_LEFT);
+
+        // Row 1b = "on what data": scope toggles + per-scope sampling controls.
+        HBox rowScope = new HBox(
+                8,
                 new Label("Scope:"),
                 imageScopeToggle,
                 projectScopeToggle,
                 projectControls,
                 sampleControls,
                 progress);
-        row1.setAlignment(Pos.CENTER_LEFT);
+        rowScope.setAlignment(Pos.CENTER_LEFT);
 
         HBox rowFilter = new HBox(
                 8,
@@ -550,7 +597,12 @@ public class ScatterPlotView {
                 closeBtn);
         row2.setAlignment(Pos.CENTER_LEFT);
 
-        VBox top = new VBox(6, row1, rowFilter, row2);
+        // Viewer-overlay row (CN-dialog parity): recolour the open image's cells by their
+        // assigned cluster, or revert to native classification colours. Non-destructive.
+        HBox rowViewer = new HBox(8, new Label("Colour cells in image:"), clusterOverlayBtn, classViewBtn);
+        rowViewer.setAlignment(Pos.CENTER_LEFT);
+
+        VBox top = new VBox(6, row1, rowScope, rowFilter, rowViewer, row2);
         top.setPadding(new Insets(8));
 
         // The visual layer owns the canvas + drawing + box/lasso/legend gestures;
@@ -581,7 +633,10 @@ public class ScatterPlotView {
         stage.setTitle("CellTune — Cell Scatter Plot");
         stage.setScene(new Scene(root, 1000, 720));
         stage.setResizable(true);
-        stage.setOnHidden(e -> removeSelectionListener());
+        stage.setOnHidden(e -> {
+            removeSelectionListener();
+            clearClusterOverlay(); // revert the viewer to classification colours on close
+        });
 
         // Load the open image's cells but DON'T cluster yet — clustering only
         // runs when the user clicks Recompute (or changes scope / re-samples).
@@ -682,6 +737,7 @@ public class ScatterPlotView {
         fitNClusters = 0;
         fitLeidenReference = null;
         fitLeidenReferenceLabels = null;
+        clusterMeasurementStale = true;
     }
 
     /** Show the scatter plot window. */
@@ -800,8 +856,23 @@ public class ScatterPlotView {
                                 } else {
                                     int kEff = Math.min(k, m);
                                     if (kEff >= 2) {
-                                        KMeans km = KMeans.fit(active, kEff);
-                                        System.arraycopy(km.y, 0, subCluster, 0, m);
+                                        // "Sample multiple seeds" ON -> n_init restarts, keeping the
+                                        // lowest-distortion fit (scikit-learn's n_init), seeded from a
+                                        // fixed value for run-to-run identical labels; OFF -> a single,
+                                        // faster fit. Mirrors the Leiden random-starts branch above and
+                                        // NeighborhoodModel's k-means restart policy.
+                                        int restarts = reproducible ? KMEANS_MULTI_RESTARTS : 1;
+                                        if (reproducible) {
+                                            MathEx.setSeed(KMEANS_SEED);
+                                        }
+                                        KMeans best = KMeans.fit(active, kEff);
+                                        for (int r = 1; r < restarts; r++) {
+                                            KMeans cand = KMeans.fit(active, kEff);
+                                            if (cand.distortion < best.distortion) {
+                                                best = cand;
+                                            }
+                                        }
+                                        System.arraycopy(best.y, 0, subCluster, 0, m);
                                     }
                                     nClustersEff = k;
                                 }
@@ -886,9 +957,6 @@ public class ScatterPlotView {
                                     notice = notice
                                             + String.format(" · %d/%d markers", selCols.length, markerFeatures.size());
                                 }
-                                if (method == ClusterMethod.LEIDEN) {
-                                    notice = notice + String.format(" · Leiden found %d cluster(s)", fNClusters);
-                                }
 
                                 final String fNotice = notice;
                                 final String fClassFilter = classKeyword;
@@ -904,6 +972,8 @@ public class ScatterPlotView {
                                     fitNClusters = fNClusters;
                                     fitLeidenReference = fLeidenRef;
                                     fitLeidenReferenceLabels = fLeidenRefLabels;
+                                    clusterMeasurementStale =
+                                            true; // new fit — any written Cluster measurement is now stale
                                     progress.setVisible(false);
                                     setControlsDisabled(false);
                                     plot.redraw();
@@ -1338,6 +1408,361 @@ public class ScatterPlotView {
                 .start();
     }
 
+    // ── Non-destructive viewer overlay: paint cells by cluster (CN-dialog parity) ─────
+
+    /**
+     * Assign every cell in the open image to its nearest phenotype cluster (nearest-centroid
+     * for k-means, kNN label transfer for Leiden against the labelled fitted sample), write
+     * the id as a non-destructive numeric {@link #CLUSTER_MEASUREMENT}, and activate a
+     * {@link MeasurementMapper} overlay so the tissue is painted by cluster — the phenotype
+     * analogue of the CN dialog's spatial CN colouring. The classification is never changed;
+     * the overlay is reset when this window closes or "By classification" is clicked.
+     *
+     * <p>When the fit used a within-class filter (sub-clustering), only cells of that class
+     * are painted; the rest keep their phenotype colour. Runs off the FX thread — for Leiden
+     * on a very large image the kNN label transfer can take a while (a progress spinner shows).
+     */
+    private void showClusterOverlay() {
+        if (applying) {
+            return;
+        }
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer == null || viewer.getImageData() == null) {
+            Dialogs.showWarningNotification("CellTune", "No open image to recolour.");
+            return;
+        }
+        boolean haveFit = fitCentroids != null || (fitLeidenReference != null && fitLeidenReferenceLabels != null);
+        if (!haveFit) {
+            Dialogs.showWarningNotification("CellTune", "No clusters available yet — run Recompute first.");
+            return;
+        }
+
+        // Fast path: the Cluster measurement is already written for the current fit and the
+        // open image still carries it, so toggling back from "By classification" is just a
+        // display flip — re-activate the overlay without re-running the (possibly cohort-wide,
+        // saving) assignment.
+        if (!clusterMeasurementStale && openImageHasClusterMeasurement()) {
+            activateClusterMapper(viewer, fitNClusters);
+            clusterOverlayActive = true;
+            statusLabel.setText("Showing cluster overlay.");
+            return;
+        }
+
+        // Project scope: write the Cluster measurement to every cell across every selected
+        // image (persistent + saved), then overlay the open one. Current-image scope stays
+        // an in-memory, single-image overlay below.
+        if (scope == Scope.PROJECT) {
+            writeClusterMeasurementAcrossProject();
+            return;
+        }
+
+        final ImageData<BufferedImage> data = viewer.getImageData();
+        final List<String> markers = (fitMarkers != null) ? fitMarkers : markerFeatures;
+        final double[] mean = fitMean;
+        final double[] sd = fitSd;
+        final double[][] cents = fitCentroids;
+        final double[][] leidenRef = fitLeidenReference;
+        final int[] leidenRefLabels = fitLeidenReferenceLabels;
+        final int nClusters = fitNClusters;
+        final String classFilter = fitClassFilter;
+
+        applying = true;
+        setControlsDisabled(true);
+        progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+        progress.setVisible(true);
+        statusLabel.setText("Assigning clusters across the image…");
+
+        new Thread(
+                        () -> {
+                            try {
+                                var hier = data.getHierarchy();
+                                var cellCol = hier.getCellObjects();
+                                List<PathObject> cells =
+                                        new ArrayList<>(cellCol.isEmpty() ? hier.getDetectionObjects() : cellCol);
+                                int n = cells.size();
+                                int nFeat = markers.size();
+                                float[] flat = new CellFeatureExtractor(markers, normalizer).extractMatrix(cells);
+                                boolean standardize = mean != null && sd != null;
+
+                                // Standardized feature matrix in the same space as the fit.
+                                double[][] z = new double[n][nFeat];
+                                for (int i = 0; i < n; i++) {
+                                    int off = i * nFeat;
+                                    for (int j = 0; j < nFeat; j++) {
+                                        double v = flat[off + j];
+                                        z[i][j] = standardize ? (sd[j] < 1e-9 ? 0.0 : (v - mean[j]) / sd[j]) : v;
+                                    }
+                                }
+
+                                // Label every cell: Leiden -> kNN transfer vs the labelled fit sample; else nearest
+                                // centroid.
+                                int[] labels;
+                                if (leidenRef != null && leidenRefLabels != null) {
+                                    labels = LeidenModel.transferLabels(
+                                            z, leidenRef, leidenRefLabels, LEIDEN_GRAPH_K, Math.max(1, nClusters));
+                                } else {
+                                    labels = new int[n];
+                                    for (int i = 0; i < n; i++) {
+                                        labels[i] = nearestCentroidIndex(z[i], cents);
+                                    }
+                                }
+
+                                // 1-based ids; cells outside the clustered (within-class) population get -1.
+                                double[] values = new double[n];
+                                int assigned = 0;
+                                for (int i = 0; i < n; i++) {
+                                    if (labels[i] >= 0 && matchesClassFilter(cells.get(i), classFilter)) {
+                                        values[i] = labels[i] + 1.0;
+                                        assigned++;
+                                    } else {
+                                        values[i] = -1.0;
+                                    }
+                                }
+
+                                final int fAssigned = assigned;
+                                Platform.runLater(() -> {
+                                    for (int i = 0; i < cells.size(); i++) {
+                                        cells.get(i).getMeasurementList().put(CLUSTER_MEASUREMENT, values[i]);
+                                    }
+                                    hier.fireHierarchyChangedEvent(this);
+                                    activateClusterMapper(viewer, nClusters);
+                                    clusterOverlayActive = true;
+                                    clusterMeasurementStale = false; // measurement now matches the fit
+                                    statusLabel.setText(String.format(
+                                            "Painted %,d cell(s) by cluster (%d cluster(s)) — non-destructive.",
+                                            fAssigned, Math.max(1, nClusters)));
+                                });
+                            } catch (Throwable t) {
+                                logger.error("Cluster overlay failed", t);
+                                Platform.runLater(() -> statusLabel.setText("Overlay failed: " + t.getMessage()));
+                            } finally {
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                                    setControlsDisabled(false);
+                                    applying = false;
+                                });
+                            }
+                        },
+                        "CellTune-ClusterOverlay")
+                .start();
+    }
+
+    /**
+     * Project-scope "By cluster": assign every cell across every selected image to its
+     * nearest cluster and write the non-destructive {@link #CLUSTER_MEASUREMENT} to each,
+     * saving every image (the persistent, cohort-wide analogue of the single-image overlay).
+     * Then activate the viewer overlay on whichever image is currently open. The cell
+     * classification is never changed.
+     */
+    private void writeClusterMeasurementAcrossProject() {
+        final Project<BufferedImage> project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage("CellTune", "No project is open.");
+            return;
+        }
+        boolean ok = Dialogs.showConfirmDialog(
+                "Write cluster measurement across project",
+                String.format(
+                        "Assign a cluster to every cell across %d image(s), writing a non-destructive "
+                                + "\"%s\" measurement, and save each image? Classifications are not changed.",
+                        projectImages.size(), CLUSTER_MEASUREMENT));
+        if (!ok) {
+            return;
+        }
+
+        final List<String> images = new ArrayList<>(projectImages);
+        final List<String> markers = (fitMarkers != null) ? fitMarkers : markerFeatures;
+        final double[] mean = fitMean;
+        final double[] sd = fitSd;
+        final double[][] cents = fitCentroids;
+        final double[][] leidenRef = fitLeidenReference;
+        final int[] leidenRefLabels = fitLeidenReferenceLabels;
+        final int nClusters = fitNClusters;
+        final String classFilter = fitClassFilter;
+
+        applying = true;
+        setControlsDisabled(true);
+        progress.setProgress(0);
+        progress.setVisible(true);
+        statusLabel.setText("Writing cluster measurement across " + images.size() + " image(s)…");
+
+        new Thread(
+                        () -> {
+                            try {
+                                ImageData<BufferedImage> openData = qupath.getImageData();
+                                String openName = null;
+                                if (openData != null) {
+                                    ProjectImageEntry<BufferedImage> openEntry = project.getEntry(openData);
+                                    if (openEntry != null) {
+                                        openName = openEntry.getImageName();
+                                    }
+                                }
+                                long total;
+                                if (leidenRef != null && leidenRefLabels != null) {
+                                    total = CohortClusterModel.writeClusterAcrossProjectLeiden(
+                                            project,
+                                            images,
+                                            markers,
+                                            mean,
+                                            sd,
+                                            leidenRef,
+                                            leidenRefLabels,
+                                            LEIDEN_GRAPH_K,
+                                            nClusters,
+                                            classFilter,
+                                            normalizer,
+                                            openData,
+                                            openName,
+                                            msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                            frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                } else {
+                                    total = CohortClusterModel.writeClusterAcrossProject(
+                                            project,
+                                            images,
+                                            markers,
+                                            mean,
+                                            sd,
+                                            cents,
+                                            classFilter,
+                                            normalizer,
+                                            openData,
+                                            openName,
+                                            msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                            frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                }
+                                final long fTotal = total;
+                                Platform.runLater(() -> {
+                                    QuPathViewer viewer = qupath.getViewer();
+                                    if (viewer != null && viewer.getImageData() != null) {
+                                        activateClusterMapper(viewer, nClusters);
+                                        clusterOverlayActive = true;
+                                    }
+                                    clusterMeasurementStale =
+                                            false; // measurement now matches the fit across the cohort
+                                    statusLabel.setText(String.format(
+                                            "Wrote cluster to %,d cell(s) across %d image(s) — saved, non-destructive.",
+                                            fTotal, images.size()));
+                                });
+                                logger.info(
+                                        "Cohort cluster measurement wrote {} cells across {} images",
+                                        total,
+                                        images.size());
+                            } catch (Throwable t) {
+                                logger.error("Project cluster-measurement write failed", t);
+                                Platform.runLater(() -> statusLabel.setText("Cluster write failed: " + t.getMessage()));
+                            } finally {
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                                    setControlsDisabled(false);
+                                    applying = false;
+                                });
+                            }
+                        },
+                        "CellTune-ClusterMeasure")
+                .start();
+    }
+
+    /** Reverts the viewer to native classification colours (removes the cluster overlay). */
+    private void showClassificationView() {
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer != null) {
+            viewer.getOverlayOptions().resetMeasurementMapper();
+            viewer.repaintEntireImage();
+        }
+        clusterOverlayActive = false;
+        statusLabel.setText("Showing classification colours.");
+    }
+
+    /** Removes any active cluster overlay (called when the window closes). Null-safe, silent. */
+    private void clearClusterOverlay() {
+        if (!clusterOverlayActive) {
+            return;
+        }
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer != null) {
+            viewer.getOverlayOptions().resetMeasurementMapper();
+            viewer.repaintEntireImage();
+        }
+        clusterOverlayActive = false;
+    }
+
+    /**
+     * Builds and installs a {@link MeasurementMapper} that paints each cell by its 1-based
+     * {@link #CLUSTER_MEASUREMENT} using the plot's per-cluster colours, so the image matches
+     * the scatter-plot legend. Cells with -1 keep their phenotype colour.
+     */
+    private void activateClusterMapper(QuPathViewer viewer, int nClusters) {
+        int n = Math.max(2, nClusters);
+        int[] r = new int[n];
+        int[] g = new int[n];
+        int[] b = new int[n];
+        for (int c = 0; c < n; c++) {
+            Color col = plot.clusterColor(Math.min(c, Math.max(0, nClusters - 1)));
+            r[c] = (int) Math.round(col.getRed() * 255);
+            g[c] = (int) Math.round(col.getGreen() * 255);
+            b[c] = (int) Math.round(col.getBlue() * 255);
+        }
+        ColorMaps.ColorMap cm = ColorMaps.createColorMap(CLUSTER_MEASUREMENT, r, g, b);
+        MeasurementMapper mm = new MeasurementMapper(
+                cm, CLUSTER_MEASUREMENT, viewer.getImageData().getHierarchy().getDetectionObjects());
+        mm.setDisplayMinValue(1);
+        mm.setDisplayMaxValue(Math.max(2, nClusters));
+        mm.setExcludeOutsideRange(true); // -1 (unclustered) cells keep their phenotype colour
+        viewer.getOverlayOptions().setMeasurementMapper(mm);
+        viewer.repaintEntireImage();
+    }
+
+    /** True when the open image's cells already carry a {@link #CLUSTER_MEASUREMENT} value. */
+    private boolean openImageHasClusterMeasurement() {
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer == null || viewer.getImageData() == null) {
+            return false;
+        }
+        var hier = viewer.getImageData().getHierarchy();
+        var col = hier.getCellObjects();
+        var cells = col.isEmpty() ? hier.getDetectionObjects() : col;
+        for (PathObject cell : cells) {
+            if (!Double.isNaN(cell.getMeasurementList().get(CLUSTER_MEASUREMENT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Argmin Euclidean distance to the (z-scored) centroids; -1 if none. */
+    private static int nearestCentroidIndex(double[] z, double[][] centroids) {
+        if (centroids == null || centroids.length == 0) {
+            return -1;
+        }
+        int best = -1;
+        double bestD = Double.POSITIVE_INFINITY;
+        for (int c = 0; c < centroids.length; c++) {
+            double[] cen = centroids[c];
+            double d = 0;
+            int len = Math.min(z.length, cen.length);
+            for (int j = 0; j < len; j++) {
+                double diff = z[j] - cen[j];
+                d += diff * diff;
+            }
+            if (d < bestD) {
+                bestD = d;
+                best = c;
+            }
+        }
+        return best;
+    }
+
+    /** True when the cell's classification contains {@code keyword} (blank/null matches all); mirrors the fit filter. */
+    private static boolean matchesClassFilter(PathObject cell, String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return true;
+        }
+        PathClass pc = cell.getPathClass();
+        return pc != null && pc.toString().toLowerCase().contains(keyword.trim().toLowerCase());
+    }
+
     private void setControlsDisabled(boolean disabled) {
         embeddingCombo.setDisable(disabled);
         fullUmapCheck.setDisable(disabled || embeddingCombo.getValue() != Embedding.UMAP);
@@ -1346,6 +1771,8 @@ public class ScatterPlotView {
         classField.setDisable(disabled);
         clusterMarkersBtn.setDisable(disabled);
         applyClustersBtn.setDisable(disabled);
+        clusterOverlayBtn.setDisable(disabled);
+        classViewBtn.setDisable(disabled);
         imageScopeToggle.setDisable(disabled);
         projectScopeToggle.setDisable(disabled);
         sampleSpinner.setDisable(disabled);
@@ -1368,6 +1795,9 @@ public class ScatterPlotView {
         annotationField.setDisable(project);
         projectControls.setVisible(project);
         applyClustersBtn.setText(project ? "Assign Clusters…" : "Apply Clusters…");
+        // In project scope "By cluster" writes + saves the Cluster measurement across all
+        // selected images; in current-image scope it's an in-memory single-image overlay.
+        clusterOverlayBtn.setText(project ? "By cluster (all images)" : "By cluster");
         imageScopeToggle.setSelected(!project);
         projectScopeToggle.setSelected(project);
     }
@@ -1866,7 +2296,12 @@ public class ScatterPlotView {
 
             @Override
             public int clusterCount() {
-                return kSpinner.getValue();
+                // The number of clusters actually present in the current display. Leiden
+                // decides its own count (fitNClusters, e.g. 26), which is unrelated to the
+                // k-means "Clusters (k)" spinner — using the spinner here capped the legend
+                // and the colour palette at k, cycling hues (c % k) for higher Leiden labels.
+                // Fall back to the spinner only before the first Recompute (no fit yet).
+                return fitNClusters > 0 ? fitNClusters : kSpinner.getValue();
             }
 
             @Override
@@ -1903,9 +2338,13 @@ public class ScatterPlotView {
                 ? String.format(
                         "Project sample (%d image%s)", projectImages.size(), projectImages.size() == 1 ? "" : "s")
                 : imageName;
+        // Report the cluster count actually on display: Leiden decides its own count
+        // (fitNClusters), which is unrelated to the k-means "Clusters (k)" spinner.
+        // Fall back to the spinner only before the first Recompute (no fit yet).
+        int shownClusters = fitNClusters > 0 ? fitNClusters : kSpinner.getValue();
         statusLabel.setText(String.format(
-                "%s  ·  %s  ·  %s  ·  k=%d  ·  %,d selected%s",
-                scopeDesc, embeddingCombo.getValue(), counts, kSpinner.getValue(), sel, statusNotice));
+                "%s  ·  %s  ·  %s  ·  %,d cluster(s)  ·  %,d selected%s",
+                scopeDesc, embeddingCombo.getValue(), counts, shownClusters, sel, statusNotice));
     }
 
     private void appendStatusNotice(String notice) {
