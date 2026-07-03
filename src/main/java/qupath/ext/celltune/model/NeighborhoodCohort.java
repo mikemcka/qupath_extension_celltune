@@ -297,6 +297,7 @@ public final class NeighborhoodCohort {
         }
         String name = entry.getImageName();
         boolean isOpen = openEntry != null && entry.equals(openEntry) && openData != null;
+        long tRead0 = System.nanoTime();
         ImageData<BufferedImage> imageData;
         try {
             imageData = isOpen ? openData : entry.readImageData();
@@ -307,8 +308,11 @@ public final class NeighborhoodCohort {
         if (imageData == null) {
             return new ImageAssign(0, 0, cnCounts, cnMeanSum);
         }
+        long tRead = System.nanoTime() - tRead0;
 
+        long tBuild0 = System.nanoTime();
         ImageComp ic = build(imageData, typeIndex, nTypes, params);
+        long tBuild = System.nanoTime() - tBuild0;
         int n = ic.cells().size();
         double[] cnValue = new double[n];
         double[] z = new double[nTypes];
@@ -341,14 +345,21 @@ public final class NeighborhoodCohort {
             imgAssigned++;
         }
 
+        long tWrite0 = System.nanoTime();
         applyMeasurements(imageData, ic.cells(), cnValue, isOpen);
+        long tWrite = System.nanoTime() - tWrite0;
+        long tSave0 = System.nanoTime();
         try {
             entry.saveImageData(imageData);
         } catch (Exception e) {
             logger.error("Failed to save {}", name, e);
             log.accept("[" + name + "] save failed: " + e.getMessage());
         }
+        long tSave = System.nanoTime() - tSave0;
         log.accept(String.format("[%s] CN assigned to %,d of %,d cells", name, imgAssigned, n));
+        log.accept(String.format(
+                "[%s] timing: read %.1fs · knn/build %.1fs · write %.1fs · save %.1fs",
+                name, tRead / 1e9, tBuild / 1e9, tWrite / 1e9, tSave / 1e9));
         return new ImageAssign(imgAssigned, empty, cnCounts, cnMeanSum);
     }
 
