@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Random;
 import java.util.Set;
+import java.util.stream.IntStream;
 import nl.cwts.networkanalysis.Clustering;
 import nl.cwts.networkanalysis.LeidenAlgorithm;
 import nl.cwts.networkanalysis.Network;
@@ -38,9 +39,15 @@ public final class LeidenModel {
     /**
      * For every row, the indices of its {@code k} nearest neighbours (Euclidean
      * over all columns), excluding itself. {@code out[i].length <= k} (fewer when
-     * {@code n-1 < k}). Brute-force — acceptable for the bounded sampled pool
-     * (plan ceiling: <= ~50k rows); revisit with an ANN index only if profiling
-     * demands it (see plan's deferred items).
+     * {@code n-1 < k}). Still brute-force O(n²) in the distance scan — acceptable
+     * for the bounded sampled pool (plan ceiling: ~50k rows) and revisit with an ANN
+     * index only if profiling demands it (plan's deferred item) — but each row's
+     * search is (a) run in parallel across rows (they are independent, each writing
+     * only its own {@code out[i]}) and (b) selected with a bounded size-{@code k}
+     * max-heap instead of a full sort, so per row it is O(n log k) with no boxed
+     * {@code Integer} allocation rather than the old O(n log n) sort of an
+     * {@code Integer[n]}. Output is byte-identical to the previous stable full-sort:
+     * the {@code k} smallest by (distance asc, index asc).
      */
     public static int[][] featureKnn(double[][] rows, int k) {
         int n = rows.length;
@@ -58,27 +65,110 @@ public final class LeidenModel {
             }
             return out;
         }
-        for (int i = 0; i < n; i++) {
-            out[i] = nearestForRow(rows, i, keep);
-        }
+        IntStream.range(0, n).parallel().forEach(i -> out[i] = nearestForRow(rows, i, keep));
         return out;
     }
 
+    /**
+     * The {@code keep} nearest rows to row {@code i} (self excluded), ordered
+     * ascending by (squared distance, index). Maintains a bounded max-heap of the
+     * best candidates keyed by "worseness" (distance desc, index desc) so the root
+     * is always the current worst kept candidate and a new candidate is admitted
+     * only when strictly better — an O(n log keep) selection over primitive arrays.
+     */
     private static int[] nearestForRow(double[][] rows, int i, int keep) {
         int n = rows.length;
-        double[] dist = new double[n];
-        Integer[] order = new Integer[n];
         double[] ri = rows[i];
+        double[] heapDist = new double[keep];
+        int[] heapIdx = new int[keep];
+        int size = 0;
         for (int j = 0; j < n; j++) {
-            order[j] = j;
-            dist[j] = (j == i) ? Double.POSITIVE_INFINITY : squaredDistance(ri, rows[j]);
+            if (j == i) {
+                continue;
+            }
+            double d = squaredDistance(ri, rows[j]);
+            if (size < keep) {
+                heapDist[size] = d;
+                heapIdx[size] = j;
+                siftUp(heapDist, heapIdx, size);
+                size++;
+            } else if (worse(heapDist[0], heapIdx[0], d, j)) {
+                // The current worst kept candidate (root) is worse than this one — evict it.
+                heapDist[0] = d;
+                heapIdx[0] = j;
+                siftDown(heapDist, heapIdx, size);
+            }
         }
-        Arrays.sort(order, (p, q) -> Double.compare(dist[p], dist[q]));
-        int[] result = new int[keep];
-        for (int t = 0; t < keep; t++) {
-            result[t] = order[t];
+        // Order the kept neighbours ascending by (distance, index) to match the old
+        // stable full-sort output exactly. keep is small (graph k, ~15), so an
+        // insertion sort over the heap contents is cheaper than heap extraction.
+        for (int a = 1; a < size; a++) {
+            double dv = heapDist[a];
+            int iv = heapIdx[a];
+            int b = a - 1;
+            while (b >= 0 && worse(heapDist[b], heapIdx[b], dv, iv)) {
+                heapDist[b + 1] = heapDist[b];
+                heapIdx[b + 1] = heapIdx[b];
+                b--;
+            }
+            heapDist[b + 1] = dv;
+            heapIdx[b + 1] = iv;
         }
+        int[] result = new int[size];
+        System.arraycopy(heapIdx, 0, result, 0, size);
         return result;
+    }
+
+    /**
+     * True when candidate {@code a} is "worse" than {@code b} — larger distance,
+     * ties broken by larger index. Defines the max-heap ordering (root = worst kept)
+     * and reproduces the stable full-sort's (distance asc, index asc) tie-break.
+     */
+    private static boolean worse(double aDist, int aIdx, double bDist, int bIdx) {
+        return aDist > bDist || (aDist == bDist && aIdx > bIdx);
+    }
+
+    /** Max-heap sift-up: bubble the element at {@code c} toward the root while it is worse than its parent. */
+    private static void siftUp(double[] hd, int[] hi, int c) {
+        while (c > 0) {
+            int parent = (c - 1) >>> 1;
+            if (worse(hd[c], hi[c], hd[parent], hi[parent])) {
+                swap(hd, hi, c, parent);
+                c = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /** Max-heap sift-down from the root over the first {@code size} elements. */
+    private static void siftDown(double[] hd, int[] hi, int size) {
+        int c = 0;
+        while (true) {
+            int left = 2 * c + 1;
+            int right = 2 * c + 2;
+            int worst = c;
+            if (left < size && worse(hd[left], hi[left], hd[worst], hi[worst])) {
+                worst = left;
+            }
+            if (right < size && worse(hd[right], hi[right], hd[worst], hi[worst])) {
+                worst = right;
+            }
+            if (worst == c) {
+                break;
+            }
+            swap(hd, hi, c, worst);
+            c = worst;
+        }
+    }
+
+    private static void swap(double[] hd, int[] hi, int a, int b) {
+        double td = hd[a];
+        hd[a] = hd[b];
+        hd[b] = td;
+        int ti = hi[a];
+        hi[a] = hi[b];
+        hi[b] = ti;
     }
 
     private static double squaredDistance(double[] a, double[] b) {
@@ -256,38 +346,73 @@ public final class LeidenModel {
         }
         int keep = Math.max(1, Math.min(k, nRef));
         int histSize = Math.max(1, nClusters);
-
-        for (int qi = 0; qi < nq; qi++) {
-            int[] nearest = nearestReferenceIndices(query[qi], reference, keep);
-            int[] votes = new int[histSize];
-            for (int idx : nearest) {
-                int label = refLabels[idx];
-                if (label >= 0) {
-                    if (label >= votes.length) {
-                        votes = Arrays.copyOf(votes, label + 1);
-                    }
-                    votes[label]++;
-                }
-            }
-            assigned[qi] = argMaxLowestTie(votes);
-        }
+        // Each query row's kNN vote is independent (writes only its own assigned[qi]), so the
+        // brute-force scan parallelises across query rows. Combined with the bounded-heap
+        // selection in nearestReferenceIndices (no per-query full sort or boxed Integer[]),
+        // this turns the transfer from serial O(nq·nRef·log nRef) into O(nq·nRef·log keep)
+        // across all cores — the same optimisation applied to featureKnn. Labels are
+        // byte-identical to the previous stable full-sort implementation.
+        IntStream.range(0, nq)
+                .parallel()
+                .forEach(qi -> assigned[qi] = voteLabel(query[qi], reference, refLabels, keep, histSize));
         return assigned;
     }
 
+    /** Majority label among the {@code keep} nearest reference rows to {@code q} (ties -> lowest label id). */
+    private static int voteLabel(double[] q, double[][] reference, int[] refLabels, int keep, int histSize) {
+        int[] nearest = nearestReferenceIndices(q, reference, keep);
+        int[] votes = new int[histSize];
+        for (int idx : nearest) {
+            int label = refLabels[idx];
+            if (label >= 0) {
+                if (label >= votes.length) {
+                    votes = Arrays.copyOf(votes, label + 1);
+                }
+                votes[label]++;
+            }
+        }
+        return argMaxLowestTie(votes);
+    }
+
+    /**
+     * The {@code keep} nearest reference rows to {@code q}, ordered ascending by
+     * (squared distance, index) — identical to the previous stable full-sort output,
+     * so the majority vote and tie behaviour are unchanged. Uses the same bounded
+     * max-heap selection as {@link #nearestForRow} (O(nRef log keep), no boxing).
+     */
     private static int[] nearestReferenceIndices(double[] q, double[][] reference, int keep) {
         int n = reference.length;
-        double[] dist = new double[n];
-        Integer[] order = new Integer[n];
+        int k = Math.min(keep, n);
+        double[] heapDist = new double[k];
+        int[] heapIdx = new int[k];
+        int size = 0;
         for (int j = 0; j < n; j++) {
-            order[j] = j;
-            dist[j] = squaredDistance(q, reference[j]);
+            double d = squaredDistance(q, reference[j]);
+            if (size < k) {
+                heapDist[size] = d;
+                heapIdx[size] = j;
+                siftUp(heapDist, heapIdx, size);
+                size++;
+            } else if (worse(heapDist[0], heapIdx[0], d, j)) {
+                heapDist[0] = d;
+                heapIdx[0] = j;
+                siftDown(heapDist, heapIdx, size);
+            }
         }
-        Arrays.sort(order, (p, r) -> Double.compare(dist[p], dist[r]));
-        int actualKeep = Math.min(keep, n);
-        int[] result = new int[actualKeep];
-        for (int t = 0; t < actualKeep; t++) {
-            result[t] = order[t];
+        for (int a = 1; a < size; a++) {
+            double dv = heapDist[a];
+            int iv = heapIdx[a];
+            int b = a - 1;
+            while (b >= 0 && worse(heapDist[b], heapIdx[b], dv, iv)) {
+                heapDist[b + 1] = heapDist[b];
+                heapIdx[b + 1] = heapIdx[b];
+                b--;
+            }
+            heapDist[b + 1] = dv;
+            heapIdx[b + 1] = iv;
         }
+        int[] result = new int[size];
+        System.arraycopy(heapIdx, 0, result, 0, size);
         return result;
     }
 

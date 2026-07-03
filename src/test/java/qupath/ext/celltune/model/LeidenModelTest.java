@@ -63,6 +63,25 @@ class LeidenModelTest {
         }
     }
 
+    @Test
+    void featureKnnOrdersByDistanceThenIndexOnTies() {
+        // Row 0 is the query at the origin; rows 1-4 are all exactly distance 1 away
+        // (a 4-way tie), row 5 is farther. With k=3 the result must be the three
+        // lowest-index tied neighbours (1,2,3 — excluding the equally-close index 4),
+        // returned in ascending (distance, index) order. This pins down the exact
+        // ordering + tie-break the bounded-heap selection must reproduce.
+        double[][] rows = {
+            {0.0, 0.0}, // 0: query
+            {1.0, 0.0}, // 1: dist 1
+            {0.0, 1.0}, // 2: dist 1
+            {-1.0, 0.0}, // 3: dist 1
+            {0.0, -1.0}, // 4: dist 1 (tie loser — higher index than 1,2,3)
+            {2.0, 0.0} // 5: dist 4
+        };
+        int[][] out = LeidenModel.featureKnn(rows, 3);
+        assertArrayEquals(new int[] {1, 2, 3}, out[0], "3-NN of the origin, tie-broken by lower index, ordered asc");
+    }
+
     // ── cluster: community recovery ───────────────────────────────────────────
 
     @Test
