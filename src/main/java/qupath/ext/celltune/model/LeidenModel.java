@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.stream.IntStream;
 import nl.cwts.networkanalysis.Clustering;
 import nl.cwts.networkanalysis.LeidenAlgorithm;
@@ -182,6 +183,132 @@ public final class LeidenModel {
             sum += diff * diff;
         }
         return sum;
+    }
+
+    // ── ANN recall gate (D-07/D-08/D-09) ─────────────────────────────────────
+
+    /** Recall threshold below which an ANN-routed run aborts (D-08) — hidden default, no user-facing knob. */
+    private static final double RECALL_THRESHOLD = 0.95;
+
+    /** Proportional recall-gate sample fraction (D-07) — hidden default. */
+    private static final double RECALL_SAMPLE_FRACTION = 0.001;
+
+    /** Cap on the recall-gate sample size (D-07) — keeps the exact reference O(sample x n), never O(n^2). */
+    private static final int RECALL_SAMPLE_CAP = 10_000;
+
+    /** Maximum number of geometric ef-doubling escalations before aborting (D-08) — hidden default. */
+    private static final int MAX_ESCALATIONS = 4;
+
+    /** Initial query-time ef the recall gate starts from before any escalation (D-09) — hidden default. */
+    private static final int INITIAL_QUERY_EF = 64;
+
+    /**
+     * Recall-gate sample size for a pooled set of {@code n} rows: proportional
+     * (~0.1%) and capped at {@link #RECALL_SAMPLE_CAP} (D-07) — bounds the
+     * exact reference computation to O(sample x n), never the O(n^2) of a full
+     * {@link #featureKnn} scan (Pitfall 3).
+     */
+    static int recallSampleSize(int n) {
+        return Math.min(RECALL_SAMPLE_CAP, Math.max(1, (int) Math.round(n * RECALL_SAMPLE_FRACTION)));
+    }
+
+    /**
+     * Exact nearest-neighbour indices (self excluded) for a small set of query
+     * rows that live IN {@code rows} itself (identified by {@code sampleIdx}),
+     * against the full {@code rows} array as reference — O(sampleIdx.length x n),
+     * reusing the same bounded max-heap {@link #nearestForRow} selection as
+     * {@link #featureKnn}, just invoked only for the sampled indices instead of
+     * every row. This is the recall gate's exact reference (D-07) — never call
+     * {@link #featureKnn} here (that is all-pairs O(n^2), Pitfall 3).
+     */
+    static int[][] exactNeighborsForQueries(double[][] rows, int[] sampleIdx, int keep) {
+        int[][] out = new int[sampleIdx.length][];
+        int n = rows.length;
+        if (n == 0 || keep <= 0) {
+            for (int s = 0; s < sampleIdx.length; s++) {
+                out[s] = new int[0];
+            }
+            return out;
+        }
+        IntStream.range(0, sampleIdx.length).parallel().forEach(s -> out[s] = nearestForRow(rows, sampleIdx[s], keep));
+        return out;
+    }
+
+    /**
+     * Mean recall of {@code approx} against {@code exact}: for each row,
+     * |exact intersect approx| / |exact|, averaged over all rows. 1.0 when
+     * every approximate neighbour set matches its exact counterpart exactly as
+     * a set (order-independent); 0.0 when they are always disjoint.
+     */
+    static double meanRecall(int[][] exact, int[][] approx) {
+        int n = exact.length;
+        if (n == 0) {
+            return 1.0;
+        }
+        double sum = 0;
+        for (int i = 0; i < n; i++) {
+            sum += rowRecall(exact[i], approx[i]);
+        }
+        return sum / n;
+    }
+
+    private static double rowRecall(int[] exact, int[] approx) {
+        if (exact.length == 0) {
+            return 1.0;
+        }
+        Set<Integer> approxSet = new HashSet<>(approx.length * 2 + 1);
+        for (int v : approx) {
+            approxSet.add(v);
+        }
+        int hit = 0;
+        for (int v : exact) {
+            if (approxSet.contains(v)) {
+                hit++;
+            }
+        }
+        return hit / (double) exact.length;
+    }
+
+    /**
+     * The recall gate itself (D-07/D-08/D-09): samples {@link #recallSampleSize}
+     * query rows (seeded from {@code seed}, via {@link CohortClusterModel#sampleIndices}),
+     * computes their exact neighbours ({@link #exactNeighborsForQueries}), then
+     * repeatedly calls {@code annQueryAtEf} — which, given an ef and the FIXED
+     * sample indices, must return each sampled row's approximate neighbour
+     * indices at that ef (query-time only, no index rebuild — D-08) — starting
+     * at {@code initialEf} and doubling geometrically up to
+     * {@link #MAX_ESCALATIONS} times whenever mean recall is below
+     * {@link #RECALL_THRESHOLD}. Returns the measured (passing) recall so the
+     * caller can surface it (e.g. to a status line, D-09). Throws
+     * {@link AnnRecallException} — writing no labels — if recall is still
+     * below threshold after the escalation cap; the exception message includes
+     * the final measured recall.
+     */
+    static double gateAnnRecall(
+            double[][] rows, int k, long seed, int initialEf, BiFunction<Integer, int[], int[][]> annQueryAtEf) {
+        int n = rows.length;
+        if (n <= 1) {
+            return 1.0;
+        }
+        int keep = Math.min(k, n - 1);
+        int sampleSize = Math.min(recallSampleSize(n), n);
+        int[] sampleIdx = CohortClusterModel.sampleIndices(n, sampleSize, new Random(seed));
+        int[][] exact = exactNeighborsForQueries(rows, sampleIdx, keep);
+
+        int ef = initialEf;
+        int escalations = 0;
+        double recall = meanRecall(exact, annQueryAtEf.apply(ef, sampleIdx));
+        while (recall < RECALL_THRESHOLD && escalations < MAX_ESCALATIONS) {
+            ef *= 2;
+            escalations++;
+            recall = meanRecall(exact, annQueryAtEf.apply(ef, sampleIdx));
+        }
+        if (recall < RECALL_THRESHOLD) {
+            throw new AnnRecallException("ANN recall " + recall + " remained below the required "
+                    + RECALL_THRESHOLD + " threshold after " + escalations + " ef escalation(s) (final ef=" + ef
+                    + ")");
+        }
+        return recall;
     }
 
     // ── Leiden community detection ───────────────────────────────────────────

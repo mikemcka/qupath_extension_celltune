@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
@@ -80,6 +81,70 @@ class LeidenModelTest {
         };
         int[][] out = LeidenModel.featureKnn(rows, 3);
         assertArrayEquals(new int[] {1, 2, 3}, out[0], "3-NN of the origin, tie-broken by lower index, ordered asc");
+    }
+
+    // ── ANN recall gate ────────────────────────────────────────────────────────
+
+    @Test
+    void recallGateSampleSizeMatchesProportionalCappedFormula() {
+        // sampleSize = min(10_000, max(1, round(n * 0.001))) — checkable exactly
+        // for n where n*0.001 has no rounding ambiguity.
+        assertEquals(1, LeidenModel.recallSampleSize(100), "round(0.1)=0 -> max(1,0)=1");
+        assertEquals(1, LeidenModel.recallSampleSize(1_000), "round(1.0)=1");
+        assertEquals(2, LeidenModel.recallSampleSize(2_000), "round(2.0)=2");
+        assertEquals(10_000, LeidenModel.recallSampleSize(10_000_000), "round(10_000.0)=10_000, at the cap exactly");
+        assertEquals(10_000, LeidenModel.recallSampleSize(50_000_000), "cap enforced above 10_000_000");
+    }
+
+    @Test
+    void meanRecallIsOneForIdenticalSetsAndZeroForDisjointSets() {
+        int[][] exact = {{1, 2, 3}, {4, 5, 6}};
+        int[][] sameSetsReordered = {{3, 2, 1}, {6, 5, 4}};
+        assertEquals(1.0, LeidenModel.meanRecall(exact, sameSetsReordered), 1e-9, "Identical sets -> recall 1.0");
+
+        int[][] disjoint = {{7, 8, 9}, {10, 11, 12}};
+        assertEquals(0.0, LeidenModel.meanRecall(exact, disjoint), 1e-9, "Disjoint sets -> recall 0.0");
+    }
+
+    @Test
+    void recallGatePassesWithoutThrowingWhenAnnMatchesExact() {
+        // "Adequate ANN": the stub returns the exact neighbours themselves, so
+        // recall is 1.0 on the very first (non-escalated) attempt and the gate
+        // must not throw.
+        Random rng = new Random(77);
+        double[][] rows = randomCloud(rng, 400, 6);
+        int k = 10;
+        int keep = Math.min(k, rows.length - 1);
+
+        double recall = LeidenModel.gateAnnRecall(
+                rows, k, 1234L, 64, (ef, sampleIdx) -> LeidenModel.exactNeighborsForQueries(rows, sampleIdx, keep));
+
+        assertTrue(recall >= 0.95, "Adequate ANN neighbours must pass the recall gate, got " + recall);
+    }
+
+    @Test
+    void recallGateEscalatesThenAbortsWhenAnnNeverImproves() {
+        // "Degraded ANN": the stub always returns each sampled row's FARTHEST
+        // (not nearest) neighbours, regardless of the escalating ef -- there is
+        // no headroom for escalation to help, so the gate must exhaust
+        // MAX_ESCALATIONS and abort.
+        Random rng = new Random(88);
+        double[][] rows = randomCloud(rng, 400, 6);
+        int k = 10;
+        int keep = Math.min(k, rows.length - 1);
+
+        AnnRecallException ex = assertThrows(
+                AnnRecallException.class,
+                () -> LeidenModel.gateAnnRecall(rows, k, 5678L, 64, (ef, sampleIdx) -> {
+                    int[][] wrong = new int[sampleIdx.length][];
+                    for (int s = 0; s < sampleIdx.length; s++) {
+                        wrong[s] = bruteForceFarthest(rows, sampleIdx[s], keep);
+                    }
+                    return wrong;
+                }));
+        assertTrue(
+                ex.getMessage() != null && ex.getMessage().contains("0."),
+                "Exception message must include the measured (failing) recall: " + ex.getMessage());
     }
 
     // ── cluster: community recovery ───────────────────────────────────────────
@@ -263,6 +328,29 @@ class LeidenModelTest {
             set.add(order[t]);
         }
         return set;
+    }
+
+    /**
+     * The {@code k} FARTHEST (not nearest) rows to row {@code i} -- used to
+     * simulate a deliberately degraded/wrong ANN neighbour source for the
+     * recall-gate abort test, since the recall gate's exact reference is
+     * always the true nearest neighbours.
+     */
+    private static int[] bruteForceFarthest(double[][] rows, int i, int k) {
+        int n = rows.length;
+        Integer[] order = new Integer[n];
+        double[] d2 = new double[n];
+        for (int j = 0; j < n; j++) {
+            order[j] = j;
+            d2[j] = (j == i) ? Double.NEGATIVE_INFINITY : squaredDist(rows[i], rows[j]);
+        }
+        Arrays.sort(order, (p, q) -> Double.compare(d2[q], d2[p])); // descending -> farthest first
+        int keep = Math.min(k, n);
+        int[] out = new int[keep];
+        for (int t = 0; t < keep; t++) {
+            out[t] = order[t];
+        }
+        return out;
     }
 
     private static double squaredDist(double[] a, double[] b) {
