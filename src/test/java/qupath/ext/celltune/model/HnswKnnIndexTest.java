@@ -146,7 +146,60 @@ class HnswKnnIndexTest {
                 "Escalated ef recall (" + highRecall + ") should be >= low-ef recall (" + lowRecall + ")");
     }
 
+    // ── Test F: deterministic (distance, id) query ordering ─────────────────
+
+    @Test
+    void queryResultsAreOrderedAscendingByDistanceThenId() {
+        // Guards the primitive-array insertion sort in HnswKnnIndex.nearestIds: results must come
+        // back non-decreasing by true Euclidean distance from the query row, regardless of
+        // whatever (possibly nondeterministic) order the underlying index visited candidates in.
+        Random rng = new Random(19);
+        int n = 200;
+        int d = 6;
+        int k = 20;
+        double[][] rows = randomCloud(rng, n, d);
+
+        int[][] out = HnswKnnIndex.knn(rows, k, 3L, true);
+        for (int i = 0; i < n; i++) {
+            double prevDist = Double.NEGATIVE_INFINITY;
+            int prevId = -1;
+            for (int id : out[i]) {
+                double dist = euclidean(rows[i], rows[id]);
+                assertTrue(
+                        dist > prevDist || (dist == prevDist && id > prevId),
+                        "Neighbours for row " + i + " must be strictly ascending by (distance, id)");
+                prevDist = dist;
+                prevId = id;
+            }
+        }
+    }
+
+    @Test
+    void queryRowBreaksExactDistanceTiesByAscendingId() {
+        // Two points (id 1 and id 2) are exactly equidistant from the query vector; the
+        // deterministic tie-break must always place the lower id first, independent of
+        // whatever order the underlying index returns tied candidates in.
+        double[][] rows = {
+            {0.0}, // id 0 -- distance 0 from the query vector
+            {-2.0}, // id 1 -- distance 2 (tied with id 2)
+            {2.0}, // id 2 -- distance 2 (tied with id 1)
+            {3.0}, // id 3 -- distance 3
+        };
+        HnswKnnIndex index = HnswKnnIndex.build(rows, 1L, true);
+        int[] out = index.queryRow(new double[] {0.0}, 4);
+        assertArrayEquals(new int[] {0, 1, 2, 3}, out, "distance ties must break by ascending id");
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static double euclidean(double[] a, double[] b) {
+        double sumSq = 0;
+        for (int j = 0; j < a.length; j++) {
+            double diff = a[j] - b[j];
+            sumSq += diff * diff;
+        }
+        return Math.sqrt(sumSq);
+    }
 
     private static double meanRecall(HnswKnnIndex live, double[][] rows, int k, int[][] exact) {
         int n = rows.length;

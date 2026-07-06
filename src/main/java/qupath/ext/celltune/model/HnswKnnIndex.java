@@ -5,7 +5,6 @@ import com.github.jelmerk.hnswlib.core.Item;
 import com.github.jelmerk.hnswlib.core.SearchResult;
 import com.github.jelmerk.hnswlib.core.hnsw.HnswIndex;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -217,21 +216,38 @@ public final class HnswKnnIndex {
         // Deterministic tie-break: ascending (distance, id) -- matches
         // LeidenModel.featureKnn's ordering contract, independent of whatever
         // (possibly nondeterministic) order findNearest visited candidates in.
-        Integer[] order = new Integer[count];
+        // Sorted with a primitive-array insertion sort (not Arrays.sort on a boxed
+        // Integer[] + comparator lambda) -- this runs on every query across tens of
+        // millions of per-row queries, so avoiding the boxed array/autoboxing churn
+        // matters; `count` is always k-sized (small), so insertion sort's O(count^2)
+        // is cheap and the ordering it produces is byte-identical to the prior sort.
+        int[] order = new int[count];
         for (int i = 0; i < count; i++) {
             order[i] = i;
         }
-        int finalCount = count;
-        Arrays.sort(order, (a, b) -> {
-            int c = Double.compare(dist[a], dist[b]);
-            return c != 0 ? c : Integer.compare(ids[a], ids[b]);
-        });
-        int outLen = Math.min(keep, finalCount);
+        for (int i = 1; i < count; i++) {
+            int key = order[i];
+            double keyDist = dist[key];
+            int keyId = ids[key];
+            int j = i - 1;
+            while (j >= 0 && isAfter(dist[order[j]], ids[order[j]], keyDist, keyId)) {
+                order[j + 1] = order[j];
+                j--;
+            }
+            order[j + 1] = key;
+        }
+        int outLen = Math.min(keep, count);
         int[] out = new int[outLen];
         for (int i = 0; i < outLen; i++) {
             out[i] = ids[order[i]];
         }
         return out;
+    }
+
+    /** True when (distA, idA) sorts strictly after (distB, idB) under the ascending (distance, id) tie-break. */
+    private static boolean isAfter(double distA, int idA, double distB, int idB) {
+        int c = Double.compare(distA, distB);
+        return c != 0 ? c > 0 : idA > idB;
     }
 
     /** {@code Item<Integer, double[]>} view of a pooled row: id = row index, vector = the row itself. */
