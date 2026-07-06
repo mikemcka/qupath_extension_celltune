@@ -899,6 +899,27 @@ public final class CohortClusterModel {
             boolean aborted,
             boolean cancelled) {}
 
+    /** Outcome of {@link #clusterOrAbort}: either a successful partition, or an aborted run with the recall-gate message. */
+    record ClusterOutcome(LeidenModel.LeidenResult result, boolean aborted, String abortMessage) {}
+
+    /**
+     * Pure "cluster once, or abort" step (LEI-10 Test D — abort-writes-nothing):
+     * runs {@code clusterCall} (in production, a
+     * {@link LeidenModel#clusterViaAnn} invocation over the pooled matrix) and
+     * turns a thrown {@link AnnRecallException} into a plain {@link ClusterOutcome}
+     * instead of letting the exception escape — so {@link #writeClusterAllCells}'s
+     * abort branch (and this method's own test) don't need a live pooled matrix
+     * or Project/ImageData; any supplier that throws {@code AnnRecallException}
+     * exercises the exact same abort-decision logic the real driver uses.
+     */
+    static ClusterOutcome clusterOrAbort(java.util.function.Supplier<LeidenModel.LeidenResult> clusterCall) {
+        try {
+            return new ClusterOutcome(clusterCall.get(), false, null);
+        } catch (AnnRecallException e) {
+            return new ClusterOutcome(null, true, e.getMessage());
+        }
+    }
+
     /**
      * The all-cells cohort driver (LEI-06/LEI-08): pools every (matching) cell
      * across {@code images} via {@link #poolAllCells}, runs a SINGLE
@@ -970,17 +991,17 @@ public final class CohortClusterModel {
 
         log.accept("Building kNN graph…");
         log.accept("Running Leiden…");
-        LeidenModel.LeidenResult result;
-        try {
-            result = LeidenModel.clusterViaAnn(pooled.rows(), graphK, resolution, randomStarts, seed, reproducible);
-        } catch (AnnRecallException e) {
-            logger.warn("All-cells ANN recall gate failed: {}", e.getMessage());
-            log.accept("ANN recall gate failed — aborting, no Cluster measurement written: " + e.getMessage());
+        ClusterOutcome clusterOutcome = clusterOrAbort(
+                () -> LeidenModel.clusterViaAnn(pooled.rows(), graphK, resolution, randomStarts, seed, reproducible));
+        if (clusterOutcome.aborted()) {
+            logger.warn("All-cells ANN recall gate failed: {}", clusterOutcome.abortMessage());
+            log.accept("ANN recall gate failed — aborting, no Cluster measurement written: "
+                    + clusterOutcome.abortMessage());
             return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), true, false);
         }
 
-        int[] labels = result.labels();
-        int nClusters = result.nClusters();
+        int[] labels = clusterOutcome.result().labels();
+        int nClusters = clusterOutcome.result().nClusters();
         boolean classFilterActive = classFilter != null && !classFilter.isBlank();
         String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
