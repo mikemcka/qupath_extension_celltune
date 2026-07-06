@@ -46,6 +46,12 @@ dependencies {
     implementation("nl.cwts:networkanalysis:1.3.0")
     shadow("nl.cwts:networkanalysis:1.3.0")
 
+    // HNSW — approximate-NN kNN graph construction for Leiden at cohort scale
+    // (tens of millions of cells). Pure Java, no native binaries (unlike Smile's
+    // OpenBLAS/ARPACK bundling above) — see .planning/phases/15-all-cells-leiden-clustering/15-RESEARCH.md "Standard Stack".
+    implementation("com.github.jelmerk:hnswlib-core:1.2.1")
+    shadow("com.github.jelmerk:hnswlib-core:1.2.1")
+
     // For testing
     testImplementation(libs.bundles.qupath)
     testImplementation(libs.junit)
