@@ -2,6 +2,8 @@ package qupath.ext.celltune.model;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.awt.image.BufferedImage;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -9,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import qupath.ext.celltune.model.CohortClusterModel.CancellationToken;
@@ -18,6 +21,8 @@ import qupath.ext.celltune.model.CohortClusterModel.MeasurementAssignment;
 import qupath.ext.celltune.model.CohortClusterModel.Pass2Outcome;
 import qupath.ext.celltune.model.CohortClusterModel.UuidKey;
 import qupath.ext.celltune.model.LeidenModel.LeidenResult;
+import qupath.lib.images.ImageData;
+import qupath.lib.images.servers.ImageServer;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
@@ -64,6 +69,30 @@ class CohortClusterModelTest {
             h.addObject(o);
         }
         return h;
+    }
+
+    /**
+     * A minimal, real {@link ImageData} wrapping {@code hierarchy}, backed by a fake
+     * {@link ImageServer} (built via {@link Proxy} — {@code ImageServer} is an interface
+     * and none of its methods are touched by anything {@code CohortClusterModel} calls on
+     * an {@code ImageData}, which only ever reads {@code getHierarchy()}). Lets tests
+     * construct genuine, reference-distinguishable {@code ImageData<BufferedImage>}
+     * instances without a live QuPath project/server.
+     */
+    @SuppressWarnings("unchecked")
+    private static ImageData<BufferedImage> fakeImageData(PathObjectHierarchy hierarchy) {
+        ImageServer<BufferedImage> server = (ImageServer<BufferedImage>) Proxy.newProxyInstance(
+                ImageServer.class.getClassLoader(), new Class[] {ImageServer.class}, (proxy, method, args) -> {
+                    String name = method.getName();
+                    return switch (name) {
+                        case "toString" -> "FakeImageServer";
+                        case "hashCode" -> System.identityHashCode(proxy);
+                        case "equals" -> proxy == args[0];
+                        case "close" -> null;
+                        default -> throw new UnsupportedOperationException("Not implemented in fake server: " + name);
+                    };
+                });
+        return new ImageData<>(server, hierarchy, ImageData.ImageType.UNSET);
     }
 
     // ── LEI-08: packed-UUID reorder-safe write-back ─────────────────────────────
@@ -379,6 +408,51 @@ class CohortClusterModelTest {
         }
         int totalCounted = Arrays.stream(result.counts()).sum();
         assertEquals(n, totalCounted, "every pooled row must land in some cluster's count");
+    }
+
+    // ── selectImageSource (pool the open image from live data, not disk) ────────
+
+    @Test
+    void selectImageSourceReturnsLiveOpenDataWithoutTouchingDiskForTheOpenImage() {
+        ImageData<BufferedImage> openData = fakeImageData(hierarchyWith(detections(2, 0)));
+        AtomicInteger diskReads = new AtomicInteger();
+
+        ImageData<BufferedImage> resolved = CohortClusterModel.selectImageSource("imgA", "imgA", openData, () -> {
+            diskReads.incrementAndGet();
+            return fakeImageData(hierarchyWith(detections(9, 500))); // a distinct, "stale disk" instance
+        });
+
+        assertSame(openData, resolved, "the open image must resolve to the exact live openData instance");
+        assertEquals(0, diskReads.get(), "disk must never be read for the open image");
+    }
+
+    @Test
+    void selectImageSourceReadsDiskExactlyOnceForNonOpenImages() {
+        ImageData<BufferedImage> openData = fakeImageData(hierarchyWith(detections(2, 0)));
+        ImageData<BufferedImage> diskData = fakeImageData(hierarchyWith(detections(9, 500)));
+        AtomicInteger diskReads = new AtomicInteger();
+
+        ImageData<BufferedImage> resolved = CohortClusterModel.selectImageSource("imgB", "imgA", openData, () -> {
+            diskReads.incrementAndGet();
+            return diskData;
+        });
+
+        assertSame(diskData, resolved, "a non-open image must resolve to whatever the disk reader supplies");
+        assertEquals(1, diskReads.get(), "disk must be read exactly once for a non-open image");
+    }
+
+    @Test
+    void selectImageSourceTreatsNullOpenNameAsNoOpenImage() {
+        ImageData<BufferedImage> diskData = fakeImageData(hierarchyWith(detections(1, 0)));
+        AtomicInteger diskReads = new AtomicInteger();
+
+        ImageData<BufferedImage> resolved = CohortClusterModel.selectImageSource("imgA", null, null, () -> {
+            diskReads.incrementAndGet();
+            return diskData;
+        });
+
+        assertSame(diskData, resolved, "with no open image, every name must read from disk");
+        assertEquals(1, diskReads.get());
     }
 
     // ── classForMeasurementValue / assignmentsFromMeasurement (all-cells assign) ─

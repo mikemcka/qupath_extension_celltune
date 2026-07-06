@@ -11,6 +11,7 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import javafx.application.Platform;
 import org.slf4j.Logger;
@@ -41,8 +42,11 @@ import qupath.lib.projects.ProjectImageEntry;
  * in a single {@link LeidenModel#clusterViaAnn} partition rather than fitting on a
  * sample and transferring: {@link #poolAllCells} streams every image once,
  * z-scoring the full cohort and capturing each cell's packed {@code (msb,lsb)}
- * UUID before releasing its hierarchy; the single Leiden partition then runs over
- * the fully pooled matrix; {@link #writeClusterAllCells} re-reads each image and
+ * UUID before releasing its hierarchy — for the currently-open image it pools the
+ * LIVE {@code openData} instead of re-reading stale cells from disk, symmetric
+ * with {@link #writeClusterAllCells}'s pass-2 write to that same live data; the
+ * single Leiden partition then runs over the fully pooled matrix;
+ * {@link #writeClusterAllCells} re-reads each image and
  * writes the {@link #CLUSTER_MEASUREMENT} by UUID lookup against a single global
  * ({@link #buildGlobalLabelMap}) map built once in O(n),
  * so a reordered second read still labels every cell correctly. A
@@ -759,23 +763,69 @@ public final class CohortClusterModel {
      * ~10-20x string/object overhead of the {@code .toString()} form is
      * prohibitive (RESEARCH.md Pattern 2 / Anti-Pattern) — do not "fix" this back.
      *
+     * <p>
+     * When {@code name.equals(openName)}, the LIVE {@code openData} is pooled
+     * instead of re-reading the image from disk via {@code entry.readImageData()}
+     * — symmetric with {@link #writeClusterAllCells}'s pass-2 write, which also
+     * writes to the live {@code openData} for the open image. Without this, an
+     * open image with unsaved detections/edits would be clustered from STALE
+     * disk cells in pass 1 while pass 2 writes {@code Cluster} by UUID into the
+     * LIVE cells — any live-only cell (not on disk) would never resolve a UUID
+     * match and get written {@code -1}, and clustering itself would have run on
+     * stale features. Hierarchy-release behaviour (not retaining past the loop
+     * iteration) is preserved for every NON-open image.
+     *
      * @param project     the open project
      * @param images      image names to pool from
      * @param markers     marker measurement names to extract (column order)
      * @param classFilter when non-blank, only cells whose current classification
      *                    contains it (case-insensitive) are pooled
      * @param normalizer  feature normalizer to apply during extraction (nullable)
+     * @param openData    open image's live data (nullable); pooled directly instead
+     *                    of re-read from disk when its name matches {@code openName}
+     * @param openName    name of the open image (nullable)
      * @param token       checked at the top of each per-image iteration; pooling
      *                    stops early (returning what has been pooled so far, with
      *                    {@code cancelled=true}) if already cancelled
      * @param log         progress sink (called off the FX thread)
      */
+    /**
+     * Pure, testable helper (mirrors the {@code isOpen ? openData : entry.readImageData()}
+     * idiom used throughout this class's write-back passes): resolves which
+     * {@link ImageData} to use for ONE image — the LIVE {@code openData} when
+     * {@code name} matches {@code openName} (disk is never touched in that case), or
+     * whatever {@code diskReader} returns otherwise. Extracted as its own seam so the
+     * "pool the open image from its live hierarchy, not disk" selection ({@link
+     * #poolAllCells}'s fix for T-16-xx) is unit-testable without a live {@code Project}.
+     *
+     * @param name       the image being resolved
+     * @param openName   name of the open image (nullable — never matches if null)
+     * @param openData   the open image's live data (returned as-is when {@code name} matches)
+     * @param diskReader supplied ONLY when {@code name} does not match {@code openName}
+     */
+    static ImageData<BufferedImage> selectImageSource(
+            String name,
+            String openName,
+            ImageData<BufferedImage> openData,
+            Supplier<ImageData<BufferedImage>> diskReader) {
+        return name.equals(openName) ? openData : diskReader.get();
+    }
+
+    /** Unchecked wrapper so {@link ProjectImageEntry#readImageData} (checked {@code IOException}) fits a {@link Supplier}. */
+    private static final class PoolReadException extends RuntimeException {
+        PoolReadException(Throwable cause) {
+            super(cause);
+        }
+    }
+
     public static PooledData poolAllCells(
             Project<BufferedImage> project,
             List<String> images,
             List<String> markers,
             String classFilter,
             FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
             CancellationToken token,
             Consumer<String> log) {
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
@@ -804,8 +854,14 @@ public final class CohortClusterModel {
             }
             ImageData<BufferedImage> imageData;
             try {
-                imageData = entry.readImageData();
-            } catch (Exception e) {
+                imageData = selectImageSource(name, openName, openData, () -> {
+                    try {
+                        return entry.readImageData();
+                    } catch (Exception e) {
+                        throw new PoolReadException(e);
+                    }
+                });
+            } catch (PoolReadException e) {
                 log.accept("[" + name + "] could not load — skipped");
                 continue;
             }
@@ -842,8 +898,10 @@ public final class CohortClusterModel {
                 pooledFromImage++;
             }
             totalCells += n;
-            // imageData/hierarchy is not retained past this iteration — released for
-            // GC exactly as sample() already does.
+            // Non-open imageData/hierarchy is not retained past this iteration — released
+            // for GC exactly as sample() already does. The open image's live imageData is
+            // the caller's own reference (openData), so it is never "released" here either
+            // way — this loop simply doesn't hold an extra reference to it.
             log.accept(String.format(
                     "Pooling %d/%d images — [%s] pooled %,d of %,d cells",
                     ord + 1, images.size(), name, pooledFromImage, n));
@@ -1074,7 +1132,8 @@ public final class CohortClusterModel {
             DoubleConsumer progress) {
 
         log.accept(String.format("Pooling %d image(s)…", images.size()));
-        PooledData pooled = poolAllCells(project, images, markers, classFilter, normalizer, token, log);
+        PooledData pooled =
+                poolAllCells(project, images, markers, classFilter, normalizer, openData, openName, token, log);
 
         if (pooled.cancelled() || (token != null && token.isCancelled())) {
             log.accept("Cancelled during pooling — no images written.");
