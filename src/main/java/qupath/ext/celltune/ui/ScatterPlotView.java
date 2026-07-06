@@ -1820,6 +1820,10 @@ public class ScatterPlotView {
         final double[] mean = fitMean;
         final double[] sd = fitSd;
         final double[][] cents = fitCentroids;
+        // Clustering-space centroids (PC space when PCA was applied, else == cents) for the
+        // k-means overlay, so single-image assignment matches the previewed partition (same
+        // fix as the cohort paths). fitPcaProjector below projects the query into that space.
+        final double[][] assignCents = fitAssignCentroids;
         final double[][] leidenRef = fitLeidenReference;
         final int[] leidenRefLabels = fitLeidenReferenceLabels;
         final int nClusters = fitNClusters;
@@ -1868,9 +1872,14 @@ public class ScatterPlotView {
                                             LEIDEN_GRAPH_K,
                                             Math.max(1, nClusters));
                                 } else {
+                                    // Project the query rows into the same space the k-means
+                                    // partition lives in (identity when the fit did not apply PCA),
+                                    // then match against the clustering-space centroids — so the
+                                    // overlay agrees with the previewed partition under PCA.
+                                    double[][] zProjected = pcaProjector != null ? pcaProjector.apply(z) : z;
                                     labels = new int[n];
                                     for (int i = 0; i < n; i++) {
-                                        labels[i] = nearestCentroidIndex(z[i], cents);
+                                        labels[i] = nearestCentroidIndex(zProjected[i], assignCents);
                                     }
                                 }
 
