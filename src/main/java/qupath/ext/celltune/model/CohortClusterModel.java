@@ -1048,8 +1048,7 @@ public final class CohortClusterModel {
         }
         if (pooled.rows().length == 0) {
             log.accept("No matching cells found across the selected images — nothing to cluster.");
-            return new AllCellsResult(
-                    0, -1.0, 0, List.of(), List.copyOf(images), false, false, null, null, null, null);
+            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, false, null, null, null, null);
         }
 
         log.accept("Building kNN graph…");
@@ -1060,8 +1059,7 @@ public final class CohortClusterModel {
             logger.warn("All-cells ANN recall gate failed: {}", clusterOutcome.abortMessage());
             log.accept("ANN recall gate failed — aborting, no Cluster measurement written: "
                     + clusterOutcome.abortMessage());
-            return new AllCellsResult(
-                    0, -1.0, 0, List.of(), List.copyOf(images), true, false, null, null, null, null);
+            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), true, false, null, null, null, null);
         }
 
         int[] labels = clusterOutcome.result().labels();

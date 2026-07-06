@@ -12,12 +12,15 @@ import java.util.Random;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import qupath.ext.celltune.model.CohortClusterModel.CancellationToken;
+import qupath.ext.celltune.model.CohortClusterModel.CentroidsAndCounts;
 import qupath.ext.celltune.model.CohortClusterModel.ClusterOutcome;
+import qupath.ext.celltune.model.CohortClusterModel.MeasurementAssignment;
 import qupath.ext.celltune.model.CohortClusterModel.Pass2Outcome;
 import qupath.ext.celltune.model.CohortClusterModel.UuidKey;
 import qupath.ext.celltune.model.LeidenModel.LeidenResult;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
+import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.roi.ROIs;
@@ -265,6 +268,104 @@ class CohortClusterModelTest {
         assertFalse(outcome.aborted());
         assertSame(fakeResult, outcome.result());
         assertNull(outcome.abortMessage());
+    }
+
+    // ── centroidsAndCounts (per-cluster centroid + pooled count over labels) ────
+
+    @Test
+    void centroidsAndCountsComputesMeanZScoredRowPerCluster() {
+        // 3 markers, 2 clusters: cluster 0 = rows 0,1; cluster 1 = rows 2,3,4.
+        double[][] rows = {
+            {1.0, 2.0, 3.0},
+            {3.0, 4.0, 5.0},
+            {10.0, 0.0, -10.0},
+            {20.0, 0.0, -20.0},
+            {30.0, 0.0, -30.0},
+        };
+        int[] labels = {0, 0, 1, 1, 1};
+
+        CentroidsAndCounts result = CohortClusterModel.centroidsAndCounts(rows, labels, 2, 3);
+
+        assertArrayEquals(new int[] {2, 3}, result.counts());
+        assertArrayEquals(new double[] {2.0, 3.0, 4.0}, result.centroids()[0], 1e-9);
+        assertArrayEquals(new double[] {20.0, 0.0, -20.0}, result.centroids()[1], 1e-9);
+    }
+
+    @Test
+    void centroidsAndCountsLeavesEmptyClustersAtZero() {
+        double[][] rows = {{5.0, 5.0}};
+        int[] labels = {0};
+
+        // nClusters=3 but only cluster 0 has any pooled row -- clusters 1/2 stay all-zero.
+        CentroidsAndCounts result = CohortClusterModel.centroidsAndCounts(rows, labels, 3, 2);
+
+        assertArrayEquals(new int[] {1, 0, 0}, result.counts());
+        assertArrayEquals(new double[] {5.0, 5.0}, result.centroids()[0], 1e-9);
+        assertArrayEquals(new double[] {0.0, 0.0}, result.centroids()[1], 1e-9);
+        assertArrayEquals(new double[] {0.0, 0.0}, result.centroids()[2], 1e-9);
+    }
+
+    @Test
+    void centroidsAndCountsSkipsOutOfRangeLabelsDefensively() {
+        double[][] rows = {{1.0}, {2.0}, {3.0}};
+        // Label -1 (unclustered sentinel) and an out-of-range label must never crash or
+        // pollute a real cluster's centroid.
+        int[] labels = {-1, 0, 99};
+
+        CentroidsAndCounts result = CohortClusterModel.centroidsAndCounts(rows, labels, 1, 1);
+
+        assertArrayEquals(new int[] {1}, result.counts());
+        assertArrayEquals(new double[] {2.0}, result.centroids()[0], 1e-9);
+    }
+
+    // ── classForMeasurementValue / assignmentsFromMeasurement (all-cells assign) ─
+
+    @Test
+    void classForMeasurementValueDecodesOneBasedWrittenValue() {
+        PathClass tumor = PathClass.fromString("Tumor");
+        PathClass stroma = PathClass.fromString("Stroma");
+        Map<Integer, PathClass> mapping = Map.of(0, tumor, 2, stroma);
+
+        // Written value is 1-based (label + 1): cluster 0 -> value 1.0, cluster 2 -> value 3.0.
+        assertEquals(tumor, CohortClusterModel.classForMeasurementValue(1.0, mapping));
+        assertEquals(stroma, CohortClusterModel.classForMeasurementValue(3.0, mapping));
+    }
+
+    @Test
+    void classForMeasurementValueReturnsNullForNaNUnclusteredOrUnmapped() {
+        PathClass tumor = PathClass.fromString("Tumor");
+        Map<Integer, PathClass> mapping = Map.of(0, tumor);
+
+        assertNull(CohortClusterModel.classForMeasurementValue(Double.NaN, mapping), "missing measurement -> no class");
+        // -1 (unclustered sentinel) decodes to label -2, never a real mapping key.
+        assertNull(CohortClusterModel.classForMeasurementValue(-1.0, mapping), "unclustered cell -> no class");
+        // Cluster 1 exists in the written data but the user chose "skip" for it (absent from mapping).
+        assertNull(CohortClusterModel.classForMeasurementValue(2.0, mapping), "unmapped cluster -> no class (skip)");
+    }
+
+    @Test
+    void assignmentsFromMeasurementMatchesOnlyMappedWrittenClusters() {
+        PathClass tumor = PathClass.fromString("Tumor");
+        PathClass stroma = PathClass.fromString("Stroma");
+        Map<Integer, PathClass> mapping = Map.of(0, tumor, 1, stroma);
+
+        PathObject clusterZero = detectionAt(0, 0); // will carry written value 1.0 -> cluster 0 -> tumor
+        PathObject clusterOne = detectionAt(10, 0); // written value 2.0 -> cluster 1 -> stroma
+        PathObject skipped = detectionAt(20, 0); // written value 3.0 -> cluster 2 -> not in mapping, skipped
+        PathObject unclustered = detectionAt(30, 0); // written value -1.0 -> unclustered, skipped
+        PathObject noMeasurement = detectionAt(40, 0); // never written, NaN, skipped
+
+        clusterZero.getMeasurementList().put(CohortClusterModel.CLUSTER_MEASUREMENT, 1.0);
+        clusterOne.getMeasurementList().put(CohortClusterModel.CLUSTER_MEASUREMENT, 2.0);
+        skipped.getMeasurementList().put(CohortClusterModel.CLUSTER_MEASUREMENT, 3.0);
+        unclustered.getMeasurementList().put(CohortClusterModel.CLUSTER_MEASUREMENT, -1.0);
+
+        List<PathObject> cells = List.of(clusterZero, clusterOne, skipped, unclustered, noMeasurement);
+        MeasurementAssignment assignment = CohortClusterModel.assignmentsFromMeasurement(cells, mapping);
+
+        assertEquals(2, assignment.objects().size(), "only the two mapped, clustered cells are matched");
+        assertEquals(List.of(clusterZero, clusterOne), assignment.objects());
+        assertEquals(List.of(tumor, stroma), assignment.classes());
     }
 
     // ── nearestCentroid ──────────────────────────────────────────────────────
