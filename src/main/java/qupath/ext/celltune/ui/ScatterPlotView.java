@@ -167,6 +167,18 @@ public class ScatterPlotView {
     // (which uses fitCentroids/nearestCentroid instead) or before any Leiden fit.
     private double[][] fitLeidenReference;
     private int[] fitLeidenReferenceLabels;
+    // Per-cluster pooled cell counts from the last completed all-cells write
+    // (CohortClusterModel.AllCellsResult.clusterCounts()), overriding clusterCounts(k)'s
+    // preview-row-derived counts so the Assign dialog shows the all-cells cluster sizes
+    // (bug fix, LEI-09 companion). Null before any all-cells write, or after the next
+    // preview Recompute clears it (see clearFit()).
+    private int[] fitAllCellsCounts;
+    // True after a successful (non-aborted, non-cancelled) "Cluster all cells" write, until
+    // the next preview Recompute. While true, cluster->class assignment in PROJECT scope must
+    // read each cell's WRITTEN Cluster measurement (CohortClusterModel.assignAcrossProjectByMeasurement)
+    // instead of re-transferring against the preview Leiden reference, which no longer matches
+    // what was actually persisted to the cohort.
+    private boolean allCellsWriteActive;
 
     // ── Project scope ──────────────────────────────────────────────────────────
     private List<String> projectImages = new ArrayList<>();
@@ -805,6 +817,8 @@ public class ScatterPlotView {
         fitNClusters = 0;
         fitLeidenReference = null;
         fitLeidenReferenceLabels = null;
+        fitAllCellsCounts = null;
+        allCellsWriteActive = false;
         clusterMeasurementStale = true;
     }
 
@@ -1057,6 +1071,12 @@ public class ScatterPlotView {
                                     fitNClusters = fNClusters;
                                     fitLeidenReference = fLeidenRef;
                                     fitLeidenReferenceLabels = fLeidenRefLabels;
+                                    // A new preview fit invalidates any retained all-cells state (LEI-09
+                                    // companion fix): the Assign dialog must go back to showing this
+                                    // preview's counts/heatmap, and cluster->class assignment must go back
+                                    // to the preview-reference transfer path.
+                                    fitAllCellsCounts = null;
+                                    allCellsWriteActive = false;
                                     clusterMeasurementStale =
                                             true; // new fit — any written Cluster measurement is now stale
                                     progress.setVisible(false);
@@ -1258,7 +1278,14 @@ public class ScatterPlotView {
         }
 
         if (scope == Scope.PROJECT) {
-            assignAcrossProject(mapping);
+            // Bug fix: after a completed "Cluster all cells" write, the persisted Cluster
+            // measurement — not the preview Leiden reference (which no longer matches what
+            // was actually written) — is the source of truth for cluster identity.
+            if (allCellsWriteActive) {
+                assignAcrossProjectByMeasurement(mapping);
+            } else {
+                assignAcrossProject(mapping);
+            }
             return;
         }
 
@@ -1398,6 +1425,98 @@ public class ScatterPlotView {
                             }
                         },
                         "CellTune-CohortAssign")
+                .start();
+    }
+
+    /**
+     * Streams the cluster→class mapping across the selected project images by reading
+     * each cell's already-written {@link #CLUSTER_MEASUREMENT} value
+     * ({@link CohortClusterModel#assignAcrossProjectByMeasurement}) instead of
+     * re-transferring against a preview fit — the correct path when
+     * {@link #allCellsWriteActive} is true (the current cluster state came from a
+     * completed "Cluster all cells" write, so the persisted measurement is the
+     * source of truth, not any in-memory preview reference). Mirrors
+     * {@link #assignAcrossProject}'s confirm/thread/progress/save shape.
+     */
+    private void assignAcrossProjectByMeasurement(Map<Integer, PathClass> mapping) {
+        final Project<BufferedImage> project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage("CellTune", "No project is open.");
+            return;
+        }
+        boolean ok = Dialogs.showConfirmDialog(
+                "Assign across project",
+                String.format(
+                        "Assign %d cluster(s) as classifications to every matching cell across %d "
+                                + "image(s), using the written all-cells \"%s\" measurement? Each image is "
+                                + "saved. This replaces existing classes on the assigned cells.",
+                        mapping.size(), projectImages.size(), CLUSTER_MEASUREMENT));
+        if (!ok) {
+            return;
+        }
+
+        var available = qupath.getAvailablePathClasses();
+        for (PathClass pc : mapping.values()) {
+            if (pc != null && !available.contains(pc)) {
+                available.add(pc);
+            }
+        }
+
+        final List<String> images = new ArrayList<>(projectImages);
+
+        applying = true;
+        setControlsDisabled(true);
+        progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+        progress.setVisible(true);
+        statusLabel.setText("Assigning classifications across " + images.size() + " image(s)…");
+
+        new Thread(
+                        () -> {
+                            try {
+                                ImageData<BufferedImage> openData = qupath.getImageData();
+                                String openName = null;
+                                if (openData != null) {
+                                    ProjectImageEntry<BufferedImage> openEntry = project.getEntry(openData);
+                                    if (openEntry != null) {
+                                        openName = openEntry.getImageName();
+                                    }
+                                }
+                                long total = CohortClusterModel.assignAcrossProjectByMeasurement(
+                                        project,
+                                        images,
+                                        mapping,
+                                        openData,
+                                        openName,
+                                        msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                        frac -> Platform.runLater(() -> progress.setProgress(frac)));
+                                final long fTotal = total;
+                                Platform.runLater(() -> {
+                                    QuPathViewer viewer = qupath.getViewer();
+                                    if (viewer != null) {
+                                        viewer.repaint();
+                                    }
+                                    statusLabel.setText(String.format(
+                                            "Done — assigned %,d cell(s) across %d image(s) (from written %s "
+                                                    + "measurement).",
+                                            fTotal, images.size(), CLUSTER_MEASUREMENT));
+                                });
+                                logger.info(
+                                        "All-cells cohort assign (by measurement) wrote {} cells across {} images",
+                                        fTotal,
+                                        images.size());
+                            } catch (Throwable t) {
+                                logger.error("Project assignment (by measurement) failed", t);
+                                Platform.runLater(() -> statusLabel.setText("Assign failed: " + t.getMessage()));
+                            } finally {
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                                    setControlsDisabled(false);
+                                    applying = false;
+                                });
+                            }
+                        },
+                        "CellTune-CohortAssignMeasurement")
                 .start();
     }
 
@@ -1764,6 +1883,16 @@ public class ScatterPlotView {
      * Adds a soft-ceiling confirm (D-10), per-phase progress + a mid-run Cancel (D-11/D-12), and
      * re-syncs the legend to the FINAL all-cells cluster count (LEI-09), not the preview
      * subsample's {@link #fitNClusters}.
+     * <p>
+     * Bug fix: on a successful (non-cancelled, non-aborted) write, this installs the FULL
+     * all-cells fit-state (not just the on-slide overlay via {@link #activateClusterMapper}) —
+     * {@link #fitNClusters}/{@link #fitCentroids}/{@link #fitAllCellsCounts}/{@link #fitMarkers}/
+     * {@link #fitMean}/{@link #fitSd} — and sets {@link #allCellsWriteActive}, so the scatter
+     * legend ({@code plot.redraw()}) and the "Assign Cohort Clusters to Classes" dialog
+     * ({@link #applyClustersToClasses}, via {@link #clusterCounts}) both reflect the all-cells
+     * partition, and subsequent cluster→class assignment reads the WRITTEN measurement
+     * ({@link #assignAcrossProjectByMeasurement}) instead of re-transferring against the now-stale
+     * preview Leiden reference.
      */
     private void writeClusterAllCellsAcrossProject() {
         final Project<BufferedImage> project = qupath.getProject();
@@ -1871,8 +2000,29 @@ public class ScatterPlotView {
                                         result.imagesNotWritten().size();
                                 final boolean fCancelled = result.cancelled();
                                 final double fRecall = result.recall();
+                                final double[][] fCentroids = result.centroids();
+                                final int[] fClusterCounts = result.clusterCounts();
+                                final double[] fPooledMean = result.mean();
+                                final double[] fPooledSd = result.sd();
                                 Platform.runLater(() -> {
                                     if (!fCancelled) {
+                                        // Bug fix (LEI-09 re-sync gap): install the ALL-CELLS fit-state —
+                                        // not just re-color the on-slide overlay — so the scatter legend
+                                        // AND the "Assign Cohort Clusters to Classes" dialog both reflect
+                                        // the final all-cells cluster count/heatmap, not the preview
+                                        // subsample's last Recompute fit.
+                                        fitNClusters = fNClusters;
+                                        fitCentroids = fCentroids;
+                                        fitAllCellsCounts = fClusterCounts;
+                                        fitMarkers = markers;
+                                        fitMean = fPooledMean;
+                                        fitSd = fPooledSd;
+                                        // Not a preview Leiden kNN-transfer fit — cluster->class assignment
+                                        // must read the written measurement instead (see allCellsWriteActive).
+                                        fitLeidenReference = null;
+                                        fitLeidenReferenceLabels = null;
+                                        allCellsWriteActive = true;
+
                                         QuPathViewer viewer = qupath.getViewer();
                                         if (viewer != null && viewer.getImageData() != null) {
                                             // LEI-09: re-sync to the FINAL all-cells cluster count, not
@@ -1881,6 +2031,10 @@ public class ScatterPlotView {
                                             clusterOverlayActive = true;
                                         }
                                         clusterMeasurementStale = false;
+                                        // Rebuild the scatter legend now that fitNClusters/fitCentroids
+                                        // reflect the all-cells partition (PlotModel.clusterCount() reads
+                                        // fitNClusters — redraw so the legend picks it up immediately).
+                                        plot.redraw();
                                     }
                                     // D-09: report the measured ANN recall when the driver exposes one;
                                     // omit the number (rather than showing a fabricated value) when it
@@ -2373,6 +2527,12 @@ public class ScatterPlotView {
 
     /** Cells per cluster (length k), or null if no rows are clustered yet. */
     private int[] clusterCounts(int k) {
+        // After a completed all-cells write, show the all-cells partition's own pooled
+        // counts (not the preview subsample's cluster[] tally) so the Assign dialog's
+        // cell counts match what was actually written to the cohort.
+        if (fitAllCellsCounts != null && fitAllCellsCounts.length == k) {
+            return fitAllCellsCounts;
+        }
         int[] counts = new int[k];
         boolean any = false;
         for (int i = 0; i < nRows; i++) {
