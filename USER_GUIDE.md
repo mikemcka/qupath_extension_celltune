@@ -891,6 +891,14 @@ markers.
 > cell — bounding fit cost/memory independent of total cell count. When applied,
 > the status bar/log reports `PCA: {p} → {nComp} comps, {variance}% variance`.
 
+> **Citing.** Graph-based clustering here uses the **Leiden algorithm** (Traag,
+> Waltman & van Eck, *Sci. Rep.* 2019) and mirrors the **scanpy** scale → PCA →
+> neighbours → Leiden recipe (Wolf, Angerer & Theis, *Genome Biol.* 2018); the
+> scalable kNN graph uses **HNSW** (Malkov & Yashunin, *IEEE TPAMI* 2020). If
+> graph-based clustering is central to your analysis, please cite these — full
+> citations and the bundled-library licenses (CWTS `networkanalysis`, jelmerk
+> `hnswlib-core`) are in the [README acknowledgements](README.md#acknowledgements).
+
 ### 11.6 Clustering method: k-means vs Leiden
 
 The **Method** selector (§11.1) switches the clustering algorithm; everything
