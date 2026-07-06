@@ -11,6 +11,7 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
+import java.util.function.UnaryOperator;
 import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -253,11 +254,17 @@ public final class CohortClusterModel {
      * contract) so callers can pick either assign path with an otherwise identical
      * call shape.
      *
-     * @param referenceRows   labelled reference: the z-scored, Leiden-labelled
-     *                        pooled sample rows (same column order as {@code markers})
+     * @param referenceRows   labelled reference: the fitted sample's rows in the SAME space
+     *                        Leiden was clustered in — the PC-reduced matrix when the fit
+     *                        applied PCA reduction (Task 4/Requirement 3), else the z-scored
+     *                        marker matrix (same column order as {@code markers})
      * @param referenceLabels Leiden community label per reference row
      * @param transferK       number of nearest reference rows to vote over
      * @param nClusters       number of distinct Leiden labels (for the vote histogram)
+     * @param queryProjector  projects each image's per-cell z-scored marker rows into the SAME
+     *                        space {@code referenceRows} lives in before the kNN vote — the
+     *                        fit's PCA projector when PCA was applied, or {@code null}/identity
+     *                        when it was not (so query and reference always share one basis)
      */
     public static long assignAcrossProjectLeiden(
             Project<BufferedImage> project,
@@ -269,6 +276,7 @@ public final class CohortClusterModel {
             int[] referenceLabels,
             int transferK,
             int nClusters,
+            UnaryOperator<double[][]> queryProjector,
             Map<Integer, PathClass> mapping,
             String classFilter,
             FeatureNormalizer normalizer,
@@ -276,6 +284,7 @@ public final class CohortClusterModel {
             String openName,
             Consumer<String> log,
             DoubleConsumer progress) {
+        UnaryOperator<double[][]> proj = queryProjector != null ? queryProjector : UnaryOperator.identity();
         return assignAcrossProject(
                 project,
                 images,
@@ -289,7 +298,8 @@ public final class CohortClusterModel {
                 openName,
                 log,
                 progress,
-                rows -> LeidenModel.transferLabels(rows, referenceRows, referenceLabels, transferK, nClusters));
+                rows -> LeidenModel.transferLabels(
+                        proj.apply(rows), referenceRows, referenceLabels, transferK, nClusters));
     }
 
     /**
@@ -339,6 +349,12 @@ public final class CohortClusterModel {
      * Leiden variant of {@link #writeClusterAcrossProject}: labels each cell by kNN
      * transfer against the labelled pooled sample (mirrors
      * {@link #assignAcrossProjectLeiden}) and writes the {@link #CLUSTER_MEASUREMENT}.
+     *
+     * @param referenceRows  the fitted sample's rows in the SAME space Leiden was clustered
+     *                       in (PC-reduced when PCA was applied at fit time — see
+     *                       {@link #assignAcrossProjectLeiden})
+     * @param queryProjector projects each image's z-scored marker rows into that same space
+     *                       before the kNN vote ({@code null}/identity when PCA was not applied)
      */
     public static long writeClusterAcrossProjectLeiden(
             Project<BufferedImage> project,
@@ -350,12 +366,14 @@ public final class CohortClusterModel {
             int[] referenceLabels,
             int transferK,
             int nClusters,
+            UnaryOperator<double[][]> queryProjector,
             String classFilter,
             FeatureNormalizer normalizer,
             ImageData<BufferedImage> openData,
             String openName,
             Consumer<String> log,
             DoubleConsumer progress) {
+        UnaryOperator<double[][]> proj = queryProjector != null ? queryProjector : UnaryOperator.identity();
         return writeClusterAcrossProject(
                 project,
                 images,
@@ -368,7 +386,8 @@ public final class CohortClusterModel {
                 openName,
                 log,
                 progress,
-                rows -> LeidenModel.transferLabels(rows, referenceRows, referenceLabels, transferK, nClusters));
+                rows -> LeidenModel.transferLabels(
+                        proj.apply(rows), referenceRows, referenceLabels, transferK, nClusters));
     }
 
     /**
@@ -1010,6 +1029,15 @@ public final class CohortClusterModel {
      * @param seed         RNG seed (drives both the ANN build and Leiden)
      * @param reproducible when true, the ANN index build is best-effort
      *                     deterministic (see {@code HnswKnnIndex})
+     * @param pcaEnabled   when true (and the pooled marker-column count exceeds
+     *                     {@link ScatterMath#PCA_DEFAULT_THRESHOLD}), the pooled z-scored
+     *                     matrix is PCA-reduced (fit on a bounded seeded subsample when the
+     *                     pool is large, applied to every pooled row) BEFORE the single Leiden
+     *                     partition is run — the all-cells analogue of the preview fit's
+     *                     conditional PCA (Requirement 4). Per-cluster centroids returned on
+     *                     {@link AllCellsResult} are always computed in the ORIGINAL pooled
+     *                     z-scored MARKER space, never the PCA space
+     * @param pcaMaxComponents PCA components to keep when {@code pcaEnabled} (ignored otherwise)
      * @param classFilter  when non-blank, only cells whose current classification
      *                     contains it (case-insensitive) are pooled/labelled
      * @param normalizer   feature normalizer to apply during extraction (nullable)
@@ -1031,6 +1059,8 @@ public final class CohortClusterModel {
             int randomStarts,
             long seed,
             boolean reproducible,
+            boolean pcaEnabled,
+            int pcaMaxComponents,
             String classFilter,
             FeatureNormalizer normalizer,
             ImageData<BufferedImage> openData,
@@ -1051,10 +1081,29 @@ public final class CohortClusterModel {
             return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, false, null, null, null, null);
         }
 
+        // Conditional PCA (Requirement 4/5): fit on a bounded seeded subsample when the pool
+        // exceeds ScatterMath's fit-sample cap, apply the fitted projection to every pooled row.
+        // clusterViaAnn runs on the (possibly reduced) matrix; centroidsAndCounts below always
+        // reads pooled.rows() (the ORIGINAL marker-space z-scored matrix), never the reduced one.
+        ScatterMath.PcaReduction pcaReduction = ScatterMath.pcaReduce(
+                pooled.rows(),
+                pcaEnabled ? pcaMaxComponents : 0,
+                ScatterMath.PCA_DEFAULT_THRESHOLD,
+                ScatterMath.PCA_DEFAULT_FIT_SAMPLE_CAP,
+                ScatterMath.PCA_DEFAULT_SEED);
+        if (pcaReduction.applied()) {
+            String msg = String.format(
+                    "PCA: %d → %d comps, %.1f%% variance",
+                    pooled.rows()[0].length, pcaReduction.nComponents(), pcaReduction.cumulativeVariance() * 100);
+            logger.info(msg);
+            log.accept(msg);
+        }
+        double[][] clusterMatrix = pcaReduction.reduced();
+
         log.accept("Building kNN graph…");
         log.accept("Running Leiden…");
         ClusterOutcome clusterOutcome = clusterOrAbort(
-                () -> LeidenModel.clusterViaAnn(pooled.rows(), graphK, resolution, randomStarts, seed, reproducible));
+                () -> LeidenModel.clusterViaAnn(clusterMatrix, graphK, resolution, randomStarts, seed, reproducible));
         if (clusterOutcome.aborted()) {
             logger.warn("All-cells ANN recall gate failed: {}", clusterOutcome.abortMessage());
             log.accept("ANN recall gate failed — aborting, no Cluster measurement written: "
@@ -1065,6 +1114,8 @@ public final class CohortClusterModel {
         int[] labels = clusterOutcome.result().labels();
         int nClusters = clusterOutcome.result().nClusters();
         int nMarkers = markers.size();
+        // Marker space, NOT PCA space (Requirement 2/4) — pooled.rows() is the original
+        // z-scored marker matrix regardless of whether clusterMatrix was PCA-reduced.
         CentroidsAndCounts centroidsAndCounts = centroidsAndCounts(pooled.rows(), labels, nClusters, nMarkers);
         boolean classFilterActive = classFilter != null && !classFilter.isBlank();
         String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
