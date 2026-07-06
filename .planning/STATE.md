@@ -6,7 +6,7 @@ status: unknown
 last_updated: "2026-07-06T03:08:00.821Z"
 progress:
   total_phases: 11
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 23
   completed_plans: 20
   percent: 87
@@ -16,11 +16,11 @@ progress:
 
 ## Current Position
 
-- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 15 — all 5 plans executed, awaiting phase verification)
+- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 15 — COMPLETE and verified)
 - Phase: 15 (all-cells true-scanpy Leiden) SPEC + CONTEXT + RESEARCH + VALIDATION + 5 PLANs filed and checker-passed; 15-01, 15-02, 15-03, 15-04, 15-05 executed; 14 code complete (transfer path); 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
 - Plan: 15-05 (ScatterPlotView UI wiring: single-image HNSW routing, cohort-mode radio pair, all-cells write action, docs) COMPLETE — single-image/preview Leiden fit now routes through LeidenModel.clusterViaAnn (D-06); project-scope "Cluster all cells" (default) / "Transfer from sample" radio pair wired to CohortClusterModel.writeClusterAllCells with soft-ceiling confirm, per-phase progress, Cancel, and a graceful (non-fabricated) recall status line; post-checkpoint bug fix re-syncs the scatter legend, overlay, and Assign-Clusters dialog to the final all-cells partition (not the preview subsample) via a new fit-state install + assignAcrossProjectByMeasurement; USER_GUIDE/CLAUDE.md document all-cells mode + the three scanpy-fidelity gaps. Human-verify checkpoint approved by the user after re-verifying the full GUI flow, including a full multi-image project. Phase 15 now has all 5 plans complete; phase verification (VERIFICATION.md) and phase-complete marking are the next orchestrator step, not yet done.
-- Status: Phase 15 plans complete — 15-05-SUMMARY.md filed (3 tasks + checkpoint + 1 post-checkpoint bug fix, 6 commits, full test suite + spotlessCheck green, human-verify approved); ready for phase-level verification of Phase 15
-- Last activity: 2026-07-06 - executed Phase 15 Plan 05: routed single-image Leiden through HNSW, wired the all-cells cohort-mode radio pair + write action (soft ceiling/progress/cancel/recall status), fixed a post-checkpoint legend/Assign-dialog re-sync bug found during manual verification, documented all-cells mode + fidelity gaps, and got the human-verify checkpoint approved (incl. full multi-image project)
+- Status: Phase 15 COMPLETE — 15-VERIFICATION.md passed (24/24 must-haves; LEI-06..10 all satisfied and marked Complete in REQUIREMENTS.md). One accepted non-blocking deviation: D-09 recall status line is graceful/non-fabricated because clusterViaAnn does not surface its internal recall (AllCellsResult.recall = -1.0 sentinel); the recall gate itself is fully implemented + tested. Conditional PCA (ScatterMath.pcaReduce) was added inline afterward and is to be recorded as Phase 16.
+- Last activity: 2026-07-06 - Phase 15 verified and marked complete (all 5 plans + human-verify approved on a full multi-image project); then added conditional PCA before the clustering kNN graph (separate inline work), scanpy/Leiden/HNSW acknowledgements, and a Leiden User-Guide figure
 
 ## Carry-Forward Context
 
