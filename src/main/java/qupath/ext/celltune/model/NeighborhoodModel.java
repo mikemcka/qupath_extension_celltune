@@ -8,6 +8,7 @@ import org.locationtech.jts.index.strtree.ItemBoundable;
 import org.locationtech.jts.index.strtree.ItemDistance;
 import org.locationtech.jts.index.strtree.STRtree;
 import smile.clustering.KMeans;
+import smile.math.MathEx;
 
 /**
  * Pure numerical core of the cellular-neighborhood (CN) analysis — the
@@ -260,6 +261,14 @@ public final class NeighborhoodModel {
     public static final int DEFAULT_N_INIT = 10;
 
     /**
+     * Fixed seed for the k-means restarts, set via {@link MathEx#setSeed(long)} once
+     * before the restart loop — mirrors {@code ScatterPlotView}'s {@code KMEANS_SEED}
+     * so cellular-neighborhood clustering is reproducible run-to-run on the same
+     * composition matrix, the same way the scatter-plot's k-means path already is.
+     */
+    public static final long SEED = 42L;
+
+    /**
      * Cluster the (optionally pre-standardized) composition rows with k-means,
      * reusing the Smile {@code KMeans.fit} + per-cluster-mean recompute pattern
      * from {@code ScatterPlotView}, with {@link #DEFAULT_N_INIT} restarts. See
@@ -278,12 +287,15 @@ public final class NeighborhoodModel {
      * every row is assigned cluster 0. Centroids are recomputed as the per-cluster
      * means of the fed rows (empty clusters stay all-zero).
      *
-     * <p>Each restart draws a fresh k-means++ initialization from Smile's
-     * per-thread RNG stream (the stream advances between {@code fit} calls rather
-     * than re-seeding to a constant), so {@code nInit > 1} genuinely explores
-     * different seeds and picks the tightest partition. Because that stream is
-     * seeded deterministically, results are reproducible run-to-run on a given
-     * thread. {@code nInit} is clamped to at least 1.
+     * <p>{@link MathEx#setSeed(long)} is called once with {@link #SEED} immediately
+     * before the restart loop (mirroring {@code ScatterPlotView}'s reproducible
+     * k-means path), so Smile's k-means++ initialization draws from a deterministic
+     * seeded stream instead of an unseeded one — repeated runs over the same {@code
+     * composition} matrix therefore produce IDENTICAL per-cell labels, not merely
+     * "reproducible on a given thread" by accident. {@code nInit > 1} still
+     * genuinely explores {@code nInit} distinct restarts (the seeded stream advances
+     * between {@code fit} calls) and keeps the tightest partition. {@code nInit} is
+     * clamped to at least 1.
      *
      * <p>Note: raw label ids are still not meaningful across runs (cluster 3 in
      * one fit need not be cluster 3 in another); tests assert blob recovery by
@@ -296,6 +308,7 @@ public final class NeighborhoodModel {
         int restarts = Math.max(1, nInit);
         int[] labels = new int[n];
         if (n >= 2 && kEff >= 2) {
+            MathEx.setSeed(SEED);
             KMeans best = KMeans.fit(composition, kEff);
             for (int r = 1; r < restarts; r++) {
                 KMeans cand = KMeans.fit(composition, kEff);

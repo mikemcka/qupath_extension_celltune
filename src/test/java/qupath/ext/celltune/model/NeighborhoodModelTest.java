@@ -1,5 +1,6 @@
 package qupath.ext.celltune.model;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -201,6 +202,31 @@ class NeighborhoodModelTest {
         assertTrue(
                 multiInertia <= singleInertia + EPS,
                 "n_init=20 (" + multiInertia + ") should not be worse than n_init=1 (" + singleInertia + ")");
+    }
+
+    @Test
+    void clusterCompositionsIsSeededAndReproducibleAcrossRuns() {
+        // NeighborhoodModel.SEED must be set once before the restart loop (mirroring
+        // ScatterPlotView's KMEANS_SEED), so two independent calls over the SAME
+        // composition matrix must yield EXACT-equality identical per-cell labels.
+        Random rng = new Random(55);
+        int n = 400;
+        int dim = 6;
+        double[][] comp = new double[n][dim];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < dim; j++) {
+                comp[i][j] = rng.nextDouble();
+            }
+        }
+
+        ClusterResult a = NeighborhoodModel.clusterCompositions(comp, 5, 8);
+        ClusterResult b = NeighborhoodModel.clusterCompositions(comp, 5, 8);
+
+        assertArrayEquals(a.labels(), b.labels(), "seeded k-means must produce identical labels run-to-run");
+        assertEquals(a.kEffective(), b.kEffective());
+        for (int c = 0; c < a.centroids().length; c++) {
+            assertArrayEqualsD(a.centroids()[c], b.centroids()[c]);
+        }
     }
 
     @Test
