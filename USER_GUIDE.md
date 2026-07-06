@@ -852,7 +852,8 @@ markers.
 
 > **Fidelity vs stock scanpy.** CellTune's Leiden clustering (both cohort modes
 > and the single-image path) is a close, but not bit-identical, match to running
-> `sc.tl.leiden` in Python. Three documented gaps:
+> `sc.tl.leiden` in Python. Two remaining documented gaps (a third — PCA — is now
+> implemented, see below):
 >
 > 1. **Quality function** — the bundled CWTS Leiden library optimises the
 >    **Constant Potts Model (CPM)**, not scanpy's default **modularity**
@@ -862,15 +863,33 @@ markers.
 > 2. **Edge weighting** — CellTune weights the kNN graph by **Jaccard
 >    similarity of shared nearest neighbours (SNN)**, not scanpy's **UMAP
 >    fuzzy-simplicial-set connectivities**.
-> 3. **No PCA** — CellTune clusters directly on z-scored marker measurements;
->    there is no PCA dimensionality-reduction step before building the
->    neighbour graph (near-identity for a typical ~20-marker panel; scanpy
->    workflows usually reduce to ~50 principal components first, which matters
->    more for higher-dimensional data like scRNA-seq gene panels).
 >
-> None of these are expected to change population-level conclusions for
-> multiplex-imaging marker panels, but an external `sc.tl.leiden` run on the same
-> data is not guaranteed to reproduce identical cluster boundaries.
+> Neither is expected to change population-level conclusions for multiplex-
+> imaging marker panels, but an external `sc.tl.leiden` run on the same data is
+> not guaranteed to reproduce identical cluster boundaries.
+
+> **PCA dimensionality reduction (scanpy `scale → PCA → neighbors` recipe).**
+> Both cohort modes and the single-image path apply a conditional PCA reduction
+> to the z-scored marker matrix *before* building the clustering kNN graph (both
+> k-means and Leiden) — a **"Reduce dims (PCA)"** checkbox (on by default) and a
+> components spinner (default 50) sit next to the Resolution/k controls. Below
+> ~50 active marker columns this is a no-op (a small, curated panel is already
+> low-dimensional — projecting onto ≥ p components is just a lossless rotation),
+> preserving the exact prior small-panel behaviour. Above that threshold — real
+> projects can carry hundreds to 1000+ per-cell measurements (each marker × mean/
+> median/percentile × nucleus/cytoplasm/membrane) — unreduced Euclidean kNN both
+> lets whichever marker happens to have the most measurement columns dominate
+> the distance, and suffers high-dimensional distance concentration; PCA fixes
+> both. The reduction uses the same exact (deterministic, non-randomized) Smile
+> `PCA` eigendecomposition already used for the 2D display embedding, so the
+> reproducible-seed clustering path stays bit-stable. Per-cluster centroids (the
+> Assign-dialog heatmap) and the interpretive marker view are always computed in
+> the **original marker space**, never the PCA space — only the neighbour graph
+> itself is built on the reduced matrix. On the all-cells cohort path, the PCA
+> projection is **fit on a bounded seeded subsample** (like the ANN recall gate's
+> sampling) when the pooled cohort is very large, then applied to every pooled
+> cell — bounding fit cost/memory independent of total cell count. When applied,
+> the status bar/log reports `PCA: {p} → {nComp} comps, {variance}% variance`.
 
 ### 11.6 Clustering method: k-means vs Leiden
 
