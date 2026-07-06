@@ -1537,7 +1537,13 @@ public class ScatterPlotView {
         // image (persistent + saved), then overlay the open one. Current-image scope stays
         // an in-memory, single-image overlay below.
         if (scope == Scope.PROJECT) {
-            writeClusterMeasurementAcrossProject();
+            // Cohort-mode radio pair (D-04): all-cells is the true-scanpy two-pass driver;
+            // transfer is the retained Phase 14 kNN label-transfer path (unchanged dispatch).
+            if (methodCombo.getValue() == ClusterMethod.LEIDEN && cohortModeAllCells.isSelected()) {
+                writeClusterAllCellsAcrossProject();
+            } else {
+                writeClusterMeasurementAcrossProject();
+            }
             return;
         }
 
@@ -1747,6 +1753,232 @@ public class ScatterPlotView {
                         },
                         "CellTune-ClusterMeasure")
                 .start();
+    }
+
+    /**
+     * Project-scope "Cluster all cells" (D-04/D-05, LEI-06): the true-scanpy two-pass all-cells
+     * driver. Unlike {@link #writeClusterMeasurementAcrossProject}, this pools EVERY cell across
+     * the selected images (no sample cap) into ONE HNSW kNN graph and runs a SINGLE
+     * {@link LeidenModel#clusterViaAnn} partition over the whole cohort, then writes the
+     * {@link #CLUSTER_MEASUREMENT} back by UUID lookup ({@link CohortClusterModel#writeClusterAllCells}).
+     * Adds a soft-ceiling confirm (D-10), per-phase progress + a mid-run Cancel (D-11/D-12), and
+     * re-syncs the legend to the FINAL all-cells cluster count (LEI-09), not the preview
+     * subsample's {@link #fitNClusters}.
+     */
+    private void writeClusterAllCellsAcrossProject() {
+        final Project<BufferedImage> project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage("CellTune", "No project is open.");
+            return;
+        }
+        boolean ok = Dialogs.showConfirmDialog(
+                "Cluster all cells across project",
+                String.format(
+                        "Pool EVERY cell across %d image(s) into one graph, run a single Leiden partition "
+                                + "over the whole cohort, and write a non-destructive \"%s\" measurement to every "
+                                + "cell, saving each image? This clusters the full cohort (not a sample) and can "
+                                + "take a long time on large projects. Classifications are not changed.",
+                        projectImages.size(), CLUSTER_MEASUREMENT));
+        if (!ok) {
+            return;
+        }
+
+        final List<String> images = new ArrayList<>(projectImages);
+        final List<String> markers = (fitMarkers != null) ? fitMarkers : markerFeatures;
+        final double resolution = resolutionSpinner.getValue();
+        final boolean reproducible = reproducibleCheck.isSelected();
+        final int randomStarts = reproducible ? LEIDEN_REPRODUCIBLE_STARTS : LEIDEN_SINGLE_START;
+        final long seed = reproducible ? LEIDEN_SEED : System.nanoTime();
+        final String classFilter = fitClassFilter;
+        final CohortClusterModel.CancellationToken token = new CohortClusterModel.CancellationToken();
+        allCellsToken = token;
+
+        applying = true;
+        setControlsDisabled(true);
+        cancelAllCellsBtn.setDisable(false);
+        cancelAllCellsBtn.setVisible(true);
+        progress.setProgress(0);
+        progress.setVisible(true);
+        statusLabel.setText("Estimating pooled cell count across " + images.size() + " image(s)…");
+
+        new Thread(
+                        () -> {
+                            try {
+                                ImageData<BufferedImage> openData = qupath.getImageData();
+                                String openName = null;
+                                if (openData != null) {
+                                    ProjectImageEntry<BufferedImage> openEntry = project.getEntry(openData);
+                                    if (openEntry != null) {
+                                        openName = openEntry.getImageName();
+                                    }
+                                }
+
+                                // Soft ceiling (D-10): a cheap count-only pre-scan (no feature
+                                // extraction) so an accidental oversized run gets an extra confirm
+                                // before pass 1/2 even start.
+                                long estimate = estimatePooledCellCount(project, images, token);
+                                if (token.isCancelled()) {
+                                    Platform.runLater(() -> statusLabel.setText("Cancelled before pooling started."));
+                                    return;
+                                }
+                                int ceiling = ALL_CELLS_SOFT_CEILING.get();
+                                if (estimate > ceiling) {
+                                    boolean proceed = confirmOnFx(
+                                            "Large all-cells run",
+                                            String.format(
+                                                    "The selected images have an estimated %,d cells, above the "
+                                                            + "configured %,d-cell soft ceiling. This can take a "
+                                                            + "long time and use a lot of memory. Continue anyway?",
+                                                    estimate, ceiling));
+                                    if (!proceed) {
+                                        Platform.runLater(() -> statusLabel.setText(String.format(
+                                                "Cancelled — estimated %,d cells exceeds the soft ceiling.",
+                                                estimate)));
+                                        return;
+                                    }
+                                }
+
+                                CohortClusterModel.AllCellsResult result = CohortClusterModel.writeClusterAllCells(
+                                        project,
+                                        images,
+                                        markers,
+                                        LEIDEN_GRAPH_K,
+                                        resolution,
+                                        randomStarts,
+                                        seed,
+                                        reproducible,
+                                        classFilter,
+                                        normalizer,
+                                        openData,
+                                        openName,
+                                        token,
+                                        msg -> Platform.runLater(() -> statusLabel.setText(msg)),
+                                        frac -> Platform.runLater(() -> progress.setProgress(frac)));
+
+                                if (result.aborted()) {
+                                    Platform.runLater(() -> Dialogs.showErrorMessage(
+                                            "CellTune",
+                                            "ANN recall gate failed — no Cluster measurement was written. Try "
+                                                    + "more cells, different markers, or re-run. (See the status "
+                                                    + "log for the measured recall.)"));
+                                    return;
+                                }
+
+                                final int fNClusters = result.nClusters();
+                                final long fCellsWritten = result.cellsWritten();
+                                final int fWrittenCount = result.imagesWritten().size();
+                                final int fNotWrittenCount =
+                                        result.imagesNotWritten().size();
+                                final boolean fCancelled = result.cancelled();
+                                final double fRecall = result.recall();
+                                Platform.runLater(() -> {
+                                    if (!fCancelled) {
+                                        QuPathViewer viewer = qupath.getViewer();
+                                        if (viewer != null && viewer.getImageData() != null) {
+                                            // LEI-09: re-sync to the FINAL all-cells cluster count, not
+                                            // the preview subsample's fitNClusters.
+                                            activateClusterMapper(viewer, fNClusters);
+                                            clusterOverlayActive = true;
+                                        }
+                                        clusterMeasurementStale = false;
+                                    }
+                                    // D-09: report the measured ANN recall when the driver exposes one;
+                                    // omit the number (rather than showing a fabricated value) when it
+                                    // does not — see CohortClusterModel.AllCellsResult javadoc.
+                                    String recallMsg =
+                                            fRecall >= 0 ? String.format("ANN recall %.3f — passed. ", fRecall) : "";
+                                    if (fCancelled) {
+                                        statusLabel.setText(String.format(
+                                                "%sCancelled — wrote cluster to %,d cell(s) across %d image(s); "
+                                                        + "%d image(s) not written.",
+                                                recallMsg, fCellsWritten, fWrittenCount, fNotWrittenCount));
+                                    } else {
+                                        statusLabel.setText(String.format(
+                                                "%sWrote cluster to %,d cell(s) across %d image(s) (%d cluster(s)) "
+                                                        + "— saved, non-destructive.",
+                                                recallMsg, fCellsWritten, fWrittenCount, fNClusters));
+                                    }
+                                });
+                                logger.info(
+                                        "All-cells cluster measurement wrote {} cells across {} image(s) "
+                                                + "({} cluster(s), cancelled={})",
+                                        fCellsWritten,
+                                        fWrittenCount,
+                                        fNClusters,
+                                        fCancelled);
+                            } catch (Throwable t) {
+                                logger.error("All-cells cluster write failed", t);
+                                Platform.runLater(
+                                        () -> statusLabel.setText("All-cells cluster write failed: " + t.getMessage()));
+                            } finally {
+                                allCellsToken = null;
+                                Platform.runLater(() -> {
+                                    progress.setVisible(false);
+                                    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                                    setControlsDisabled(false);
+                                    cancelAllCellsBtn.setVisible(false);
+                                    applying = false;
+                                });
+                            }
+                        },
+                        "CellTune-AllCellsCluster")
+                .start();
+    }
+
+    /**
+     * Cheap count-only pre-scan (D-10, RESEARCH.md Open Question 3): sums each selected image's
+     * detection count WITHOUT extracting marker features, so the soft-ceiling estimate costs one
+     * extra full project read rather than duplicating pass 1's feature extraction. Honors
+     * cancellation between images.
+     */
+    private long estimatePooledCellCount(
+            Project<BufferedImage> project, List<String> images, CohortClusterModel.CancellationToken token) {
+        Map<String, ProjectImageEntry<BufferedImage>> byName = new java.util.LinkedHashMap<>();
+        for (ProjectImageEntry<BufferedImage> entry : project.getImageList()) {
+            byName.put(entry.getImageName(), entry);
+        }
+        long total = 0;
+        for (String name : images) {
+            if (token.isCancelled()) {
+                break;
+            }
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                continue;
+            }
+            try {
+                ImageData<BufferedImage> imageData = entry.readImageData();
+                if (imageData != null) {
+                    total += imageData.getHierarchy().getDetectionObjects().size();
+                }
+            } catch (Exception e) {
+                logger.debug("Soft-ceiling pre-scan: could not read [{}] — skipped", name, e);
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Shows a confirm dialog from a background thread by marshalling it onto the FX thread and
+     * blocking (via {@link java.util.concurrent.CountDownLatch}) until the user answers — mirrors
+     * {@code CohortClusterModel.applyMeasurement}'s existing FX-marshalling shape.
+     */
+    private boolean confirmOnFx(String title, String message) {
+        final boolean[] result = {false};
+        var latch = new java.util.concurrent.CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                result[0] = Dialogs.showConfirmDialog(title, message);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            latch.await();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        return result[0];
     }
 
     /** Reverts the viewer to native classification colours (removes the cluster overlay). */
