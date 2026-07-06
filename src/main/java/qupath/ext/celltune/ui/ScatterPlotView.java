@@ -8,6 +8,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import javafx.application.Platform;
+import javafx.beans.property.IntegerProperty;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -21,6 +22,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextField;
@@ -39,6 +41,7 @@ import javafx.stage.Stage;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.AnnRecallException;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CohortClusterModel;
 import qupath.ext.celltune.model.FeatureNormalizer;
@@ -49,6 +52,7 @@ import qupath.ext.celltune.util.JvmModuleOpener;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.color.ColorMaps;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MeasurementMapper;
 import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.images.ImageData;
@@ -118,6 +122,13 @@ public class ScatterPlotView {
     /** Fixed seed for the reproducible k-means restarts (mirrors {@link #LEIDEN_SEED}). */
     private static final long KMEANS_SEED = 42L;
     /**
+     * Soft ceiling (D-10) on the estimated pooled cell count before an all-cells cohort run
+     * triggers an extra confirm dialog. Configurable (persisted), not a hard block — a run above
+     * this estimate can still proceed if the user confirms.
+     */
+    private static final IntegerProperty ALL_CELLS_SOFT_CEILING =
+            PathPrefs.createPersistentPreference("celltune.allCellsSoftCeiling", 50_000_000);
+    /**
      * Numeric per-cell measurement holding the assigned phenotype cluster id (1-based;
      * -1 = not in the clustered population). Written non-destructively by the "Colour
      * cells in image → By cluster" overlay so the viewer can paint the tissue by cluster
@@ -179,6 +190,16 @@ public class ScatterPlotView {
     private final ComboBox<Embedding> embeddingCombo;
     private final CheckBox fullUmapCheck;
     private final ComboBox<ClusterMethod> methodCombo;
+    // Cohort-mode radio pair (D-04/D-05): project scope + Method=Leiden only. Net visibility is
+    // driven by both the methodCombo listener and applyScopeOverrides() (see
+    // updateCohortModeVisibility()).
+    private final RadioButton cohortModeAllCells;
+    private final RadioButton cohortModeTransfer;
+    // Visible only during an all-cells run (D-12); cancels the in-flight CancellationToken.
+    private final Button cancelAllCellsBtn;
+    // The token for the in-flight all-cells run, if any (null otherwise) — set at the start of
+    // writeClusterAllCellsAcrossProject() so cancelAllCellsBtn's action can reach it.
+    private CohortClusterModel.CancellationToken allCellsToken;
     private final Spinner<Integer> kSpinner;
     private final Spinner<Double> resolutionSpinner;
     private final CheckBox reproducibleCheck;
@@ -337,12 +358,56 @@ public class ScatterPlotView {
         // "Sample multiple seeds" applies to both methods (k-means n_init restarts and
         // Leiden random starts), so it stays visible regardless of the selected method.
         reproducibleCheck.setVisible(true);
+
+        // Cohort-mode radio pair (D-04/D-05): the cohort ASSIGNMENT mechanism for Leiden
+        // specifically — NOT a replacement for methodCombo, which selects the clustering
+        // algorithm (k-means vs Leiden). Net visibility = project scope AND Method == LEIDEN,
+        // enforced by updateCohortModeVisibility() below.
+        ToggleGroup cohortModeGroup = new ToggleGroup();
+        cohortModeAllCells = new RadioButton("Cluster all cells");
+        cohortModeTransfer = new RadioButton("Transfer from sample");
+        cohortModeAllCells.setToggleGroup(cohortModeGroup);
+        cohortModeTransfer.setToggleGroup(cohortModeGroup);
+        cohortModeAllCells.setSelected(true); // D-05: all-cells (exact/true-scanpy) is the default
+        cohortModeAllCells.setTooltip(new javafx.scene.control.Tooltip(
+                "Exact / true-scanpy: pool every cell across the selected images into one HNSW kNN "
+                        + "graph and run a SINGLE Leiden partition over the whole cohort "
+                        + "(sc.tl.leiden-style). Default — slower, but every cell is genuinely "
+                        + "clustered rather than approximated."));
+        cohortModeTransfer.setTooltip(new javafx.scene.control.Tooltip(
+                "Fast / approximate: fit Leiden on the pooled sample only, then assign every other "
+                        + "cell by kNN label transfer against that labelled sample (sc.tl.ingest-style)."));
+        cohortModeAllCells.managedProperty().bind(cohortModeAllCells.visibleProperty());
+        cohortModeTransfer.managedProperty().bind(cohortModeTransfer.visibleProperty());
+        cohortModeAllCells.setVisible(false);
+        cohortModeTransfer.setVisible(false);
+        cohortModeGroup.selectedToggleProperty().addListener((obs, old, sel) -> {
+            if (sel == null && old != null) {
+                old.setSelected(true); // keep exactly one selected
+            }
+        });
+
+        cancelAllCellsBtn = new Button("Cancel");
+        cancelAllCellsBtn.managedProperty().bind(cancelAllCellsBtn.visibleProperty());
+        cancelAllCellsBtn.setVisible(false);
+        cancelAllCellsBtn.setTooltip(new javafx.scene.control.Tooltip(
+                "Stop the all-cells run after the image currently being written finishes. "
+                        + "Already-written images keep their Cluster measurement (no rollback)."));
+        cancelAllCellsBtn.setOnAction(e -> {
+            if (allCellsToken != null) {
+                allCellsToken.cancel();
+                cancelAllCellsBtn.setDisable(true);
+                statusLabel.setText("Cancelling — finishing the current image…");
+            }
+        });
+
         methodCombo.valueProperty().addListener((o, a, b) -> {
             boolean leiden = b == ClusterMethod.LEIDEN;
             kLabel.setVisible(!leiden);
             kSpinner.setVisible(!leiden);
             resolutionLabel.setVisible(leiden);
             resolutionSpinner.setVisible(leiden);
+            updateCohortModeVisibility();
         });
 
         annotationField = new TextField();
@@ -557,6 +622,8 @@ public class ScatterPlotView {
                 resolutionLabel,
                 resolutionSpinner,
                 reproducibleCheck,
+                cohortModeAllCells,
+                cohortModeTransfer,
                 recomputeBtn);
         row1.setAlignment(Pos.CENTER_LEFT);
 
@@ -568,7 +635,8 @@ public class ScatterPlotView {
                 projectScopeToggle,
                 projectControls,
                 sampleControls,
-                progress);
+                progress,
+                cancelAllCellsBtn);
         rowScope.setAlignment(Pos.CENTER_LEFT);
 
         HBox rowFilter = new HBox(
@@ -845,8 +913,25 @@ public class ScatterPlotView {
                                 if (method == ClusterMethod.LEIDEN) {
                                     int randomStarts = reproducible ? LEIDEN_REPRODUCIBLE_STARTS : LEIDEN_SINGLE_START;
                                     long seed = reproducible ? LEIDEN_SEED : System.nanoTime();
-                                    LeidenModel.LeidenResult leidenResult =
-                                            LeidenModel.cluster(active, LEIDEN_GRAPH_K, resolution, randomStarts, seed);
+                                    // D-06: the single-image / interactive-preview fit routes its kNN
+                                    // graph build through the HNSW ANN index (LEI-07), not brute-force
+                                    // featureKnn. A recall-gate failure here is rare but must not crash
+                                    // the Recompute thread or leave the UI disabled — surface it and
+                                    // bail out gracefully, exactly like the m==0 branch above.
+                                    LeidenModel.LeidenResult leidenResult;
+                                    try {
+                                        leidenResult = LeidenModel.clusterViaAnn(
+                                                active, LEIDEN_GRAPH_K, resolution, randomStarts, seed, reproducible);
+                                    } catch (AnnRecallException are) {
+                                        logger.warn("Leiden preview ANN recall gate failed: {}", are.getMessage());
+                                        Platform.runLater(() -> {
+                                            progress.setVisible(false);
+                                            setControlsDisabled(false);
+                                            statusLabel.setText("Leiden preview: ANN recall too low — try more "
+                                                    + "cells / different markers.");
+                                        });
+                                        return;
+                                    }
                                     System.arraycopy(leidenResult.labels(), 0, subCluster, 0, m);
                                     nClustersEff = Math.max(1, leidenResult.nClusters());
                                     // Retained for the cohort-scope Leiden assign path (kNN label
@@ -1800,6 +1885,18 @@ public class ScatterPlotView {
         clusterOverlayBtn.setText(project ? "By cluster (all images)" : "By cluster");
         imageScopeToggle.setSelected(!project);
         projectScopeToggle.setSelected(project);
+        updateCohortModeVisibility();
+    }
+
+    /**
+     * Net visibility for the cohort-mode radio pair (D-04): visible only when BOTH the scope is
+     * PROJECT and the selected Method is LEIDEN — driven from here (scope changes) and from
+     * {@code methodCombo}'s value listener (method changes), never duplicated elsewhere.
+     */
+    private void updateCohortModeVisibility() {
+        boolean visible = scope == Scope.PROJECT && methodCombo.getValue() == ClusterMethod.LEIDEN;
+        cohortModeAllCells.setVisible(visible);
+        cohortModeTransfer.setVisible(visible);
     }
 
     // ── Scope switching ─────────────────────────────────────────────────────────
