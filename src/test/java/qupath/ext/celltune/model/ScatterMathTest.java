@@ -72,6 +72,103 @@ class ScatterMathTest {
     }
 
     @Test
+    void standardizeColumnsImputesNaNToZeroAndZScoresNonNaNOverNonNaNStats() {
+        // Column 0: one NaN (missing measurement) among finite values; column 1 fully finite.
+        double[][] data = {{1, 10}, {Double.NaN, 20}, {3, 30}, {5, 40}};
+        double[] mean = new double[2];
+        double[] sd = new double[2];
+        double[][] z = ScatterMath.standardizeColumns(data, mean, sd);
+
+        // Column 0's mean/sd must be computed over the 3 non-NaN entries {1, 3, 5}, not 4 rows.
+        double expectedMean0 = (1.0 + 3.0 + 5.0) / 3.0;
+        double var0 = (Math.pow(1 - expectedMean0, 2) + Math.pow(3 - expectedMean0, 2) + Math.pow(5 - expectedMean0, 2))
+                / 3.0;
+        double expectedSd0 = Math.sqrt(var0);
+        assertEquals(expectedMean0, mean[0], EPS);
+        assertEquals(expectedSd0, sd[0], EPS);
+
+        // The NaN cell itself is imputed to 0 (the column mean, in z-score terms).
+        assertEquals(0.0, z[1][0], EPS, "NaN cell must impute to 0");
+
+        // Every non-NaN cell in column 0 is z-scored using the non-NaN mean/sd.
+        assertEquals((1.0 - expectedMean0) / expectedSd0, z[0][0], EPS);
+        assertEquals((3.0 - expectedMean0) / expectedSd0, z[2][0], EPS);
+        assertEquals((5.0 - expectedMean0) / expectedSd0, z[3][0], EPS);
+
+        // No NaN or Infinity anywhere in the output, for any column.
+        for (double[] row : z) {
+            for (double v : row) {
+                assertFalse(Double.isNaN(v), "output must never contain NaN");
+                assertFalse(Double.isInfinite(v), "output must never contain Infinity");
+            }
+        }
+    }
+
+    @Test
+    void standardizeColumnsAllNaNColumnBecomesAllZeros() {
+        double[][] data = {{Double.NaN, 1}, {Double.NaN, 2}, {Double.NaN, 3}};
+        double[] mean = new double[2];
+        double[] sd = new double[2];
+        double[][] z = ScatterMath.standardizeColumns(data, mean, sd);
+
+        assertEquals(0.0, mean[0], EPS, "all-NaN column mean must default to 0");
+        assertEquals(0.0, sd[0], EPS, "all-NaN column sd must default to 0");
+        for (double[] row : z) {
+            assertEquals(0.0, row[0], EPS, "all-NaN column must map every row to 0");
+            assertFalse(Double.isNaN(row[0]));
+        }
+    }
+
+    @Test
+    void standardizeColumnsFullyFiniteInputMatchesPreChangeSumOverAllRows() {
+        // Regression guard: for fully-finite input, the NaN-robust rewrite must produce
+        // byte-identical output to the original "sum over every row" algorithm (the
+        // non-NaN count equals n, so mean/sd/output must match exactly).
+        Random rng = new Random(123);
+        int n = 50;
+        int p = 6;
+        double[][] data = new double[n][p];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < p; j++) {
+                data[i][j] = rng.nextGaussian() * 10;
+            }
+        }
+
+        double[] actualMean = new double[p];
+        double[] actualSd = new double[p];
+        double[][] actual = ScatterMath.standardizeColumns(data, actualMean, actualSd);
+
+        double[] expectedMean = new double[p];
+        double[] expectedSd = new double[p];
+        double[][] expected = new double[n][p];
+        for (int j = 0; j < p; j++) {
+            double sum = 0;
+            for (double[] row : data) {
+                sum += row[j];
+            }
+            double mean = sum / n;
+            double var = 0;
+            for (double[] row : data) {
+                double d = row[j] - mean;
+                var += d * d;
+            }
+            double sd = Math.sqrt(var / n);
+            expectedMean[j] = mean;
+            expectedSd[j] = sd;
+            double inv = sd < 1e-9 ? 0.0 : 1.0 / sd;
+            for (int i = 0; i < n; i++) {
+                expected[i][j] = (data[i][j] - mean) * inv;
+            }
+        }
+
+        assertArrayEquals(expectedMean, actualMean, 0.0);
+        assertArrayEquals(expectedSd, actualSd, 0.0);
+        for (int i = 0; i < n; i++) {
+            assertArrayEquals(expected[i], actual[i], 0.0, "row " + i + " must be byte-identical to pre-change output");
+        }
+    }
+
+    @Test
     void standardizeColumnsSingleColumnConvenienceOverloadMatches() {
         double[][] data = {{1}, {2}, {3}, {4}};
         double[][] a = ScatterMath.standardizeColumns(data);

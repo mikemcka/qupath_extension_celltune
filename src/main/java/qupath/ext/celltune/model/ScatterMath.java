@@ -29,28 +29,46 @@ public final class ScatterMath {
     /**
      * Z-scores each column, writing the per-column mean/sd into {@code outMean}/
      * {@code outSd} so the same transform can be replayed at cohort-assign time.
+     * <p>
+     * NaN-robust: a {@code NaN} entry (a missing QuPath measurement) is excluded
+     * from that column's mean/sd computation rather than poisoning it, and is
+     * itself imputed to 0 in the output (the column mean, in z-score terms) —
+     * every OTHER cell in the column still gets a meaningful z-score instead of
+     * the whole column collapsing to {@code NaN}. A column that is entirely
+     * {@code NaN} (or constant) maps to all zeros, matching the existing
+     * near-zero-sd behaviour. For fully-finite input this is byte-identical to
+     * summing over every row (the non-NaN count equals {@code n}).
      */
     public static double[][] standardizeColumns(double[][] data, double[] outMean, double[] outSd) {
         int n = data.length;
         int p = n == 0 ? 0 : data[0].length;
         double[][] out = new double[n][p];
         for (int j = 0; j < p; j++) {
-            double mean = 0;
+            double sum = 0;
+            int count = 0;
             for (double[] row : data) {
-                mean += row[j];
+                double v = row[j];
+                if (!Double.isNaN(v)) {
+                    sum += v;
+                    count++;
+                }
             }
-            mean /= Math.max(1, n);
+            double mean = count > 0 ? sum / count : 0.0;
             double var = 0;
             for (double[] row : data) {
-                double d = row[j] - mean;
-                var += d * d;
+                double v = row[j];
+                if (!Double.isNaN(v)) {
+                    double d = v - mean;
+                    var += d * d;
+                }
             }
-            double sd = Math.sqrt(var / Math.max(1, n));
+            double sd = count > 0 ? Math.sqrt(var / count) : 0.0;
             outMean[j] = mean;
             outSd[j] = sd;
             double inv = sd < 1e-9 ? 0.0 : 1.0 / sd;
             for (int i = 0; i < n; i++) {
-                out[i][j] = (data[i][j] - mean) * inv;
+                double v = data[i][j];
+                out[i][j] = Double.isNaN(v) ? 0.0 : (v - mean) * inv;
             }
         }
         return out;
