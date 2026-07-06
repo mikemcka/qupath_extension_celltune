@@ -179,7 +179,7 @@ Success Criteria:
 Plans: 5 plans
 - [x] 15-01-PLAN.md - Bundle hnswlib-core (implementation+shadow) and add the pure HnswKnnIndex ANN kNN wrapper with seeded-deterministic build + recall tests
 - [x] 15-02-PLAN.md - Route Leiden through HNSW (clusterViaAnn) guarded by the runtime recall gate (AnnRecallException abort); HNSW-vs-exact ARI tests
-- [ ] 15-03-PLAN.md - Primitive-array SNN/Jaccard rewrite for cohort scale (byte-identical equivalence) + all-cells recovery/reproducibility tests
+- [x] 15-03-PLAN.md - Primitive-array SNN/Jaccard rewrite for cohort scale (byte-identical equivalence) + all-cells recovery/reproducibility tests
 - [ ] 15-04-PLAN.md - CohortClusterModel two-pass all-cells driver (poolAllCells + writeClusterAllCells) with packed-UUID write-back + cancellation; reorder/pooling/cancel tests
 - [ ] 15-05-PLAN.md - ScatterPlotView cohort-mode radio pair, soft-ceiling confirm, per-phase progress + cancel + recall status, preview re-sync, and USER_GUIDE/CLAUDE.md fidelity-gap docs
 
@@ -198,4 +198,4 @@ Plans: 5 plans
 | 12. Binary Ground Truth Bundle Export/Import | v1.3 | XFER-01,XFER-02,XFER-03,XFER-04 | 0/2 | Not started |
 | 13. CN Spatial Clustering | v1.4 | CN-01,CN-02,CN-03,CN-04 | 0/1 | Planned |
 | 14. Leiden Phenotype Clustering | v1.5 | LEI-01,LEI-02,LEI-03,LEI-04,LEI-05 | 0/1 | Planned |
-| 15. All-Cells Leiden Clustering (True-Scanpy) | v1.5 | 2/5 | In Progress|  |
+| 15. All-Cells Leiden Clustering (True-Scanpy) | v1.5 | LEI-06,LEI-07,LEI-08,LEI-09,LEI-10 | 3/5 | In Progress |
