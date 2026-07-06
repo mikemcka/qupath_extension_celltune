@@ -139,15 +139,6 @@ public class ScatterPlotView {
     /** PCA components to keep when {@link #PCA_ENABLED_PREF} is on; persisted alongside it. */
     private static final IntegerProperty PCA_COMPONENTS_PREF = PathPrefs.createPersistentPreference(
             "celltune.clusterPcaComponents", ScatterMath.PCA_DEFAULT_MAX_COMPONENTS);
-    /**
-     * Numeric per-cell measurement holding the assigned phenotype cluster id (1-based;
-     * -1 = not in the clustered population). Written non-destructively by the "Colour
-     * cells in image → By cluster" overlay so the viewer can paint the tissue by cluster
-     * via a {@link MeasurementMapper} — the phenotype analogue of the CN dialog's {@code CN}
-     * measurement. Never modifies the cell's classification ({@code getPathClass()}).
-     */
-    private static final String CLUSTER_MEASUREMENT = "Cluster";
-
     // ── Per-row state (all arrays aligned by index 0..nRows-1; rebuilt on toggle)
     private Scope scope = Scope.CURRENT_IMAGE;
     private int nRows; // number of plotted rows
@@ -1579,7 +1570,7 @@ public class ScatterPlotView {
 
     /**
      * Streams the cluster→class mapping across the selected project images by reading
-     * each cell's already-written {@link #CLUSTER_MEASUREMENT} value
+     * each cell's already-written {@link CohortClusterModel#CLUSTER_MEASUREMENT} value
      * ({@link CohortClusterModel#assignAcrossProjectByMeasurement}) instead of
      * re-transferring against a preview fit — the correct path when
      * {@link #allCellsWriteActive} is true (the current cluster state came from a
@@ -1599,7 +1590,7 @@ public class ScatterPlotView {
                         "Assign %d cluster(s) as classifications to every matching cell across %d "
                                 + "image(s), using the written all-cells \"%s\" measurement? Each image is "
                                 + "saved. This replaces existing classes on the assigned cells.",
-                        mapping.size(), projectImages.size(), CLUSTER_MEASUREMENT));
+                        mapping.size(), projectImages.size(), CohortClusterModel.CLUSTER_MEASUREMENT));
         if (!ok) {
             return;
         }
@@ -1647,7 +1638,7 @@ public class ScatterPlotView {
                                     statusLabel.setText(String.format(
                                             "Done — assigned %,d cell(s) across %d image(s) (from written %s "
                                                     + "measurement).",
-                                            fTotal, images.size(), CLUSTER_MEASUREMENT));
+                                            fTotal, images.size(), CohortClusterModel.CLUSTER_MEASUREMENT));
                                 });
                                 logger.info(
                                         "All-cells cohort assign (by measurement) wrote {} cells across {} images",
@@ -1766,7 +1757,7 @@ public class ScatterPlotView {
     /**
      * Assign every cell in the open image to its nearest phenotype cluster (nearest-centroid
      * for k-means, kNN label transfer for Leiden against the labelled fitted sample), write
-     * the id as a non-destructive numeric {@link #CLUSTER_MEASUREMENT}, and activate a
+     * the id as a non-destructive numeric {@link CohortClusterModel#CLUSTER_MEASUREMENT}, and activate a
      * {@link MeasurementMapper} overlay so the tissue is painted by cluster — the phenotype
      * analogue of the CN dialog's spatial CN colouring. The classification is never changed;
      * the overlay is reset when this window closes or "By classification" is clicked.
@@ -1898,7 +1889,9 @@ public class ScatterPlotView {
                                 final int fAssigned = assigned;
                                 Platform.runLater(() -> {
                                     for (int i = 0; i < cells.size(); i++) {
-                                        cells.get(i).getMeasurementList().put(CLUSTER_MEASUREMENT, values[i]);
+                                        cells.get(i)
+                                                .getMeasurementList()
+                                                .put(CohortClusterModel.CLUSTER_MEASUREMENT, values[i]);
                                     }
                                     hier.fireHierarchyChangedEvent(this);
                                     activateClusterMapper(viewer, nClusters);
@@ -1926,7 +1919,7 @@ public class ScatterPlotView {
 
     /**
      * Project-scope "By cluster": assign every cell across every selected image to its
-     * nearest cluster and write the non-destructive {@link #CLUSTER_MEASUREMENT} to each,
+     * nearest cluster and write the non-destructive {@link CohortClusterModel#CLUSTER_MEASUREMENT} to each,
      * saving every image (the persistent, cohort-wide analogue of the single-image overlay).
      * Then activate the viewer overlay on whichever image is currently open. The cell
      * classification is never changed.
@@ -1942,7 +1935,7 @@ public class ScatterPlotView {
                 String.format(
                         "Assign a cluster to every cell across %d image(s), writing a non-destructive "
                                 + "\"%s\" measurement, and save each image? Classifications are not changed.",
-                        projectImages.size(), CLUSTER_MEASUREMENT));
+                        projectImages.size(), CohortClusterModel.CLUSTER_MEASUREMENT));
         if (!ok) {
             return;
         }
@@ -2050,7 +2043,7 @@ public class ScatterPlotView {
      * driver. Unlike {@link #writeClusterMeasurementAcrossProject}, this pools EVERY cell across
      * the selected images (no sample cap) into ONE HNSW kNN graph and runs a SINGLE
      * {@link LeidenModel#clusterViaAnn} partition over the whole cohort, then writes the
-     * {@link #CLUSTER_MEASUREMENT} back by UUID lookup ({@link CohortClusterModel#writeClusterAllCells}).
+     * {@link CohortClusterModel#CLUSTER_MEASUREMENT} back by UUID lookup ({@link CohortClusterModel#writeClusterAllCells}).
      * Adds a soft-ceiling confirm (D-10), per-phase progress + a mid-run Cancel (D-11/D-12), and
      * re-syncs the legend to the FINAL all-cells cluster count (LEI-09), not the preview
      * subsample's {@link #fitNClusters}.
@@ -2080,7 +2073,7 @@ public class ScatterPlotView {
                                 + "over the whole cohort, and write a non-destructive \"%s\" measurement to every "
                                 + "cell, saving each image? This clusters the full cohort (not a sample) and can "
                                 + "take a long time on large projects. Classifications are not changed.",
-                        projectImages.size(), CLUSTER_MEASUREMENT));
+                        projectImages.size(), CohortClusterModel.CLUSTER_MEASUREMENT));
         if (!ok) {
             return;
         }
@@ -2355,7 +2348,7 @@ public class ScatterPlotView {
 
     /**
      * Builds and installs a {@link MeasurementMapper} that paints each cell by its 1-based
-     * {@link #CLUSTER_MEASUREMENT} using the plot's per-cluster colours, so the image matches
+     * {@link CohortClusterModel#CLUSTER_MEASUREMENT} using the plot's per-cluster colours, so the image matches
      * the scatter-plot legend. Cells with -1 keep their phenotype colour.
      */
     private void activateClusterMapper(QuPathViewer viewer, int nClusters) {
@@ -2369,9 +2362,11 @@ public class ScatterPlotView {
             g[c] = (int) Math.round(col.getGreen() * 255);
             b[c] = (int) Math.round(col.getBlue() * 255);
         }
-        ColorMaps.ColorMap cm = ColorMaps.createColorMap(CLUSTER_MEASUREMENT, r, g, b);
+        ColorMaps.ColorMap cm = ColorMaps.createColorMap(CohortClusterModel.CLUSTER_MEASUREMENT, r, g, b);
         MeasurementMapper mm = new MeasurementMapper(
-                cm, CLUSTER_MEASUREMENT, viewer.getImageData().getHierarchy().getDetectionObjects());
+                cm,
+                CohortClusterModel.CLUSTER_MEASUREMENT,
+                viewer.getImageData().getHierarchy().getDetectionObjects());
         mm.setDisplayMinValue(1);
         mm.setDisplayMaxValue(Math.max(2, nClusters));
         mm.setExcludeOutsideRange(true); // -1 (unclustered) cells keep their phenotype colour
@@ -2379,7 +2374,7 @@ public class ScatterPlotView {
         viewer.repaintEntireImage();
     }
 
-    /** True when the open image's cells already carry a {@link #CLUSTER_MEASUREMENT} value. */
+    /** True when the open image's cells already carry a {@link CohortClusterModel#CLUSTER_MEASUREMENT} value. */
     private boolean openImageHasClusterMeasurement() {
         QuPathViewer viewer = qupath.getViewer();
         if (viewer == null || viewer.getImageData() == null) {
@@ -2389,7 +2384,7 @@ public class ScatterPlotView {
         var col = hier.getCellObjects();
         var cells = col.isEmpty() ? hier.getDetectionObjects() : col;
         for (PathObject cell : cells) {
-            if (!Double.isNaN(cell.getMeasurementList().get(CLUSTER_MEASUREMENT))) {
+            if (!Double.isNaN(cell.getMeasurementList().get(CohortClusterModel.CLUSTER_MEASUREMENT))) {
                 return true;
             }
         }

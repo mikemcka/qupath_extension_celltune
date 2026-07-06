@@ -81,8 +81,8 @@ public final class CohortClusterModel {
      * Numeric per-cell measurement holding the assigned phenotype cluster id (1-based;
      * -1 = not in the clustered population). Written non-destructively by
      * {@link #writeClusterAcrossProject} so every image carries a persistent {@code Cluster}
-     * column for downstream analysis and the viewer overlay. Matches
-     * {@code ScatterPlotView.CLUSTER_MEASUREMENT}.
+     * column for downstream analysis and the viewer overlay. This is the single shared
+     * constant — {@code ScatterPlotView} reuses it directly rather than declaring its own copy.
      */
     public static final String CLUSTER_MEASUREMENT = "Cluster";
 
