@@ -8,6 +8,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
@@ -129,6 +130,16 @@ public class ScatterPlotView {
     private static final IntegerProperty ALL_CELLS_SOFT_CEILING =
             PathPrefs.createPersistentPreference("celltune.allCellsSoftCeiling", 50_000_000);
     /**
+     * Whether conditional PCA reduction runs before the clustering kNN graph (Leiden and
+     * k-means both) — on by default, mirroring scanpy's {@code scale -> PCA -> neighbors}
+     * recipe. Persisted so the choice survives across sessions.
+     */
+    private static final BooleanProperty PCA_ENABLED_PREF =
+            PathPrefs.createPersistentPreference("celltune.clusterPcaEnabled", true);
+    /** PCA components to keep when {@link #PCA_ENABLED_PREF} is on; persisted alongside it. */
+    private static final IntegerProperty PCA_COMPONENTS_PREF = PathPrefs.createPersistentPreference(
+            "celltune.clusterPcaComponents", ScatterMath.PCA_DEFAULT_MAX_COMPONENTS);
+    /**
      * Numeric per-cell measurement holding the assigned phenotype cluster id (1-based;
      * -1 = not in the clustered population). Written non-destructively by the "Colour
      * cells in image → By cluster" overlay so the viewer can paint the tissue by cluster
@@ -167,6 +178,14 @@ public class ScatterPlotView {
     // (which uses fitCentroids/nearestCentroid instead) or before any Leiden fit.
     private double[][] fitLeidenReference;
     private int[] fitLeidenReferenceLabels;
+    // Reusable projector into the PC space fitLeidenReference lives in, when the latest
+    // Recompute applied conditional PCA reduction (Requirement 3) — identity/no-op when PCA
+    // was off or skipped by the feature-count threshold. Applied to every NEW z-scored query
+    // row (marker space) immediately before a Leiden kNN label transfer, so the query and the
+    // fitted reference always share one basis. Retained regardless of method (only consulted
+    // when fitLeidenReference is non-null, i.e. after a Leiden fit).
+    private java.util.function.UnaryOperator<double[][]> fitPcaProjector;
+    private boolean fitPcaApplied;
     // Per-cluster pooled cell counts from the last completed all-cells write
     // (CohortClusterModel.AllCellsResult.clusterCounts()), overriding clusterCounts(k)'s
     // preview-row-derived counts so the Assign dialog shows the all-cells cluster sizes
@@ -215,6 +234,11 @@ public class ScatterPlotView {
     private final Spinner<Integer> kSpinner;
     private final Spinner<Double> resolutionSpinner;
     private final CheckBox reproducibleCheck;
+    // Conditional PCA controls (Requirement 6): visible for both k-means and Leiden, unlike
+    // kSpinner/resolutionSpinner which toggle with the method. Persisted via PCA_ENABLED_PREF /
+    // PCA_COMPONENTS_PREF.
+    private final CheckBox pcaEnabledCheck;
+    private final Spinner<Integer> pcaComponentsSpinner;
     private final Label kLabel;
     private final Label resolutionLabel;
     private final ComboBox<ScatterPlotCanvas.ColorMode> colorCombo;
@@ -356,6 +380,35 @@ public class ScatterPlotView {
                         + "same settings give identical, higher-quality clusters. Off runs a single, "
                         + "faster pass whose result may vary run to run. Applies to both k-means and "
                         + "Leiden."));
+
+        pcaEnabledCheck = new CheckBox("Reduce dims (PCA)");
+        pcaEnabledCheck.setSelected(PCA_ENABLED_PREF.get());
+        pcaEnabledCheck.setTooltip(new javafx.scene.control.Tooltip(
+                "Project onto principal components before building the clustering kNN graph, "
+                        + "when the marker panel is wide (> " + ScatterMath.PCA_DEFAULT_THRESHOLD
+                        + " measurements). Fixes two problems with wide panels: markers with more "
+                        + "measurements no longer dominate the distance, and high-dimensional distance "
+                        + "concentration no longer degrades the neighbour graph (the scanpy/Seurat "
+                        + "standard). On by default; applies to both k-means and Leiden. Below the "
+                        + "threshold this is a no-op — the existing small-panel behaviour is unchanged."));
+        pcaComponentsSpinner = new Spinner<>(2, 500, PCA_COMPONENTS_PREF.get());
+        pcaComponentsSpinner.setEditable(true);
+        pcaComponentsSpinner.setPrefWidth(70);
+        pcaComponentsSpinner.setDisable(!pcaEnabledCheck.isSelected());
+        pcaComponentsSpinner.setTooltip(
+                new javafx.scene.control.Tooltip("Principal components to keep when PCA reduction is on (default "
+                        + ScatterMath.PCA_DEFAULT_MAX_COMPONENTS + ", mirrors scanpy)."));
+        pcaComponentsSpinner.focusedProperty().addListener((o, was, isNow) -> {
+            if (!isNow) {
+                commitSpinnerEditor(pcaComponentsSpinner);
+                PCA_COMPONENTS_PREF.set(pcaComponentsSpinner.getValue());
+            }
+        });
+        pcaComponentsSpinner.valueProperty().addListener((o, a, b) -> PCA_COMPONENTS_PREF.set(b));
+        pcaEnabledCheck.selectedProperty().addListener((o, a, b) -> {
+            PCA_ENABLED_PREF.set(b);
+            pcaComponentsSpinner.setDisable(!b);
+        });
 
         boolean methodIsLeiden = methodCombo.getValue() == ClusterMethod.LEIDEN;
         kLabel.managedProperty().bind(kLabel.visibleProperty());
@@ -634,6 +687,9 @@ public class ScatterPlotView {
                 resolutionLabel,
                 resolutionSpinner,
                 reproducibleCheck,
+                pcaEnabledCheck,
+                new Label("PCA comps:"),
+                pcaComponentsSpinner,
                 cohortModeAllCells,
                 cohortModeTransfer,
                 recomputeBtn);
@@ -817,6 +873,8 @@ public class ScatterPlotView {
         fitNClusters = 0;
         fitLeidenReference = null;
         fitLeidenReferenceLabels = null;
+        fitPcaProjector = null;
+        fitPcaApplied = false;
         fitAllCellsCounts = null;
         allCellsWriteActive = false;
         clusterMeasurementStale = true;
@@ -846,6 +904,8 @@ public class ScatterPlotView {
         final int k = kSpinner.getValue();
         final double resolution = resolutionSpinner.getValue();
         final boolean reproducible = reproducibleCheck.isSelected();
+        final boolean pcaEnabled = pcaEnabledCheck.isSelected();
+        final int pcaMaxComponents = pcaComponentsSpinner.getValue();
         final int n = nRows;
         final String keyword = annotationField.getText();
         final String classKeyword = classField.getValue();
@@ -919,6 +979,28 @@ public class ScatterPlotView {
                                 double[] sd = new double[selCols.length];
                                 double[][] active = ScatterMath.standardizeColumns(activeRaw, mean, sd);
 
+                                // Conditional PCA reduction (Requirement 2): applied to the z-scored
+                                // active matrix BEFORE the clustering kNN graph (Leiden AND k-means both),
+                                // never before the 2D display embedding below (fillPca/fillUmap still see
+                                // `active`, unchanged — the embedding is display-only and unaffected). A
+                                // no-op (applied=false, clusterMatrix == active) when the checkbox is off
+                                // or the active marker-column count is at/below ScatterMath's threshold,
+                                // preserving the existing small-panel behaviour exactly (regression guard).
+                                ScatterMath.PcaReduction pcaReduction = ScatterMath.pcaReduce(
+                                        active,
+                                        pcaEnabled ? pcaMaxComponents : 0,
+                                        ScatterMath.PCA_DEFAULT_THRESHOLD,
+                                        ScatterMath.PCA_DEFAULT_FIT_SAMPLE_CAP,
+                                        ScatterMath.PCA_DEFAULT_SEED);
+                                double[][] clusterMatrix = pcaReduction.reduced();
+                                if (pcaReduction.applied()) {
+                                    logger.info(
+                                            "PCA: {} → {} comps, {}% variance",
+                                            selCols.length,
+                                            pcaReduction.nComponents(),
+                                            String.format("%.1f", pcaReduction.cumulativeVariance() * 100));
+                                }
+
                                 // ── Cluster the active subset (k-means or Leiden) ────────────────
                                 int[] subCluster = new int[m];
                                 int nClustersEff;
@@ -935,7 +1017,12 @@ public class ScatterPlotView {
                                     LeidenModel.LeidenResult leidenResult;
                                     try {
                                         leidenResult = LeidenModel.clusterViaAnn(
-                                                active, LEIDEN_GRAPH_K, resolution, randomStarts, seed, reproducible);
+                                                clusterMatrix,
+                                                LEIDEN_GRAPH_K,
+                                                resolution,
+                                                randomStarts,
+                                                seed,
+                                                reproducible);
                                     } catch (AnnRecallException are) {
                                         logger.warn("Leiden preview ANN recall gate failed: {}", are.getMessage());
                                         Platform.runLater(() -> {
@@ -949,8 +1036,11 @@ public class ScatterPlotView {
                                     System.arraycopy(leidenResult.labels(), 0, subCluster, 0, m);
                                     nClustersEff = Math.max(1, leidenResult.nClusters());
                                     // Retained for the cohort-scope Leiden assign path (kNN label
-                                    // transfer against this labelled sample, Task 5).
-                                    leidenRef = active;
+                                    // transfer against this labelled sample, Task 5) — the SAME space
+                                    // (PC-reduced when PCA applied, marker space otherwise) Leiden was
+                                    // clustered in, so a later transfer projects its query rows the
+                                    // same way before voting (fitPcaProjector, stored below).
+                                    leidenRef = clusterMatrix;
                                     leidenRefLabels = subCluster.clone();
                                 } else {
                                     int kEff = Math.min(k, m);
@@ -964,9 +1054,9 @@ public class ScatterPlotView {
                                         if (reproducible) {
                                             MathEx.setSeed(KMEANS_SEED);
                                         }
-                                        KMeans best = KMeans.fit(active, kEff);
+                                        KMeans best = KMeans.fit(clusterMatrix, kEff);
                                         for (int r = 1; r < restarts; r++) {
-                                            KMeans cand = KMeans.fit(active, kEff);
+                                            KMeans cand = KMeans.fit(clusterMatrix, kEff);
                                             if (cand.distortion < best.distortion) {
                                                 best = cand;
                                             }
@@ -980,10 +1070,13 @@ public class ScatterPlotView {
                                 }
 
                                 // Per-cluster z-scored centroids (nClustersEff rows; empty clusters
-                                // stay 0). Retained for the cohort assign and the assignment
-                                // heatmap — computed post-hoc for Leiden exactly like k-means, for
-                                // DISPLAY only (Leiden's cohort assignment itself uses kNN label
-                                // transfer against fitLeidenReference, not these centroids).
+                                // stay 0). ALWAYS computed in the original marker space (`active`),
+                                // regardless of whether clustering ran on a PCA-reduced matrix
+                                // (Requirement 2) — never `clusterMatrix`. Retained for the cohort
+                                // assign and the assignment heatmap — computed post-hoc for Leiden
+                                // exactly like k-means, for DISPLAY only (Leiden's cohort assignment
+                                // itself uses kNN label transfer against fitLeidenReference, not
+                                // these centroids).
                                 double[][] cents = new double[nClustersEff][selCols.length];
                                 int[] centCount = new int[nClustersEff];
                                 for (int j = 0; j < m; j++) {
@@ -1010,6 +1103,11 @@ public class ScatterPlotView {
                                 final int fNClusters = nClustersEff;
                                 final double[][] fLeidenRef = leidenRef;
                                 final int[] fLeidenRefLabels = leidenRefLabels;
+                                final java.util.function.UnaryOperator<double[][]> fPcaProjector =
+                                        pcaReduction.projector();
+                                final boolean fPcaApplied = pcaReduction.applied();
+                                final int fPcaComponents = pcaReduction.nComponents();
+                                final double fPcaCumVariance = pcaReduction.cumulativeVariance();
 
                                 // ── Embedding on the active subset ───────────────────────────────
                                 double[] subX = new double[m];
@@ -1056,6 +1154,12 @@ public class ScatterPlotView {
                                     notice = notice
                                             + String.format(" · %d/%d markers", selCols.length, markerFeatures.size());
                                 }
+                                if (fPcaApplied) {
+                                    notice = notice
+                                            + String.format(
+                                                    " · PCA: %d → %d comps, %.1f%% variance",
+                                                    selCols.length, fPcaComponents, fPcaCumVariance * 100);
+                                }
 
                                 final String fNotice = notice;
                                 final String fClassFilter = classKeyword;
@@ -1071,6 +1175,8 @@ public class ScatterPlotView {
                                     fitNClusters = fNClusters;
                                     fitLeidenReference = fLeidenRef;
                                     fitLeidenReferenceLabels = fLeidenRefLabels;
+                                    fitPcaProjector = fPcaProjector;
+                                    fitPcaApplied = fPcaApplied;
                                     // A new preview fit invalidates any retained all-cells state (LEI-09
                                     // companion fix): the Assign dialog must go back to showing this
                                     // preview's counts/heatmap, and cluster->class assignment must go back
@@ -1349,6 +1455,7 @@ public class ScatterPlotView {
         final double[][] leidenRef = fitLeidenReference;
         final int[] leidenRefLabels = fitLeidenReferenceLabels;
         final int nClustersForAssign = fitNClusters;
+        final java.util.function.UnaryOperator<double[][]> pcaProjector = fitPcaProjector;
 
         applying = true;
         setControlsDisabled(true);
@@ -1379,6 +1486,7 @@ public class ScatterPlotView {
                                             leidenRefLabels,
                                             LEIDEN_GRAPH_K,
                                             nClustersForAssign,
+                                            pcaProjector,
                                             mapping,
                                             classFilter,
                                             normalizer,
@@ -1675,6 +1783,7 @@ public class ScatterPlotView {
         final int[] leidenRefLabels = fitLeidenReferenceLabels;
         final int nClusters = fitNClusters;
         final String classFilter = fitClassFilter;
+        final java.util.function.UnaryOperator<double[][]> pcaProjector = fitPcaProjector;
 
         applying = true;
         setControlsDisabled(true);
@@ -1708,8 +1817,15 @@ public class ScatterPlotView {
                                 // centroid.
                                 int[] labels;
                                 if (leidenRef != null && leidenRefLabels != null) {
+                                    // Project the query rows into the SAME space fitLeidenReference was
+                                    // clustered in — identity when the fit did not apply PCA.
+                                    double[][] zProjected = pcaProjector != null ? pcaProjector.apply(z) : z;
                                     labels = LeidenModel.transferLabels(
-                                            z, leidenRef, leidenRefLabels, LEIDEN_GRAPH_K, Math.max(1, nClusters));
+                                            zProjected,
+                                            leidenRef,
+                                            leidenRefLabels,
+                                            LEIDEN_GRAPH_K,
+                                            Math.max(1, nClusters));
                                 } else {
                                     labels = new int[n];
                                     for (int i = 0; i < n; i++) {
@@ -1790,6 +1906,7 @@ public class ScatterPlotView {
         final int[] leidenRefLabels = fitLeidenReferenceLabels;
         final int nClusters = fitNClusters;
         final String classFilter = fitClassFilter;
+        final java.util.function.UnaryOperator<double[][]> pcaProjector = fitPcaProjector;
 
         applying = true;
         setControlsDisabled(true);
@@ -1820,6 +1937,7 @@ public class ScatterPlotView {
                                             leidenRefLabels,
                                             LEIDEN_GRAPH_K,
                                             nClusters,
+                                            pcaProjector,
                                             classFilter,
                                             normalizer,
                                             openData,
@@ -1918,6 +2036,8 @@ public class ScatterPlotView {
         final boolean reproducible = reproducibleCheck.isSelected();
         final int randomStarts = reproducible ? LEIDEN_REPRODUCIBLE_STARTS : LEIDEN_SINGLE_START;
         final long seed = reproducible ? LEIDEN_SEED : System.nanoTime();
+        final boolean pcaEnabled = pcaEnabledCheck.isSelected();
+        final int pcaMaxComponents = pcaComponentsSpinner.getValue();
         final String classFilter = fitClassFilter;
         final CohortClusterModel.CancellationToken token = new CohortClusterModel.CancellationToken();
         allCellsToken = token;
@@ -1976,6 +2096,8 @@ public class ScatterPlotView {
                                         randomStarts,
                                         seed,
                                         reproducible,
+                                        pcaEnabled,
+                                        pcaMaxComponents,
                                         classFilter,
                                         normalizer,
                                         openData,
@@ -2021,6 +2143,8 @@ public class ScatterPlotView {
                                         // must read the written measurement instead (see allCellsWriteActive).
                                         fitLeidenReference = null;
                                         fitLeidenReferenceLabels = null;
+                                        fitPcaProjector = null;
+                                        fitPcaApplied = false;
                                         allCellsWriteActive = true;
 
                                         QuPathViewer viewer = qupath.getViewer();
@@ -2238,6 +2362,8 @@ public class ScatterPlotView {
         embeddingCombo.setDisable(disabled);
         fullUmapCheck.setDisable(disabled || embeddingCombo.getValue() != Embedding.UMAP);
         kSpinner.setDisable(disabled);
+        pcaEnabledCheck.setDisable(disabled);
+        pcaComponentsSpinner.setDisable(disabled || !pcaEnabledCheck.isSelected());
         annotationField.setDisable(disabled);
         classField.setDisable(disabled);
         clusterMarkersBtn.setDisable(disabled);
