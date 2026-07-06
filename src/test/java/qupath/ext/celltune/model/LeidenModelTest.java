@@ -352,6 +352,82 @@ class LeidenModelTest {
         assertEquals(1, resSingle.nClusters());
     }
 
+    // ── clusterViaAnn: all-cells single partition + reproducibility (LEI-06, LEI-10) ──
+
+    @Test
+    void clusterViaAnnAssignsEveryRowFromSinglePartitionAndRecoversBlobsByPurity() {
+        // Simulates a pooled-across-images cloud (no image concept exists at this
+        // pure-array layer -- that is CohortClusterModel's job): every pooled row
+        // must come out of ONE Leiden partition (labels().length == rows.length,
+        // no reference/query split) and each blob must be recovered by purity.
+        Random rng = new Random(303);
+        int per = 80;
+        int n = per * 3;
+        double[][] rows = new double[n][2];
+        fillBlob(rows, rng, 0, per, 0.0, 0.0, 0.3);
+        fillBlob(rows, rng, per, 2 * per, 25.0, 0.0, 0.3);
+        fillBlob(rows, rng, 2 * per, 3 * per, 0.0, 25.0, 0.3);
+
+        LeidenResult res = LeidenModel.clusterViaAnn(rows, 15, 0.3, 10, 404L, true);
+
+        assertEquals(n, res.labels().length, "Every pooled row must get a label from a single partition");
+        assertTrue(purity(res.labels(), 0, per) > 0.9, "Blob A not pure");
+        assertTrue(purity(res.labels(), per, 2 * per) > 0.9, "Blob B not pure");
+        assertTrue(purity(res.labels(), 2 * per, n) > 0.9, "Blob C not pure");
+    }
+
+    @Test
+    void clusterViaAnnReproducibleRunsAreIdenticalUpToPermutation() {
+        // SPEC Acceptance Criterion 6: two consecutive reproducible clusterViaAnn
+        // runs on the same input must yield labelings identical up to a label
+        // permutation -- asserted via Adjusted Rand Index == 1.0 (permutation-
+        // invariant), not a raw assertArrayEquals on label ids. Relies on Plan
+        // 15-01's seeded single-threaded HnswKnnIndex build for the reproducible
+        // path -- if this test goes flaky, that is a real defect upstream, not a
+        // reason to weaken the assertion.
+        Random rng = new Random(505);
+        int per = 60;
+        int n = per * 3;
+        double[][] rows = new double[n][2];
+        fillBlob(rows, rng, 0, per, 0.0, 0.0, 0.3);
+        fillBlob(rows, rng, per, 2 * per, 22.0, 0.0, 0.3);
+        fillBlob(rows, rng, 2 * per, n, 0.0, 22.0, 0.3);
+
+        LeidenResult a = LeidenModel.clusterViaAnn(rows, 15, 0.3, 10, 99L, true);
+        LeidenResult b = LeidenModel.clusterViaAnn(rows, 15, 0.3, 10, 99L, true);
+
+        double ari = adjustedRandIndex(a.labels(), b.labels());
+        assertEquals(
+                1.0,
+                ari,
+                1e-9,
+                "Two reproducible clusterViaAnn runs with the same seed must yield identical labels up to"
+                        + " permutation (ARI==1.0), got " + ari);
+    }
+
+    @Test
+    void transferLabelsStillWorksAfterAllCellsRewrite() {
+        // Quick guard for SPEC's "transferLabels and its Phase 14 tests remain
+        // present and passing" acceptance criterion -- transferLabels is
+        // untouched by this plan's primitive-array SNN rewrite; the dedicated
+        // tests above already cover it in depth, this is just a smoke check
+        // alongside the new all-cells tests.
+        Random rng = new Random(202);
+        int per = 30;
+        double[][] reference = new double[per * 2][2];
+        fillBlob(reference, rng, 0, per, 0.0, 0.0, 0.3);
+        fillBlob(reference, rng, per, per * 2, 20.0, 0.0, 0.3);
+        int[] refLabels = new int[per * 2];
+        Arrays.fill(refLabels, 0, per, 0);
+        Arrays.fill(refLabels, per, per * 2, 1);
+        double[][] query = {{0.1, 0.1}, {19.9, -0.1}};
+
+        int[] assigned = LeidenModel.transferLabels(query, reference, refLabels, 10, 2);
+
+        assertEquals(0, assigned[0], "Query near blob A must get label 0");
+        assertEquals(1, assigned[1], "Query near blob B must get label 1");
+    }
+
     // ── transferLabels ─────────────────────────────────────────────────────────
 
     @Test
