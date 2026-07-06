@@ -985,100 +985,135 @@ public final class CohortClusterModel {
         String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
 
-        long cellsWritten = 0;
-        List<String> written = new ArrayList<>();
-        List<String> notWritten = new ArrayList<>();
-        boolean cancelledDuringWrite = false;
-        int done = 0;
+        long[] cellsWrittenBox = {0};
+        int[] doneBox = {0};
+        int total = images.size();
 
-        for (int ord = 0; ord < images.size(); ord++) {
-            String name = images.get(ord);
-            if (token != null && token.isCancelled()) {
-                cancelledDuringWrite = true;
-                for (int rem = ord; rem < images.size(); rem++) {
-                    notWritten.add(images.get(rem));
-                }
-                log.accept("Cancelled — stopping before [" + name + "].");
-                break;
-            }
-
+        Pass2Outcome outcome = runPass2Loop(images, token, (ord, name) -> {
+            boolean ok;
             ProjectImageEntry<BufferedImage> entry = byName.get(name);
             if (entry == null) {
                 log.accept("[" + name + "] not in project — skipped");
-                notWritten.add(name);
-                done++;
-                progress.accept(done / (double) images.size());
-                continue;
-            }
-            boolean isOpen = name.equals(openName);
-            ImageData<BufferedImage> imageData;
-            try {
-                imageData = isOpen ? openData : entry.readImageData();
-            } catch (Exception e) {
-                log.accept("[" + name + "] could not load — skipped");
-                notWritten.add(name);
-                done++;
-                progress.accept(done / (double) images.size());
-                continue;
-            }
-            if (imageData == null) {
-                log.accept("[" + name + "] could not load — skipped");
-                notWritten.add(name);
-                done++;
-                progress.accept(done / (double) images.size());
-                continue;
-            }
+                ok = false;
+            } else {
+                boolean isOpen = name.equals(openName);
+                ImageData<BufferedImage> imageData;
+                try {
+                    imageData = isOpen ? openData : entry.readImageData();
+                } catch (Exception e) {
+                    imageData = null;
+                }
+                if (imageData == null) {
+                    log.accept("[" + name + "] could not load — skipped");
+                    ok = false;
+                } else {
+                    List<PathObject> cells = detections(imageData);
+                    int n = cells.size();
+                    if (n == 0) {
+                        log.accept("[" + name + "] no detections — skipped");
+                        ok = false;
+                    } else {
+                        Map<UuidKey, Integer> labelMap = labelMapForImage(
+                                pooled.uuidMsb(), pooled.uuidLsb(), pooled.imageOrdinal(), labels, ord);
 
-            List<PathObject> cells = detections(imageData);
-            int n = cells.size();
-            if (n == 0) {
-                log.accept("[" + name + "] no detections — skipped");
-                notWritten.add(name);
-                done++;
-                progress.accept(done / (double) images.size());
-                continue;
-            }
+                        double[] values = new double[n];
+                        Arrays.fill(values, -1.0);
+                        int assigned = 0;
+                        for (int i = 0; i < n; i++) {
+                            if (classFilterActive) {
+                                PathClass pc = cells.get(i).getPathClass();
+                                if (pc == null
+                                        || !pc.toString().toLowerCase().contains(classKw)) {
+                                    continue;
+                                }
+                            }
+                            var id = cells.get(i).getID();
+                            Integer label = labelMap.get(
+                                    new UuidKey(id.getMostSignificantBits(), id.getLeastSignificantBits()));
+                            if (label != null) {
+                                values[i] = label + 1.0;
+                                assigned++;
+                            }
+                        }
 
-            Map<UuidKey, Integer> labelMap =
-                    labelMapForImage(pooled.uuidMsb(), pooled.uuidLsb(), pooled.imageOrdinal(), labels, ord);
-
-            double[] values = new double[n];
-            Arrays.fill(values, -1.0);
-            int assigned = 0;
-            for (int i = 0; i < n; i++) {
-                if (classFilterActive) {
-                    PathClass pc = cells.get(i).getPathClass();
-                    if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
-                        continue;
+                        applyMeasurement(imageData, cells, values, isOpen);
+                        try {
+                            entry.saveImageData(imageData);
+                            cellsWrittenBox[0] += assigned;
+                            log.accept(String.format(
+                                    "Writing %d/%d images — [%s] cluster written to %,d of %,d cells",
+                                    ord + 1, total, name, assigned, n));
+                            ok = true;
+                        } catch (Exception e) {
+                            logger.error("Failed to save {}", name, e);
+                            log.accept("[" + name + "] save failed: " + e.getMessage());
+                            ok = false;
+                        }
                     }
                 }
-                var id = cells.get(i).getID();
-                Integer label = labelMap.get(new UuidKey(id.getMostSignificantBits(), id.getLeastSignificantBits()));
-                if (label != null) {
-                    values[i] = label + 1.0;
-                    assigned++;
-                }
             }
+            doneBox[0]++;
+            progress.accept(doneBox[0] / (double) total);
+            return ok;
+        });
 
-            applyMeasurement(imageData, cells, values, isOpen);
-            try {
-                entry.saveImageData(imageData);
-                written.add(name);
-                cellsWritten += assigned;
-                log.accept(String.format(
-                        "Writing %d/%d images — [%s] cluster written to %,d of %,d cells",
-                        done + 1, images.size(), name, assigned, n));
-            } catch (Exception e) {
-                logger.error("Failed to save {}", name, e);
-                log.accept("[" + name + "] save failed: " + e.getMessage());
-                notWritten.add(name);
-            }
-
-            done++;
-            progress.accept(done / (double) images.size());
+        if (outcome.cancelled() && !outcome.notWritten().isEmpty()) {
+            log.accept("Cancelled — stopping before [" + outcome.notWritten().get(0) + "].");
         }
 
-        return new AllCellsResult(nClusters, -1.0, cellsWritten, written, notWritten, false, cancelledDuringWrite);
+        return new AllCellsResult(
+                nClusters,
+                -1.0,
+                cellsWrittenBox[0],
+                outcome.written(),
+                outcome.notWritten(),
+                false,
+                outcome.cancelled());
+    }
+
+    /** Outcome of {@link #runPass2Loop}: which images were written, which weren't, and whether cancellation stopped the loop early. */
+    record Pass2Outcome(List<String> written, List<String> notWritten, boolean cancelled) {}
+
+    /**
+     * Pure pass-2 loop policy (LEI-10 Test C — cancel-leaves-written-intact):
+     * iterates {@code images} in order, checking {@code token.isCancelled()} at
+     * the TOP of each iteration — exactly where {@link #writeClusterAllCells}'s
+     * per-image loop checks it — and, once cancelled, stops WITHOUT attempting
+     * the current or any later image (they are reported not-written, per D-12:
+     * already-written images from earlier iterations keep their {@code Cluster}
+     * measurement). Otherwise delegates the per-image work to {@code
+     * processImage} (given the image's ordinal — matching {@link #poolAllCells}'s
+     * ordinal convention — and name), which returns true if that image was
+     * written. Exposed as a package-private pure seam, distinct from any live
+     * {@code Project}/{@code ImageData} I/O, so this exact cancel-then-report
+     * policy is unit-testable; {@link #writeClusterAllCells} delegates its own
+     * per-image loop to this method (not a duplicate copy).
+     *
+     * @param images       ordered image names for pass 2
+     * @param token        checked at the top of each iteration (nullable — never cancelled if null)
+     * @param processImage does the real per-image work; returns true if written
+     */
+    static Pass2Outcome runPass2Loop(
+            List<String> images, CancellationToken token, java.util.function.BiPredicate<Integer, String> processImage) {
+        List<String> written = new ArrayList<>();
+        List<String> notWritten = new ArrayList<>();
+        boolean cancelled = false;
+        for (int i = 0; i < images.size(); i++) {
+            String name = images.get(i);
+            if (token != null && token.isCancelled()) {
+                cancelled = true;
+                for (int rem = i; rem < images.size(); rem++) {
+                    notWritten.add(images.get(rem));
+                }
+                break;
+            }
+            if (processImage.test(i, name)) {
+                written.add(name);
+            } else {
+                notWritten.add(name);
+            }
+        }
+        return new Pass2Outcome(written, notWritten, cancelled);
     }
 
     /** Growable primitive {@code long} array — avoids boxed {@code Long} allocation while pooling tens of millions of UUID halves. */
