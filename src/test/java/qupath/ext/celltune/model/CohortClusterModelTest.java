@@ -27,6 +27,8 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
+import qupath.lib.projects.Project;
+import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
@@ -408,6 +410,122 @@ class CohortClusterModelTest {
         }
         int totalCounted = Arrays.stream(result.counts()).sum();
         assertEquals(n, totalCounted, "every pooled row must land in some cluster's count");
+    }
+
+    // ── writeClusterAllCells: cancel-during-write install guard ──────────────────
+
+    /** A minimal fake {@link ProjectImageEntry} backed by an in-memory {@link ImageData}, no disk I/O. */
+    @SuppressWarnings("unchecked")
+    private static ProjectImageEntry<BufferedImage> fakeEntry(String imageName, ImageData<BufferedImage> data) {
+        return (ProjectImageEntry<BufferedImage>) Proxy.newProxyInstance(
+                ProjectImageEntry.class.getClassLoader(),
+                new Class[] {ProjectImageEntry.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getImageName" -> imageName;
+                    case "readImageData" -> data;
+                    case "saveImageData" -> null;
+                    case "toString" -> "FakeEntry(" + imageName + ")";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default ->
+                        throw new UnsupportedOperationException(
+                                "Method not implemented in fake entry: " + method.getName());
+                });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Project<BufferedImage> fakeProject(List<ProjectImageEntry<BufferedImage>> entries) {
+        return (Project<BufferedImage>) Proxy.newProxyInstance(
+                Project.class.getClassLoader(),
+                new Class[] {Project.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getImageList" -> entries;
+                    case "toString" -> "FakeProject";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default ->
+                        throw new UnsupportedOperationException(
+                                "Method not implemented in fake project: " + method.getName());
+                });
+    }
+
+    /** {@code n} cells split into two well-separated marker-space blobs, so Leiden reliably finds >1 cluster. */
+    private static List<PathObject> blobCells(List<String> markers, int n, double xOffset, Random rng) {
+        List<PathObject> cells = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            PathObject cell = detectionAt(xOffset + i * 10, 0);
+            double shift = i % 2 == 0 ? 0.0 : 25.0;
+            for (String marker : markers) {
+                cell.getMeasurementList().put(marker, shift + rng.nextGaussian());
+            }
+            cells.add(cell);
+        }
+        return cells;
+    }
+
+    @Test
+    void writeClusterAllCellsInstallGuardIsSatisfiedOnCancelledButValidWrite() {
+        // Fix 5 regression guard: writeClusterAllCells's own clustering (pass 1 pooling + the
+        // single Leiden partition) always completes BEFORE the pass-2 write loop starts -- a
+        // cancel only stops the write loop partway through. So a cancelled-but-non-aborted
+        // AllCellsResult must still carry a fully populated nClusters/centroids/clusterCounts --
+        // exactly what ScatterPlotView's install guard (fCentroids != null && fNClusters > 0) now
+        // checks instead of gating on "not cancelled". This exercises the REAL production method
+        // end-to-end (not just the pure runPass2Loop seam already covered above).
+        List<String> markers = List.of("M1", "M2", "M3");
+        Random rng = new Random(11);
+        List<PathObject> image1Cells = blobCells(markers, 30, 0, rng);
+        List<PathObject> image2Cells = blobCells(markers, 30, 1000, rng);
+
+        ImageData<BufferedImage> data1 = fakeImageData(hierarchyWith(image1Cells));
+        ImageData<BufferedImage> data2 = fakeImageData(hierarchyWith(image2Cells));
+        var project = fakeProject(List.of(fakeEntry("image1", data1), fakeEntry("image2", data2)));
+
+        CancellationToken token = new CancellationToken();
+        // Cancel right after pass 2 writes the FIRST image (mirrors
+        // cancelLeavesWrittenIntactAndReportsUnwrittenImages's mid-loop cancel timing, but here
+        // driven by the real writeClusterAllCells log stream instead of a synthetic seam).
+        List<String> logMessages = new ArrayList<>();
+        java.util.function.Consumer<String> log = msg -> {
+            logMessages.add(msg);
+            if (msg.startsWith("Writing")) {
+                token.cancel();
+            }
+        };
+
+        CohortClusterModel.AllCellsResult result = CohortClusterModel.writeClusterAllCells(
+                project,
+                List.of("image1", "image2"),
+                markers,
+                10,
+                1.0,
+                1,
+                42L,
+                true,
+                false,
+                0,
+                null,
+                null,
+                null,
+                null,
+                token,
+                log,
+                frac -> {});
+
+        assertFalse(result.aborted(), "recall gate must not fail on this small, well-separated synthetic dataset");
+        assertTrue(result.cancelled(), "the run must report cancellation (triggered after image1's write)");
+        assertEquals(List.of("image1"), result.imagesWritten(), "image1 must have been written before cancel");
+        assertEquals(List.of("image2"), result.imagesNotWritten(), "image2 must be reported unwritten after cancel");
+
+        // The install-guard contract: nClusters/centroids/clusterCounts must be populated even
+        // though the run was cancelled, because clustering itself already succeeded before any
+        // write happened.
+        assertTrue(result.nClusters() > 0, "a cancelled-but-valid run must still report a real cluster count");
+        assertNotNull(result.centroids(), "centroids must be populated on a cancelled-but-valid run");
+        assertEquals(result.nClusters(), result.centroids().length);
+        assertNotNull(result.clusterCounts(), "clusterCounts must be populated on a cancelled-but-valid run");
+        assertEquals(result.nClusters(), result.clusterCounts().length);
+        assertTrue(result.cellsWritten() > 0, "the written image's cells must have received a cluster id");
     }
 
     // ── selectImageSource (pool the open image from live data, not disk) ────────

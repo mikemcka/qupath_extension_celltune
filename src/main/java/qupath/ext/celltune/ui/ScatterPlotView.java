@@ -2002,15 +2002,17 @@ public class ScatterPlotView {
      * re-syncs the legend to the FINAL all-cells cluster count (LEI-09), not the preview
      * subsample's {@link #fitNClusters}.
      * <p>
-     * Bug fix: on a successful (non-cancelled, non-aborted) write, this installs the FULL
-     * all-cells fit-state (not just the on-slide overlay via {@link #activateClusterMapper}) —
-     * {@link #fitNClusters}/{@link #fitCentroids}/{@link #fitAllCellsCounts}/{@link #fitMarkers}/
-     * {@link #fitMean}/{@link #fitSd} — and sets {@link #allCellsWriteActive}, so the scatter
-     * legend ({@code plot.redraw()}) and the "Assign Cohort Clusters to Classes" dialog
+     * Bug fix: on any non-aborted write (including one the user CANCELLED partway through the
+     * write loop — clustering itself always completes before that loop starts, so the partition
+     * is already fully valid by then), this installs the FULL all-cells fit-state (not just the
+     * on-slide overlay via {@link #activateClusterMapper}) — {@link #fitNClusters}/
+     * {@link #fitCentroids}/{@link #fitAllCellsCounts}/{@link #fitMarkers}/{@link #fitMean}/
+     * {@link #fitSd} — and sets {@link #allCellsWriteActive}, so the scatter legend
+     * ({@code plot.redraw()}) and the "Assign Cohort Clusters to Classes" dialog
      * ({@link #applyClustersToClasses}, via {@link #clusterCounts}) both reflect the all-cells
      * partition, and subsequent cluster→class assignment reads the WRITTEN measurement
      * ({@link #assignAcrossProjectByMeasurement}) instead of re-transferring against the now-stale
-     * preview Leiden reference.
+     * preview Leiden reference — even for the images that already got the write before cancel.
      */
     private void writeClusterAllCellsAcrossProject() {
         final Project<BufferedImage> project = qupath.getProject();
@@ -2127,7 +2129,17 @@ public class ScatterPlotView {
                                 final double[] fPooledMean = result.mean();
                                 final double[] fPooledSd = result.sd();
                                 Platform.runLater(() -> {
-                                    if (!fCancelled) {
+                                    // Bug fix (T-16-xx / cancel-mid-write re-sync gap): result.aborted() already
+                                    // returned above, so by this point the all-cells partition (nClusters/
+                                    // centroids/counts) is always fully valid — clustering completes BEFORE the
+                                    // write loop runs, and a cancel only stops the write loop partway through
+                                    // writing already-clustered images. Install the fit-state whenever the run
+                                    // was NOT aborted (guarding defensively on a populated centroids/nClusters
+                                    // pair, which also excludes the degenerate empty-images case), NOT only when
+                                    // the write wasn't cancelled — otherwise a cancelled-but-valid write leaves
+                                    // the legend/Assign dialog bound to the stale preview fit while some images
+                                    // already carry the real all-cells Cluster measurement.
+                                    if (fCentroids != null && fNClusters > 0) {
                                         // Bug fix (LEI-09 re-sync gap): install the ALL-CELLS fit-state —
                                         // not just re-color the on-slide overlay — so the scatter legend
                                         // AND the "Assign Cohort Clusters to Classes" dialog both reflect
