@@ -1,12 +1,26 @@
+---
+gsd_state_version: 1.0
+milestone: v1.1
+milestone_name: - Reliability and Verification Hardening
+status: unknown
+last_updated: "2026-07-06T01:14:07.415Z"
+progress:
+  total_phases: 11
+  completed_phases: 8
+  total_plans: 18
+  completed_plans: 16
+  percent: 89
+---
+
 # Project State
 
 ## Current Position
 
-- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 14 executing — at manual verification checkpoint)
-- Phase: 14 tasks 1-6 complete + Task 7 automated gate green, awaiting manual in-QuPath verification; 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
-- Plan: 14-01 executed (commits f30c8aa..82532da), SUMMARY filed; 13-01-PLAN.md filed (CN spatial clustering)
-- Status: phase 14 code + build/test/shadowJar green; blocked only on manual QuPath GUI verification (Task 7); v1.1 hardening (phases 6-9) remains pending
-- Last activity: 2026-07-02 - executed Leiden phenotype clustering (LeidenModel + Method selector + cohort kNN transfer + CWTS dep + tests); fat JAR built at build/libs/qupath-extension-celltune-0.2.0-all.jar, awaiting user manual verification
+- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 15 discuss complete — ready for planning)
+- Phase: 15 (all-cells true-scanpy Leiden) SPEC + CONTEXT filed; 14 code complete (transfer path) with Jul-3 perf/scatter fixes committed; 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
+- Plan: 15 not yet planned (SPEC 85c1164, CONTEXT d36b2ef); 14-01 executed; 13-01-PLAN.md filed (CN spatial clustering)
+- Status: Phase 15 requirements locked (8 reqs, ambiguity 0.15) and implementation decisions captured (ANN library deferred to researcher, radio-pair cohort UI, runtime recall gate, batch UX); ready for /gsd-plan-phase 15
+- Last activity: 2026-07-06 - spec'd + discussed Phase 15: replace cohort kNN transfer with all-cells clustering (pool → HNSW kNN graph → one CWTS Leiden → UUID two-pass write-back), retaining transfer as selectable mode
 
 ## Carry-Forward Context
 
@@ -27,5 +41,5 @@
 
 ## Session Continuity
 
-- Recommended next action: manually verify phase 14 Leiden flow in QuPath (load build/libs/qupath-extension-celltune-0.2.0-all.jar), then confirm to mark Task 7 / phase 14 complete
-- Alternative: /gsd-execute-phase 13 (CN spatial clustering, plan filed) or /gsd-plan-phase 6 to resume the v1.1 hardening flow
+- Recommended next action: /gsd-plan-phase 15 — plan the all-cells true-scanpy Leiden clustering (SPEC + CONTEXT filed); researcher should first confirm the ANN library choice (jelmerk/Lucene/other, GPL-3.0-compatible) per CONTEXT D-01
+- Alternative: manually verify phase 14 Leiden flow in QuPath (build/libs/qupath-extension-celltune-0.2.0-all.jar); or /gsd-execute-phase 13 (CN spatial clustering); or /gsd-plan-phase 6 to resume v1.1 hardening
