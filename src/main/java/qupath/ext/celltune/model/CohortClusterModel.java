@@ -1043,8 +1043,7 @@ public final class CohortClusterModel {
                         for (int i = 0; i < n; i++) {
                             if (classFilterActive) {
                                 PathClass pc = cells.get(i).getPathClass();
-                                if (pc == null
-                                        || !pc.toString().toLowerCase().contains(classKw)) {
+                                if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
                                     continue;
                                 }
                             }
@@ -1115,7 +1114,9 @@ public final class CohortClusterModel {
      * @param processImage does the real per-image work; returns true if written
      */
     static Pass2Outcome runPass2Loop(
-            List<String> images, CancellationToken token, java.util.function.BiPredicate<Integer, String> processImage) {
+            List<String> images,
+            CancellationToken token,
+            java.util.function.BiPredicate<Integer, String> processImage) {
         List<String> written = new ArrayList<>();
         List<String> notWritten = new ArrayList<>();
         boolean cancelled = false;
