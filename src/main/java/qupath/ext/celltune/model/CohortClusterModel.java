@@ -43,7 +43,8 @@ import qupath.lib.projects.ProjectImageEntry;
  * z-scoring the full cohort and capturing each cell's packed {@code (msb,lsb)}
  * UUID before releasing its hierarchy; the single Leiden partition then runs over
  * the fully pooled matrix; {@link #writeClusterAllCells} re-reads each image and
- * writes the {@link #CLUSTER_MEASUREMENT} by UUID lookup ({@link #labelMapForImage}),
+ * writes the {@link #CLUSTER_MEASUREMENT} by UUID lookup against a single global
+ * ({@link #buildGlobalLabelMap}) map built once in O(n),
  * so a reordered second read still labels every cell correctly. A
  * {@link CancellationToken} allows honoring cancellation between images and at
  * phase boundaries, and an {@link AnnRecallException} from {@code clusterViaAnn}
@@ -869,28 +870,30 @@ public final class CohortClusterModel {
     record UuidKey(long msb, long lsb) {}
 
     /**
-     * Pure, testable helper (LEI-08): builds a reorder-independent
-     * {@code (msb,lsb) → community label} lookup for ONE image's slice of the
-     * pooled arrays, filtering by {@code targetOrdinal}. Because the lookup is
-     * keyed on each cell's exact UUID value (not its position in {@code labels}),
-     * a caller reading that image's cells back in ANY order — shuffled, reversed,
-     * whatever a second {@code readImageData()} happens to return — still resolves
-     * every cell to the correct label.
+     * Pure, testable helper (LEI-08, O(n) — one pass over the full pooled
+     * arrays): builds a SINGLE reorder-independent {@code (msb,lsb) → community
+     * label} lookup covering EVERY pooled cell across every image. Because
+     * {@link PathObject} UUIDs are globally unique, a per-image ordinal filter
+     * is unnecessary for correctness — a UUID resolves to exactly one label
+     * regardless of which image it came from — so this map is built ONCE before
+     * the pass-2 loop and reused for every image's lookup, instead of rescanning
+     * the entire pooled arrays per image (the prior {@code labelMapForImage}
+     * helper this replaces was O(images × totalPooledCells), defeating the
+     * cohort-scale design). Because the lookup is keyed on each cell's exact
+     * UUID value (not its position in {@code labels}), a caller reading an
+     * image's cells back in ANY order — shuffled, reversed, whatever a second
+     * {@code readImageData()} happens to return — still resolves every cell to
+     * the correct label.
      *
-     * @param msb           packed UUID most-significant bits, parallel to {@code labels}
-     * @param lsb           packed UUID least-significant bits, parallel to {@code labels}
-     * @param imageOrdinal  source-image ordinal per pooled row, parallel to {@code labels}
-     * @param labels        community label per pooled row (from a single
-     *                      {@link LeidenModel#clusterViaAnn} partition)
-     * @param targetOrdinal the image ordinal to build the lookup for
+     * @param msb    packed UUID most-significant bits, parallel to {@code labels}
+     * @param lsb    packed UUID least-significant bits, parallel to {@code labels}
+     * @param labels community label per pooled row (from a single
+     *               {@link LeidenModel#clusterViaAnn} partition)
      */
-    static Map<UuidKey, Integer> labelMapForImage(
-            long[] msb, long[] lsb, int[] imageOrdinal, int[] labels, int targetOrdinal) {
-        Map<UuidKey, Integer> map = new HashMap<>();
-        for (int i = 0; i < imageOrdinal.length; i++) {
-            if (imageOrdinal[i] == targetOrdinal) {
-                map.put(new UuidKey(msb[i], lsb[i]), labels[i]);
-            }
+    static Map<UuidKey, Integer> buildGlobalLabelMap(long[] msb, long[] lsb, int[] labels) {
+        Map<UuidKey, Integer> map = new HashMap<>(labels.length * 2);
+        for (int i = 0; i < labels.length; i++) {
+            map.put(new UuidKey(msb[i], lsb[i]), labels[i]);
         }
         return map;
     }
@@ -1006,10 +1009,11 @@ public final class CohortClusterModel {
      * across {@code images} via {@link #poolAllCells}, runs a SINGLE
      * {@link LeidenModel#clusterViaAnn} partition over the whole pooled matrix (no
      * per-image sub-clustering, no transfer), and re-reads each image in a second
-     * pass to write the {@link #CLUSTER_MEASUREMENT} by UUID lookup
-     * ({@link #labelMapForImage}) — so a reordered second read still labels every
-     * cell correctly (T-15-08: a UUID from pass 1 not found in pass 2's re-read is
-     * a cell edited/deleted between passes and is silently left at -1, never a
+     * pass to write the {@link #CLUSTER_MEASUREMENT} by UUID lookup against a
+     * SINGLE global map built once in O(n) ({@link #buildGlobalLabelMap}) — not
+     * rescanned per image — so a reordered second read still labels every cell
+     * correctly (T-15-08: a UUID from pass 1 not found in pass 2's re-read is a
+     * cell edited/deleted between passes and is silently left at -1, never a
      * crash).
      * <p>
      * If {@code clusterViaAnn} throws {@link AnnRecallException}, NOTHING is
@@ -1121,6 +1125,11 @@ public final class CohortClusterModel {
         String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
 
+        // Built ONCE in O(totalPooledCells) — PathObject UUIDs are globally unique, so a single
+        // map lookup resolves every cell's label regardless of which image it came from. Replaces
+        // the prior per-image labelMapForImage rescans (O(images x totalPooledCells)).
+        Map<UuidKey, Integer> globalLabelMap = buildGlobalLabelMap(pooled.uuidMsb(), pooled.uuidLsb(), labels);
+
         long[] cellsWrittenBox = {0};
         int[] doneBox = {0};
         int total = images.size();
@@ -1149,9 +1158,6 @@ public final class CohortClusterModel {
                         log.accept("[" + name + "] no detections — skipped");
                         ok = false;
                     } else {
-                        Map<UuidKey, Integer> labelMap = labelMapForImage(
-                                pooled.uuidMsb(), pooled.uuidLsb(), pooled.imageOrdinal(), labels, ord);
-
                         double[] values = new double[n];
                         Arrays.fill(values, -1.0);
                         int assigned = 0;
@@ -1163,7 +1169,7 @@ public final class CohortClusterModel {
                                 }
                             }
                             var id = cells.get(i).getID();
-                            Integer label = labelMap.get(
+                            Integer label = globalLabelMap.get(
                                     new UuidKey(id.getMostSignificantBits(), id.getLeastSignificantBits()));
                             if (label != null) {
                                 values[i] = label + 1.0;

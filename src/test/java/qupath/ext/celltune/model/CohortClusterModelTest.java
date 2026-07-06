@@ -30,9 +30,10 @@ import qupath.lib.roi.interfaces.ROI;
  * Tests the deterministic core of the cohort clustering backend: distinct-index
  * sampling and nearest-centroid assignment (the rule that gives every image's
  * cells a cohort-consistent cluster label), plus the all-cells (LEI-06/LEI-08)
- * two-pass driver's pure seams: packed-UUID reorder-safe write-back
- * ({@link CohortClusterModel#labelMapForImage}), pass-2 cancellation bookkeeping
- * ({@link CohortClusterModel#runPass2Loop}), and recall-gate abort handling
+ * two-pass driver's pure seams: packed-UUID reorder-safe write-back via a single
+ * global O(n) map ({@link CohortClusterModel#buildGlobalLabelMap}), pass-2
+ * cancellation bookkeeping ({@link CohortClusterModel#runPass2Loop}), and
+ * recall-gate abort handling
  * ({@link CohortClusterModel#clusterOrAbort}). These pure helpers are exercised
  * directly against synthetic/real {@link PathObject}s (no live {@code Project}/
  * {@code ImageData} required — see AnnotationLabelCollectorTest's real-hierarchy
@@ -69,15 +70,15 @@ class CohortClusterModelTest {
 
     @Test
     void uuidWriteBackSurvivesReorder() {
-        // Two synthetic "images": image A (ordinal 0, 4 cells) and image B
-        // (ordinal 1, 5 cells), each with real PathObjects (real getID()s).
+        // Two synthetic "images": image A (4 cells) and image B (5 cells), each with
+        // real PathObjects (real getID()s).
         List<PathObject> imageACells = detections(4, 0);
         List<PathObject> imageBCells = detections(5, 1000);
         hierarchyWith(imageACells); // constructed to mirror a real per-image hierarchy; not otherwise used
         hierarchyWith(imageBCells);
 
-        // Simulate pass 1's pooling: capture every cell's packed UUID + source
-        // image ordinal, in pooled order (image A's cells first, then image B's).
+        // Simulate pass 1's pooling: capture every cell's packed UUID, in pooled
+        // order (image A's cells first, then image B's).
         List<PathObject> pooledOrder = new ArrayList<>();
         pooledOrder.addAll(imageACells);
         pooledOrder.addAll(imageBCells);
@@ -85,21 +86,19 @@ class CohortClusterModelTest {
         int m = pooledOrder.size();
         long[] msb = new long[m];
         long[] lsb = new long[m];
-        int[] imageOrdinal = new int[m];
         int[] labels = new int[m];
         Map<PathObject, Integer> expectedLabelByCell = new HashMap<>();
         for (int i = 0; i < m; i++) {
             PathObject cell = pooledOrder.get(i);
             msb[i] = cell.getID().getMostSignificantBits();
             lsb[i] = cell.getID().getLeastSignificantBits();
-            imageOrdinal[i] = i < imageACells.size() ? 0 : 1;
             labels[i] = i % 3; // an arbitrary synthetic Leiden community label per pooled row
             expectedLabelByCell.put(cell, labels[i]);
         }
 
-        // Pass 2, for image B (ordinal 1): build the reorder-independent lookup
-        // via the EXACT production helper.
-        Map<UuidKey, Integer> labelMapB = CohortClusterModel.labelMapForImage(msb, lsb, imageOrdinal, labels, 1);
+        // Build the SINGLE global reorder-independent lookup via the EXACT production
+        // helper — no per-image ordinal filtering, built once for the whole cohort.
+        Map<UuidKey, Integer> globalLabelMap = CohortClusterModel.buildGlobalLabelMap(msb, lsb, labels);
 
         // Read image B's cells back in a SHUFFLED order (simulating a second
         // readImageData() call returning cells in a different order) and confirm
@@ -113,7 +112,7 @@ class CohortClusterModelTest {
         for (PathObject cell : shuffledB) {
             UuidKey key = new UuidKey(
                     cell.getID().getMostSignificantBits(), cell.getID().getLeastSignificantBits());
-            Integer looked = labelMapB.get(key);
+            Integer looked = globalLabelMap.get(key);
             assertNotNull(looked, "every image-B cell must resolve a label via its UUID");
             assertEquals(
                     expectedLabelByCell.get(cell),
@@ -127,14 +126,18 @@ class CohortClusterModelTest {
         for (PathObject cell : reversedB) {
             UuidKey key = new UuidKey(
                     cell.getID().getMostSignificantBits(), cell.getID().getLeastSignificantBits());
-            assertEquals(expectedLabelByCell.get(cell), labelMapB.get(key));
+            assertEquals(expectedLabelByCell.get(cell), globalLabelMap.get(key));
         }
 
-        // image A's cells must NOT appear in image B's label map (ordinal filter).
+        // image A's cells must ALSO resolve correctly through the SAME global map
+        // (no ordinal filtering — one map serves every image).
         for (PathObject cell : imageACells) {
             UuidKey key = new UuidKey(
                     cell.getID().getMostSignificantBits(), cell.getID().getLeastSignificantBits());
-            assertNull(labelMapB.get(key), "image A's cells must not leak into image B's label map");
+            assertEquals(
+                    expectedLabelByCell.get(cell),
+                    globalLabelMap.get(key),
+                    "image A's cells must resolve via the same global map used for image B");
         }
     }
 
@@ -153,37 +156,56 @@ class CohortClusterModelTest {
         int m = pooledOrder.size();
         long[] msb = new long[m];
         long[] lsb = new long[m];
-        int[] imageOrdinal = new int[m];
         int[] labels = new int[m];
         for (int i = 0; i < m; i++) {
             PathObject cell = pooledOrder.get(i);
             msb[i] = cell.getID().getMostSignificantBits();
             lsb[i] = cell.getID().getLeastSignificantBits();
-            imageOrdinal[i] = i < imageACells.size() ? 0 : 1;
             labels[i] = i;
         }
 
         // Pooled row count == total detections across both images.
         assertEquals(totalCells, m, "pooled row count must equal total detections across all images");
 
-        Map<UuidKey, Integer> mapA = CohortClusterModel.labelMapForImage(msb, lsb, imageOrdinal, labels, 0);
-        Map<UuidKey, Integer> mapB = CohortClusterModel.labelMapForImage(msb, lsb, imageOrdinal, labels, 1);
+        // A SINGLE global map (built once, O(n)) must resolve every pooled cell to its own
+        // label, regardless of which image (A or B) it came from -- no per-image rescans.
+        Map<UuidKey, Integer> globalMap = CohortClusterModel.buildGlobalLabelMap(msb, lsb, labels);
 
-        // Each image's map has exactly that image's cell count -- no collisions, no
-        // missing entries -- and every pooled UUID resolves back to exactly one label.
-        assertEquals(imageACells.size(), mapA.size());
-        assertEquals(imageBCells.size(), mapB.size());
+        assertEquals(totalCells, globalMap.size(), "global map must have exactly one entry per pooled cell");
         for (PathObject cell : imageACells) {
             UuidKey key = new UuidKey(
                     cell.getID().getMostSignificantBits(), cell.getID().getLeastSignificantBits());
-            assertTrue(mapA.containsKey(key));
-            assertFalse(mapB.containsKey(key), "image A cell must not resolve in image B's map");
+            assertTrue(globalMap.containsKey(key), "image A cell must resolve in the global map");
         }
         for (PathObject cell : imageBCells) {
             UuidKey key = new UuidKey(
                     cell.getID().getMostSignificantBits(), cell.getID().getLeastSignificantBits());
-            assertTrue(mapB.containsKey(key));
-            assertFalse(mapA.containsKey(key), "image B cell must not resolve in image A's map");
+            assertTrue(globalMap.containsKey(key), "image B cell must resolve in the global map");
+        }
+
+        // Lookup is independent of image order: building the map from a SHUFFLED pooled
+        // order still resolves every cell to its original per-row label.
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < m; i++) {
+            order.add(i);
+        }
+        Collections.shuffle(order, new Random(3));
+        long[] shuffledMsb = new long[m];
+        long[] shuffledLsb = new long[m];
+        int[] shuffledLabels = new int[m];
+        for (int i = 0; i < m; i++) {
+            int src = order.get(i);
+            shuffledMsb[i] = msb[src];
+            shuffledLsb[i] = lsb[src];
+            shuffledLabels[i] = labels[src];
+        }
+        Map<UuidKey, Integer> shuffledMap =
+                CohortClusterModel.buildGlobalLabelMap(shuffledMsb, shuffledLsb, shuffledLabels);
+        for (int i = 0; i < m; i++) {
+            PathObject cell = pooledOrder.get(i);
+            UuidKey key = new UuidKey(
+                    cell.getID().getMostSignificantBits(), cell.getID().getLeastSignificantBits());
+            assertEquals(globalMap.get(key), shuffledMap.get(key), "lookup must be independent of pooled row order");
         }
     }
 
