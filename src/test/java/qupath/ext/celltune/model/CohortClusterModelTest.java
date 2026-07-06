@@ -318,6 +318,47 @@ class CohortClusterModelTest {
         assertArrayEquals(new double[] {2.0}, result.centroids()[0], 1e-9);
     }
 
+    @Test
+    void centroidsAndCountsStayInMarkerSpaceRegardlessOfPcaClusteringInput() {
+        // Requirement 4/Task 4 guard: when the all-cells driver PCA-reduces the pooled matrix
+        // BEFORE clusterViaAnn, centroidsAndCounts must still be called on the ORIGINAL pooled
+        // z-scored MARKER matrix (not the PCA-reduced one) -- this pins that contract down by
+        // actually clustering in PC space and then computing centroids from the marker rows,
+        // asserting the returned centroid width is nMarkers (not nComponents).
+        Random rng = new Random(77);
+        int per = 200;
+        int n = per * 2;
+        int nMarkers = 80; // > ScatterMath.PCA_DEFAULT_THRESHOLD (50) so PCA reduction applies.
+        double[][] raw = new double[n][nMarkers];
+        for (int i = 0; i < n; i++) {
+            double blobShift = i < per ? 0.0 : 20.0;
+            for (int j = 0; j < nMarkers; j++) {
+                raw[i][j] = blobShift + rng.nextGaussian() * 0.5;
+            }
+        }
+        double[][] markerSpace = ScatterMath.standardizeColumns(raw);
+
+        ScatterMath.PcaReduction pca = ScatterMath.pcaReduce(markerSpace, 10, 50, 100_000, 42L);
+        assertTrue(pca.applied(), "80 columns > threshold 50 must trigger PCA");
+        assertEquals(10, pca.reduced()[0].length, "clustering input must be PC-space width");
+
+        LeidenResult clustered = LeidenModel.clusterViaAnn(pca.reduced(), 15, 0.5, 5, 42L, true);
+        int nClusters = Math.max(1, clustered.nClusters());
+
+        // Centroids computed from the ORIGINAL marker-space matrix (never pca.reduced()).
+        CentroidsAndCounts result =
+                CohortClusterModel.centroidsAndCounts(markerSpace, clustered.labels(), nClusters, nMarkers);
+
+        for (double[] centroid : result.centroids()) {
+            assertEquals(
+                    nMarkers,
+                    centroid.length,
+                    "centroid width must be nMarkers (marker space), not nComponents (PC space)");
+        }
+        int totalCounted = Arrays.stream(result.counts()).sum();
+        assertEquals(n, totalCounted, "every pooled row must land in some cluster's count");
+    }
+
     // ── classForMeasurementValue / assignmentsFromMeasurement (all-cells assign) ─
 
     @Test

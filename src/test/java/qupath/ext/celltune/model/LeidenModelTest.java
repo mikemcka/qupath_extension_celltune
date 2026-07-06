@@ -428,6 +428,80 @@ class LeidenModelTest {
         assertEquals(1, assigned[1], "Query near blob B must get label 1");
     }
 
+    // ── conditional PCA reduction before clustering (dominance/degradation fix) ──
+
+    @Test
+    void pcaOnRecoversCommunitiesBetterThanPcaOffWhenSignalIsDrownedByManyNoisyMeasurements() {
+        // Reproduces the real-project failure mode this feature fixes: a SMALL number of true
+        // signal markers (2 here, matching clusterRecoversThreeSeparatedBlobsByPurity's 2D
+        // blobs) separating 3 known communities, plus a LARGE number of other per-cell
+        // measurement columns that carry no cluster structure at all (independent noise —
+        // "other markers/measurements" a wide real panel also carries). After z-scoring, every
+        // column has equal (unit) per-column variance, so raw brute-force Euclidean kNN weighs
+        // the 2 informative columns and the many uninformative ones EQUALLY: with enough
+        // uninformative columns their combined random fluctuation swamps the fixed signal
+        // separation from just 2 columns, degrading the neighbour graph and Leiden's recovered
+        // communities entirely (empirically: raw kNN here collapses to a single giant
+        // "cluster", ARI ~ 0). PCA's covariance eigendecomposition instead ranks the (weakly
+        // but genuinely) correlated pair of signal columns above the independent noise
+        // columns' eigenvalues, so a modest kept-component count recovers the true structure.
+        // Both methods run through the SAME clusterViaAnn call — only the input matrix differs
+        // (PCA-reduced vs raw z-scored) — isolating the reduction itself.
+        Random rng = new Random(2024);
+        int per = 3000;
+        int n = per * 3;
+        double[][] signal = new double[n][2];
+        fillBlob(signal, rng, 0, per, 0.0, 0.0, 0.3);
+        fillBlob(signal, rng, per, 2 * per, 20.0, 0.0, 0.3);
+        fillBlob(signal, rng, 2 * per, 3 * per, 0.0, 20.0, 0.3);
+        int[] trueLabels = new int[n];
+        Arrays.fill(trueLabels, 0, per, 0);
+        Arrays.fill(trueLabels, per, 2 * per, 1);
+        Arrays.fill(trueLabels, 2 * per, 3 * per, 2);
+
+        int noiseColumns = 60; // far outnumbers the 2 true signal columns (62 total > threshold 50).
+        double[][] raw = appendUninformativeNoiseColumns(signal, noiseColumns, rng);
+
+        double[][] std = ScatterMath.standardizeColumns(raw);
+        ScatterMath.PcaReduction pcaOff = ScatterMath.pcaReduce(std, 0, 50, 100_000, 42L);
+        ScatterMath.PcaReduction pcaOn = ScatterMath.pcaReduce(std, 5, 50, 100_000, 42L);
+        assertFalse(pcaOff.applied(), "PCA-off control must be a genuine no-op pass-through");
+        assertTrue(pcaOn.applied(), "62 columns > threshold 50 must trigger PCA");
+
+        LeidenResult withoutPca = LeidenModel.clusterViaAnn(pcaOff.reduced(), 15, 0.3, 10, 42L, true);
+        LeidenResult withPca = LeidenModel.clusterViaAnn(pcaOn.reduced(), 15, 0.3, 10, 42L, true);
+
+        double ariWithout = adjustedRandIndex(trueLabels, withoutPca.labels());
+        double ariWith = adjustedRandIndex(trueLabels, withPca.labels());
+
+        assertTrue(
+                ariWith > ariWithout + 0.1,
+                String.format(
+                        "PCA-on ARI (%.3f) must materially exceed PCA-off ARI (%.3f) recovering the 3 true"
+                                + " communities from noise-drowned measurements",
+                        ariWith, ariWithout));
+        assertTrue(ariWith > 0.8, "PCA-on must recover the true communities well, got ARI " + ariWith);
+    }
+
+    /**
+     * Appends {@code noiseColumns} independent, cluster-agnostic random columns (mean 0, unit
+     * variance — i.i.d. per cell, unrelated to {@code signal} or the true community structure)
+     * onto {@code signal}'s true marker columns — the "many other measurements a wide real
+     * panel also carries" scenario.
+     */
+    private static double[][] appendUninformativeNoiseColumns(double[][] signal, int noiseColumns, Random rng) {
+        int n = signal.length;
+        int d = signal[0].length;
+        double[][] out = new double[n][d + noiseColumns];
+        for (int i = 0; i < n; i++) {
+            System.arraycopy(signal[i], 0, out[i], 0, d);
+            for (int c = 0; c < noiseColumns; c++) {
+                out[i][d + c] = rng.nextGaussian();
+            }
+        }
+        return out;
+    }
+
     // ── transferLabels ─────────────────────────────────────────────────────────
 
     @Test
