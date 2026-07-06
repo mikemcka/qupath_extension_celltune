@@ -16,11 +16,11 @@ progress:
 
 ## Current Position
 
-- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 15 discuss complete — ready for planning)
-- Phase: 15 (all-cells true-scanpy Leiden) SPEC + CONTEXT filed; 14 code complete (transfer path) with Jul-3 perf/scatter fixes committed; 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
-- Plan: 15 not yet planned (SPEC 85c1164, CONTEXT d36b2ef); 14-01 executed; 13-01-PLAN.md filed (CN spatial clustering)
-- Status: Phase 15 requirements locked (8 reqs, ambiguity 0.15) and implementation decisions captured (ANN library deferred to researcher, radio-pair cohort UI, runtime recall gate, batch UX); ready for /gsd-plan-phase 15
-- Last activity: 2026-07-06 - spec'd + discussed Phase 15: replace cohort kNN transfer with all-cells clustering (pool → HNSW kNN graph → one CWTS Leiden → UUID two-pass write-back), retaining transfer as selectable mode
+- Milestone: v1.5 Graph-based Phenotype Clustering (Phase 15 planned — ready to execute)
+- Phase: 15 (all-cells true-scanpy Leiden) SPEC + CONTEXT + RESEARCH + VALIDATION + 5 PLANs filed and checker-passed; 14 code complete (transfer path); 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
+- Plan: 15 has 5 plans in 5 sequential waves (15-01 HNSW dep+wrapper → 15-02 clusterViaAnn+recall gate → 15-03 primitive SNN rewrite+all-cells tests → 15-04 two-pass UUID cohort driver → 15-05 UI+docs); ANN library resolved to com.github.jelmerk:hnswlib-core:1.2.1
+- Status: Phase 15 planned — plan-checker passed (1 blocker + 5 warnings raised then fixed in revision 1; all LEI-06..10 covered, all 13 decisions mapped); ready for /gsd-execute-phase 15
+- Last activity: 2026-07-06 - planned Phase 15: research (hnswlib-core pick, seeded-assignLevel determinism finding, primitive-array SNN rewrite for 30M scale), pattern map, 5 plans, validation strategy approved
 
 ## Carry-Forward Context
 

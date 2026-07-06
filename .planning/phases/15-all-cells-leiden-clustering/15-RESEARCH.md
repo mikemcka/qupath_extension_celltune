@@ -334,20 +334,25 @@ The existing `LeidenModel.cluster` already calls `rawNetwork.createNormalizedNet
 
 ## Open Questions
 
+> **RESOLUTION STATUS (planning, 2026-07-06):** Q1 RESOLVED — Plan 01 Task 2 (seeded `assignLevel` override + single-threaded ordered build). Q3 RESOLVED — Plan 05 Task 2 (soft-ceiling count-only pre-scan estimate, planner discretion accepted). Q2 KNOWINGLY DEFERRED — see inline note below.
+
 1. **Does the planner accept "best-effort" ANN-topology reproducibility, or does it require the `assignLevel` seeding override?**
    - What we know: jelmerk's default level assignment is unseeded; a subclass override is a clean, contained fix.
    - What's unclear: whether SPEC acceptance criterion 6's "identical labels up to permutation" is meant to tolerate the (likely small, but nonzero) probability that a different ANN graph topology yields a different Leiden partition even with the same downstream seed.
    - Recommendation: plan the `assignLevel`-override + single-threaded-build mitigation as an explicit task rather than leaving it implicit; it is cheap to build and removes the ambiguity entirely.
+   - **RESOLVED by Plan 01 Task 2:** the seeded `assignLevel` override + single-threaded ordered `add()` build is an explicit, tested task (Behavior Test C — byte-identical adjacency across two reproducible builds). No best-effort ambiguity remains for the reproducible path.
 
 2. **What is the actual wall-clock/memory cost of the primitive-array Jaccard/SNN rewrite at real cohort scale (tens of millions of cells)?**
    - What we know: the current boxed-collection approach is correct but architecturally mismatched to that scale (Pitfall 2).
    - What's unclear: exact numbers — no benchmark was run this session (would require a multi-GB synthetic dataset and meaningful wall-clock, out of scope for a research pass).
    - Recommendation: the planner should schedule a small synthetic-scale timing smoke test (1-5M rows) as an early execution task to validate the rewrite's necessity and sizing before committing to a specific data structure, per the existing project practice of profiling before optimizing (see `featureKnn`'s own javadoc discussing its bounded-max-heap optimization history).
+   - **KNOWINGLY DEFERRED (no gating task added):** the primitive-array SNN/Jaccard rewrite (Plan 03) is required for 30M-node scale REGARDLESS of any benchmark outcome — boxed `HashSet<Integer>[]`/`HashSet<Long>` cannot scale to tens of millions of nodes (Pitfall 2). An ad-hoc 1–5M-row synthetic timing smoke test MAY be run during execution to size structures, but it is NOT a gating task and no plan/task is scheduled for it. Correctness of the rewrite is gated by the byte-identical equivalence test (Plan 03 Task 1 Test A) instead.
 
 3. **Where exactly does the soft-ceiling (50M cells, D-10) count get computed** — before pass 1 starts (requires a cheap "count detections per image" pre-scan across the whole project) or is it acceptable to confirm the dialog based on a rough estimate (e.g., image count × average detections seen historically)?
    - What we know: QuPath's `PathObjectHierarchy.getObjects(null, PathObject.class)` requires a full hierarchy read to get an exact count; a pre-scan pass adds a third full project read before pooling even starts.
    - What's unclear: whether a cheaper proxy (e.g., a fast per-image object count without fully materializing feature vectors) is available via the QuPath API, or whether the existing per-image `ProjectImageEntry` metadata already caches a detection count.
    - Recommendation: the planner should check whether `ImageData`/`PathObjectHierarchy` exposes a count-only accessor cheaper than a full `getObjects()` materialization; if not, accept the extra lightweight pre-scan (count-only, no feature extraction) as the cost of the confirm dialog, since it is far cheaper than the two full passes it gates.
+   - **RESOLVED by Plan 05 Task 2:** the soft-ceiling estimate is computed before pass 1 via a cheap count-only per-image scan (planner discretion granted for the exact accessor); it feeds the D-10 confirm dialog only (warns, does not hard-block). Extra lightweight pre-scan accepted as the cost of the guard.
 
 ## Environment Availability
 
