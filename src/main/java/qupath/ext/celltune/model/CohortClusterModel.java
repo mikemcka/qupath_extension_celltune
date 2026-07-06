@@ -61,6 +61,15 @@ import qupath.lib.projects.ProjectImageEntry;
  * re-transferring against any preview reference — {@link #assignAcrossProjectByMeasurement}
  * (backed by the pure {@link #assignmentsFromMeasurement} seam) is that path.
  * <p>
+ * The k-means cohort variants ({@link #assignAcrossProject} / {@link #writeClusterAcrossProject})
+ * take the same {@code queryProjector} treatment as their Leiden counterparts: {@code centroids}
+ * lives in whatever space the fit's k-means partition was actually computed in (PC space when the
+ * caller applied PCA reduction before clustering, marker space otherwise), so each query image's
+ * z-scored marker rows must be projected into that SAME space before {@code nearestCentroid} —
+ * otherwise marker-space centroids define a different Voronoi partition than the PC-space k-means
+ * assignment the user previewed, misclassifying boundary cells. {@code queryProjector} is
+ * identity/{@code null} when the fit did not apply PCA, so this is a byte-identical no-op in the
+ * common (PCA-off / small-panel) case.
  * No JavaFX UI is built here; the only FX dependency is marshalling mutations of
  * the open image's live hierarchy onto the FX thread, which QuPath requires.
  */
@@ -199,6 +208,13 @@ public final class CohortClusterModel {
      * contains it (case-insensitive) are reclassified — keeping a within-class
      * sub-clustering consistent with what was displayed.
      *
+     * @param queryProjector projects each image's per-cell z-scored marker rows into the SAME
+     *                 space {@code centroids} lives in before {@code nearestCentroid} — the fit's
+     *                 PCA projector when the clustering that produced {@code centroids} applied
+     *                 PCA reduction, or {@code null}/identity when it did not (mirrors the Leiden
+     *                 overload's {@code queryProjector}, so k-means cohort assignment happens in
+     *                 the SAME space the k-means partition was actually computed in, not the
+     *                 marker space {@code centroids} would otherwise be read in without it)
      * @param normalizer feature normalizer to apply during extraction (nullable —
      *                 must match the one used to fit {@code centroids})
      * @param openData open image's live data (nullable); its hierarchy is mutated
@@ -215,6 +231,7 @@ public final class CohortClusterModel {
             double[] mean,
             double[] sd,
             double[][] centroids,
+            UnaryOperator<double[][]> queryProjector,
             Map<Integer, PathClass> mapping,
             String classFilter,
             FeatureNormalizer normalizer,
@@ -222,6 +239,7 @@ public final class CohortClusterModel {
             String openName,
             Consumer<String> log,
             DoubleConsumer progress) {
+        UnaryOperator<double[][]> proj = queryProjector != null ? queryProjector : UnaryOperator.identity();
         return assignAcrossProject(
                 project,
                 images,
@@ -236,9 +254,10 @@ public final class CohortClusterModel {
                 log,
                 progress,
                 rows -> {
-                    int[] labels = new int[rows.length];
-                    for (int i = 0; i < rows.length; i++) {
-                        labels[i] = nearestCentroid(rows[i], centroids);
+                    double[][] projected = proj.apply(rows);
+                    int[] labels = new int[projected.length];
+                    for (int i = 0; i < projected.length; i++) {
+                        labels[i] = nearestCentroid(projected[i], centroids);
                     }
                     return labels;
                 });
@@ -315,6 +334,12 @@ public final class CohortClusterModel {
      * {@link #assignAcrossProject} — it never changes the cell's classification, so a
      * persistent {@code Cluster} column is added across the cohort for downstream
      * analysis and the viewer overlay.
+     *
+     * @param queryProjector projects each image's per-cell z-scored marker rows into the SAME
+     *                 space {@code centroids} lives in before {@code nearestCentroid} — see
+     *                 {@link #assignAcrossProject(Project, List, List, double[], double[],
+     *                 double[][], UnaryOperator, Map, String, FeatureNormalizer, ImageData,
+     *                 String, Consumer, DoubleConsumer)}'s equivalent parameter
      */
     public static long writeClusterAcrossProject(
             Project<BufferedImage> project,
@@ -323,12 +348,14 @@ public final class CohortClusterModel {
             double[] mean,
             double[] sd,
             double[][] centroids,
+            UnaryOperator<double[][]> queryProjector,
             String classFilter,
             FeatureNormalizer normalizer,
             ImageData<BufferedImage> openData,
             String openName,
             Consumer<String> log,
             DoubleConsumer progress) {
+        UnaryOperator<double[][]> proj = queryProjector != null ? queryProjector : UnaryOperator.identity();
         return writeClusterAcrossProject(
                 project,
                 images,
@@ -342,9 +369,10 @@ public final class CohortClusterModel {
                 log,
                 progress,
                 rows -> {
-                    int[] labels = new int[rows.length];
-                    for (int i = 0; i < rows.length; i++) {
-                        labels[i] = nearestCentroid(rows[i], centroids);
+                    double[][] projected = proj.apply(rows);
+                    int[] labels = new int[projected.length];
+                    for (int i = 0; i < projected.length; i++) {
+                        labels[i] = nearestCentroid(projected[i], centroids);
                     }
                     return labels;
                 });

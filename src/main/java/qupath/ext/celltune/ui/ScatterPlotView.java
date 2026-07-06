@@ -166,7 +166,14 @@ public class ScatterPlotView {
     // ── Latest fit, retained for the cohort assign + the centroid heatmap ──────
     private double[] fitMean; // per-marker mean over the active rows
     private double[] fitSd; // per-marker sd over the active rows
-    private double[][] fitCentroids; // [k][selMarkers] z-scored centroids
+    private double[][] fitCentroids; // [k][selMarkers] z-scored centroids, ALWAYS marker space (heatmap display)
+    // Per-cluster centroids in the SAME space the k-means partition was actually computed in — the
+    // PC-reduced space when the fit applied conditional PCA, otherwise identical to fitCentroids
+    // (marker space). Used ONLY for k-means cohort assignment (assignAcrossProject/
+    // writeClusterAcrossProject), never for the Assign-dialog heatmap — that must stay marker-space/
+    // interpretable and keeps reading fitCentroids. Null before any k-means fit, or after a Leiden
+    // fit/all-cells write (only consulted on the k-means cohort-assign path).
+    private double[][] fitAssignCentroids;
     private List<String> fitMarkers; // selected markers the fit used (column order)
     private String fitClassFilter; // within-class filter active at fit time
     // Effective cluster count of the latest fit: kSpinner's value for k-means, or
@@ -868,6 +875,7 @@ public class ScatterPlotView {
         fitMean = null;
         fitSd = null;
         fitCentroids = null;
+        fitAssignCentroids = null;
         fitMarkers = null;
         fitClassFilter = null;
         fitNClusters = 0;
@@ -1096,9 +1104,38 @@ public class ScatterPlotView {
                                         }
                                     }
                                 }
+
+                                // Per-cluster centroids in the CLUSTERING space (Fix 4/Requirement:
+                                // k-means cohort assignment must run in the SAME space clustering
+                                // happened in) — PC space when PCA was applied above, otherwise
+                                // identical to `cents` (both are then `active`-space). Computed the
+                                // same way as `cents` but over `clusterMatrix`, not `active`, so
+                                // `nearestCentroid` against these later reproduces the SAME Voronoi
+                                // partition the preview scatter/k-means fit actually used — unlike
+                                // `cents` (kept marker-space, unchanged, for the interpretable
+                                // Assign-dialog heatmap).
+                                int assignCols = clusterMatrix.length > 0 ? clusterMatrix[0].length : selCols.length;
+                                double[][] assignCents = new double[nClustersEff][assignCols];
+                                for (int j = 0; j < m; j++) {
+                                    int lab = subCluster[j];
+                                    if (lab < 0 || lab >= nClustersEff) {
+                                        continue;
+                                    }
+                                    for (int c = 0; c < assignCols; c++) {
+                                        assignCents[lab][c] += clusterMatrix[j][c];
+                                    }
+                                }
+                                for (int lab = 0; lab < nClustersEff; lab++) {
+                                    if (centCount[lab] > 0) {
+                                        for (int c = 0; c < assignCols; c++) {
+                                            assignCents[lab][c] /= centCount[lab];
+                                        }
+                                    }
+                                }
                                 final double[] fMean = mean;
                                 final double[] fSd = sd;
                                 final double[][] fCents = cents;
+                                final double[][] fAssignCents = assignCents;
                                 final List<String> fMarkers = markerNamesFor(selCols);
                                 final int fNClusters = nClustersEff;
                                 final double[][] fLeidenRef = leidenRef;
@@ -1170,6 +1207,7 @@ public class ScatterPlotView {
                                     fitMean = fMean;
                                     fitSd = fSd;
                                     fitCentroids = fCents;
+                                    fitAssignCentroids = fAssignCents;
                                     fitMarkers = fMarkers;
                                     fitClassFilter = fClassFilter;
                                     fitNClusters = fNClusters;
@@ -1448,7 +1486,9 @@ public class ScatterPlotView {
         final List<String> markers = fitMarkers;
         final double[] mean = fitMean;
         final double[] sd = fitSd;
-        final double[][] cents = fitCentroids;
+        // k-means cohort assign uses centroids in the SAME space clustering ran in (PC space when
+        // the fit applied PCA) -- NOT fitCentroids, which stays marker-space for the heatmap.
+        final double[][] assignCents = fitAssignCentroids;
         final String classFilter = fitClassFilter;
         // Leiden cohort assign uses kNN label transfer against the labelled fitted
         // sample (Task 5); non-null exactly when the last Recompute used Leiden.
@@ -1501,7 +1541,8 @@ public class ScatterPlotView {
                                             markers,
                                             mean,
                                             sd,
-                                            cents,
+                                            assignCents,
+                                            pcaProjector,
                                             mapping,
                                             classFilter,
                                             normalizer,
@@ -1901,7 +1942,9 @@ public class ScatterPlotView {
         final List<String> markers = (fitMarkers != null) ? fitMarkers : markerFeatures;
         final double[] mean = fitMean;
         final double[] sd = fitSd;
-        final double[][] cents = fitCentroids;
+        // k-means cohort write uses centroids in the SAME space clustering ran in (PC space when
+        // the fit applied PCA) -- NOT fitCentroids, which stays marker-space for the heatmap.
+        final double[][] assignCents = fitAssignCentroids;
         final double[][] leidenRef = fitLeidenReference;
         final int[] leidenRefLabels = fitLeidenReferenceLabels;
         final int nClusters = fitNClusters;
@@ -1951,7 +1994,8 @@ public class ScatterPlotView {
                                             markers,
                                             mean,
                                             sd,
-                                            cents,
+                                            assignCents,
+                                            pcaProjector,
                                             classFilter,
                                             normalizer,
                                             openData,
@@ -2147,6 +2191,11 @@ public class ScatterPlotView {
                                         // subsample's last Recompute fit.
                                         fitNClusters = fNClusters;
                                         fitCentroids = fCentroids;
+                                        // Not a k-means fit — the all-cells write is Leiden-only (D-04/D-05), and
+                                        // cluster->class assignment reads the WRITTEN measurement
+                                        // (allCellsWriteActive),
+                                        // never assignAcrossProject/writeClusterAcrossProject's centroid path.
+                                        fitAssignCentroids = null;
                                         fitAllCellsCounts = fClusterCounts;
                                         fitMarkers = markers;
                                         fitMean = fPooledMean;

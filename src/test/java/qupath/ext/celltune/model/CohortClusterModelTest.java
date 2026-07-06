@@ -528,6 +528,116 @@ class CohortClusterModelTest {
         assertTrue(result.cellsWritten() > 0, "the written image's cells must have received a cluster id");
     }
 
+    // ── Fix 4: k-means cohort assignment must run in the queryProjector's space ─
+
+    @Test
+    void writeClusterAcrossProjectAppliesQueryProjectorBeforeNearestCentroid() {
+        // Regression guard: when the fit clustered in a reduced/rotated space (PCA in production),
+        // the centroids passed here live in THAT space, not raw marker space -- so the query row
+        // must be projected into the same space before nearestCentroid, or boundary cells land in
+        // the wrong cluster relative to what the user actually previewed.
+        List<String> markers = List.of("M1", "M2");
+        double[] mean = {0.0, 0.0};
+        double[] sd = {1.0, 1.0};
+        // Centroids live in a space where the two marker dimensions are SWAPPED relative to raw
+        // marker space -- e.g. the "clustering space" produced by a projector that swaps columns.
+        double[][] centroids = {{0.0, 10.0}, {10.0, 0.0}};
+        // Swaps the two columns -- a stand-in for a PCA projector to keep the test's arithmetic
+        // exact and easy to reason about, while still exercising a REAL non-identity projector.
+        java.util.function.UnaryOperator<double[][]> swapProjector = rows -> {
+            double[][] out = new double[rows.length][];
+            for (int i = 0; i < rows.length; i++) {
+                out[i] = new double[] {rows[i][1], rows[i][0]};
+            }
+            return out;
+        };
+
+        PathObject cell = detectionAt(0, 0);
+        cell.getMeasurementList().put("M1", 10.0);
+        cell.getMeasurementList().put("M2", 0.0);
+
+        // Without projection: raw query row [10, 0] is nearest centroids[1] = {10, 0} (distance 0)
+        // -> label 1 -> written value 2.0.
+        ImageData<BufferedImage> dataIdentity = fakeImageData(hierarchyWith(List.of(cell)));
+        var projectIdentity = fakeProject(List.of(fakeEntry("img", dataIdentity)));
+        CohortClusterModel.writeClusterAcrossProject(
+                projectIdentity,
+                List.of("img"),
+                markers,
+                mean,
+                sd,
+                centroids,
+                null, // null projector == identity
+                null,
+                null,
+                null,
+                null,
+                msg -> {},
+                frac -> {});
+        double writtenIdentity = cell.getMeasurementList().get(CohortClusterModel.CLUSTER_MEASUREMENT);
+        assertEquals(2.0, writtenIdentity, 1e-9, "unprojected query row [10,0] is nearest centroids[1]={10,0}");
+
+        // With the swap projector: the SAME raw query row [10,0] projects to [0,10], which is
+        // nearest centroids[0] = {0, 10} (distance 0) -> label 0 -> written value 1.0. The
+        // assignment MUST flip relative to the identity case above -- proving the projector is
+        // actually applied before nearestCentroid, not ignored.
+        PathObject cell2 = detectionAt(0, 0);
+        cell2.getMeasurementList().put("M1", 10.0);
+        cell2.getMeasurementList().put("M2", 0.0);
+        ImageData<BufferedImage> dataProjected = fakeImageData(hierarchyWith(List.of(cell2)));
+        var projectProjected = fakeProject(List.of(fakeEntry("img", dataProjected)));
+        CohortClusterModel.writeClusterAcrossProject(
+                projectProjected,
+                List.of("img"),
+                markers,
+                mean,
+                sd,
+                centroids,
+                swapProjector,
+                null,
+                null,
+                null,
+                null,
+                msg -> {},
+                frac -> {});
+        double writtenProjected = cell2.getMeasurementList().get(CohortClusterModel.CLUSTER_MEASUREMENT);
+        assertEquals(
+                1.0,
+                writtenProjected,
+                1e-9,
+                "projected query row [0,10] is nearest centroids[0]={0,10} -- the projected assignment must win");
+        assertNotEquals(
+                writtenIdentity,
+                writtenProjected,
+                "the SAME raw query row must be assigned to a DIFFERENT cluster once queryProjector is applied");
+
+        // Explicit identity must reproduce the null-projector (current/legacy) behaviour exactly.
+        PathObject cell3 = detectionAt(0, 0);
+        cell3.getMeasurementList().put("M1", 10.0);
+        cell3.getMeasurementList().put("M2", 0.0);
+        ImageData<BufferedImage> dataExplicitIdentity = fakeImageData(hierarchyWith(List.of(cell3)));
+        var projectExplicitIdentity = fakeProject(List.of(fakeEntry("img", dataExplicitIdentity)));
+        CohortClusterModel.writeClusterAcrossProject(
+                projectExplicitIdentity,
+                List.of("img"),
+                markers,
+                mean,
+                sd,
+                centroids,
+                java.util.function.UnaryOperator.identity(),
+                null,
+                null,
+                null,
+                null,
+                msg -> {},
+                frac -> {});
+        double writtenExplicitIdentity = cell3.getMeasurementList().get(CohortClusterModel.CLUSTER_MEASUREMENT);
+        assertEquals(
+                writtenIdentity,
+                writtenExplicitIdentity,
+                "an explicit identity projector must reproduce the null-projector (PCA-off) behaviour exactly");
+    }
+
     // ── selectImageSource (pool the open image from live data, not disk) ────────
 
     @Test
