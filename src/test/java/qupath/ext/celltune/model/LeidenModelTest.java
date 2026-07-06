@@ -4,15 +4,19 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import qupath.ext.celltune.model.LeidenModel.LeidenResult;
+import qupath.lib.objects.classes.PathClass;
 
 /**
  * Unit tests for {@link LeidenModel}: the pure feature-kNN / Jaccard-weighting /
@@ -562,6 +566,53 @@ class LeidenModelTest {
         int[] assigned = assertDoesNotThrow(() -> LeidenModel.transferLabels(query, reference, refLabels, 5, 1));
         assertEquals(0, assigned[0]);
         assertEquals(0, assigned[1]);
+    }
+
+    @Test
+    void transferLabelsEmptyReferenceYieldsAllUnassigned() {
+        // An empty reference has nothing to vote from -- must return -1 ("unassigned") for
+        // every query row, NOT silently default to label 0 (Rule 1 bug fix: a query cell must
+        // never be misclassified as cluster 0's phenotype just because the reference was empty).
+        double[][] reference = new double[0][0];
+        int[] refLabels = new int[0];
+        double[][] query = {{0.0, 0.0}, {1.0, 1.0}, {Double.NaN, Double.NaN}};
+
+        int[] assigned = assertDoesNotThrow(() -> LeidenModel.transferLabels(query, reference, refLabels, 5, 2));
+
+        assertEquals(3, assigned.length);
+        for (int label : assigned) {
+            assertEquals(-1, label, "Empty reference must leave every query row unassigned (-1)");
+        }
+    }
+
+    @Test
+    void transferLabelsEmptyReferenceLeavesCohortAssignmentUnassignedEndToEnd() {
+        // End-to-end guard for the CohortClusterModel callers (assignAcrossProjectLeiden /
+        // writeClusterAcrossProjectLeiden): the -1 transferLabels now returns for an empty
+        // reference must resolve to "no class" via Map.get(-1)==null, and to a written -1
+        // (not label+1==0) via the writeCluster path's `labels[t] >= 0` guard.
+        double[][] reference = new double[0][0];
+        int[] refLabels = new int[0];
+        double[][] query = {{0.0, 0.0}, {1.0, 1.0}};
+        int[] assigned = LeidenModel.transferLabels(query, reference, refLabels, 5, 2);
+
+        Map<Integer, PathClass> mapping = new HashMap<>();
+        mapping.put(0, PathClass.fromString("Phenotype A"));
+        mapping.put(1, PathClass.fromString("Phenotype B"));
+        for (int label : assigned) {
+            assertNull(mapping.get(label), "assignAcrossProjectLeiden's mapping.get(-1) must be null (unassigned)");
+        }
+
+        double[] writtenValues = new double[assigned.length];
+        Arrays.fill(writtenValues, -1.0);
+        for (int i = 0; i < assigned.length; i++) {
+            if (assigned[i] >= 0) {
+                writtenValues[i] = assigned[i] + 1.0;
+            }
+        }
+        for (double v : writtenValues) {
+            assertEquals(-1.0, v, "writeClusterAcrossProjectLeiden must write -1, never label+1==0, when unassigned");
+        }
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────────

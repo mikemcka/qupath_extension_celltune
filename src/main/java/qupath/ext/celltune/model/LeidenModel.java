@@ -677,7 +677,12 @@ public final class LeidenModel {
         int nq = query.length;
         int[] assigned = new int[nq];
         int nRef = reference.length;
-        if (nRef == 0) {
+        if (nRef == 0 || refLabels.length == 0) {
+            // An empty reference has no labels to vote from -- default to label 0 here would
+            // silently misclassify every query cell as cluster 0's phenotype (Rule 1 bug fix).
+            // -1 means "unassigned"; callers must treat it as such (skip / no class), not as a
+            // real cluster id.
+            Arrays.fill(assigned, -1);
             return assigned;
         }
         int keep = Math.max(1, Math.min(k, nRef));
