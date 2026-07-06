@@ -528,6 +528,70 @@ class CohortClusterModelTest {
         assertTrue(result.cellsWritten() > 0, "the written image's cells must have received a cluster id");
     }
 
+    @Test
+    void writeClusterAllCellsPass2IsUuidDrivenAndIgnoresClassChangeBetweenPasses() {
+        // Item 6 regression guard: pass 2 write-back must be purely UUID-driven -- a cell that
+        // matched the classFilter at pass 1 (pooled, present in globalLabelMap) must still get
+        // its pass-1 cluster label even if its PathClass changes before pass 2 re-reads it. Only
+        // a cell that NEVER matched the filter at pass 1 (absent from globalLabelMap) should be
+        // written -1.
+        List<String> markers = List.of("M1", "M2", "M3");
+        Random rng = new Random(17);
+        List<PathObject> cells = blobCells(markers, 40, 0, rng);
+        PathClass tumor = PathClass.fromString("Tumor");
+        PathClass stroma = PathClass.fromString("Stroma");
+        for (PathObject cell : cells) {
+            cell.setPathClass(tumor);
+        }
+        // Never matches the classFilter at all -- stays outside the pass-1 pooled population.
+        PathObject neverMatched = cells.get(cells.size() - 1);
+        neverMatched.setPathClass(stroma);
+        // Matches at pass 1 (pooled with a real label), but its class flips before pass 2 runs.
+        PathObject classChangedCell = cells.get(0);
+
+        ImageData<BufferedImage> data = fakeImageData(hierarchyWith(cells));
+        var project = fakeProject(List.of(fakeEntry("image1", data)));
+
+        java.util.function.Consumer<String> log = msg -> {
+            if (msg.equals("Running Leiden…")) {
+                // Pass 1 pooling has already finished (this cell's UUID is already keyed into
+                // the labels that will build globalLabelMap); pass 2 hasn't started yet.
+                classChangedCell.setPathClass(stroma);
+            }
+        };
+
+        CohortClusterModel.AllCellsResult result = CohortClusterModel.writeClusterAllCells(
+                project,
+                List.of("image1"),
+                markers,
+                10,
+                1.0,
+                1,
+                42L,
+                true,
+                false,
+                0,
+                "Tumor",
+                null,
+                null,
+                null,
+                new CancellationToken(),
+                log,
+                frac -> {});
+
+        assertFalse(result.aborted(), "recall gate must not fail on this small, well-separated synthetic dataset");
+        assertFalse(result.cancelled());
+
+        double changedValue = classChangedCell.getMeasurementList().get(CohortClusterModel.CLUSTER_MEASUREMENT);
+        assertTrue(
+                changedValue >= 1.0,
+                "a cell that matched the filter at pass 1 must keep its pass-1 label even though its "
+                        + "PathClass changed before pass 2 -- write-back is UUID-driven, not re-filtered");
+
+        double neverMatchedValue = neverMatched.getMeasurementList().get(CohortClusterModel.CLUSTER_MEASUREMENT);
+        assertEquals(-1.0, neverMatchedValue, "a cell that never matched the classFilter at pass 1 must still be -1");
+    }
+
     // ── Fix 4: k-means cohort assignment must run in the queryProjector's space ─
 
     @Test

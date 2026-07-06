@@ -1214,8 +1214,9 @@ public final class CohortClusterModel {
         // Marker space, NOT PCA space (Requirement 2/4) — pooled.rows() is the original
         // z-scored marker matrix regardless of whether clusterMatrix was PCA-reduced.
         CentroidsAndCounts centroidsAndCounts = centroidsAndCounts(pooled.rows(), labels, nClusters, nMarkers);
-        boolean classFilterActive = classFilter != null && !classFilter.isBlank();
-        String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
+        // NOTE: no classFilterActive/classKw re-check here (Rule 1 fix, item 6) -- pass 2's
+        // write-back is purely UUID-driven via globalLabelMap below; pass 1's classFilter
+        // (applied in poolAllCells) already decided map membership.
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
 
         // Built ONCE in O(totalPooledCells) — PathObject UUIDs are globally unique, so a single
@@ -1255,12 +1256,13 @@ public final class CohortClusterModel {
                         Arrays.fill(values, -1.0);
                         int assigned = 0;
                         for (int i = 0; i < n; i++) {
-                            if (classFilterActive) {
-                                PathClass pc = cells.get(i).getPathClass();
-                                if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
-                                    continue;
-                                }
-                            }
+                            // Write-back is purely UUID-driven: pass 1's classFilter already
+                            // decided which cells were pooled (and therefore present in
+                            // globalLabelMap), so a non-matching cell's UUID is simply absent
+                            // from the map and correctly resolves to -1 below. Re-applying
+                            // classFilterActive here would additionally drop a cell to -1 if
+                            // its PathClass happened to change between pass 1 and pass 2, even
+                            // though it has a valid pass-1 label.
                             var id = cells.get(i).getID();
                             Integer label = globalLabelMap.get(
                                     new UuidKey(id.getMostSignificantBits(), id.getLeastSignificantBits()));
