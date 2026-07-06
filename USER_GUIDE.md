@@ -918,6 +918,8 @@ both, because both ultimately produce the same per-cell cluster label array.
   non-spherical and unequal-size populations — including rare cell types — that
   k-means tends to under-resolve or merge into a larger neighbour.
 
+![Leiden clustering of cells in the scatter plot, coloured by community](doc_images/leiden_clustering.png)
+
 **Controls when Method = Leiden**
 
 - **Resolution** (0.1–3.0, default 1.0) — replaces **Clusters (k)**. Higher
