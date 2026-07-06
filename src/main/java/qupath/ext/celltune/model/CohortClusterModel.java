@@ -869,6 +869,218 @@ public final class CohortClusterModel {
         return map;
     }
 
+    /**
+     * Result of a {@link #writeClusterAllCells} run.
+     *
+     * @param nClusters       distinct community label count from the single
+     *                        {@link LeidenModel#clusterViaAnn} partition (0 on
+     *                        abort/cancel-before-clustering)
+     * @param recall          measured ANN recall (D-09), or {@code -1.0} when not
+     *                        exposed at this layer — {@link LeidenModel#clusterViaAnn}
+     *                        does not currently return its internal recall-gate
+     *                        measurement; surfacing it end-to-end is left to the
+     *                        caller/UI layer if/when that is added, per this plan's
+     *                        "if clusterViaAnn exposes it" scope
+     * @param cellsWritten    total cells that received a non-(-1) cluster id across
+     *                        every successfully-saved image
+     * @param imagesWritten   images successfully re-read, labelled and saved
+     * @param imagesNotWritten images skipped, failed to load/save, or left
+     *                        unprocessed because of cancellation
+     * @param aborted         true if the ANN recall gate failed — no image was
+     *                        written in this case (T-15-10)
+     * @param cancelled       true if the token was cancelled before or during the run
+     */
+    public record AllCellsResult(
+            int nClusters,
+            double recall,
+            long cellsWritten,
+            List<String> imagesWritten,
+            List<String> imagesNotWritten,
+            boolean aborted,
+            boolean cancelled) {}
+
+    /**
+     * The all-cells cohort driver (LEI-06/LEI-08): pools every (matching) cell
+     * across {@code images} via {@link #poolAllCells}, runs a SINGLE
+     * {@link LeidenModel#clusterViaAnn} partition over the whole pooled matrix (no
+     * per-image sub-clustering, no transfer), and re-reads each image in a second
+     * pass to write the {@link #CLUSTER_MEASUREMENT} by UUID lookup
+     * ({@link #labelMapForImage}) — so a reordered second read still labels every
+     * cell correctly (T-15-08: a UUID from pass 1 not found in pass 2's re-read is
+     * a cell edited/deleted between passes and is silently left at -1, never a
+     * crash).
+     * <p>
+     * If {@code clusterViaAnn} throws {@link AnnRecallException}, NOTHING is
+     * written — pass 2 never starts (T-15-10). If {@code token} is cancelled
+     * during pass 1, pooling stops early and nothing is written either (no partial
+     * partition is ever clustered from an incomplete pool). If {@code token} is
+     * cancelled during pass 2, the loop stops before the next image — already-
+     * saved images keep their {@code Cluster} measurement (T-15-07); the result
+     * reports exactly which images were / were not written.
+     *
+     * @param project      the open project
+     * @param images       image names to include (cohort scope)
+     * @param markers      marker measurement names (column order)
+     * @param graphK       Leiden kNN graph neighbours
+     * @param resolution   CPM resolution passed to {@code clusterViaAnn}
+     * @param randomStarts Leiden random restarts passed to {@code clusterViaAnn}
+     * @param seed         RNG seed (drives both the ANN build and Leiden)
+     * @param reproducible when true, the ANN index build is best-effort
+     *                     deterministic (see {@code HnswKnnIndex})
+     * @param classFilter  when non-blank, only cells whose current classification
+     *                     contains it (case-insensitive) are pooled/labelled
+     * @param normalizer   feature normalizer to apply during extraction (nullable)
+     * @param openData     open image's live data (nullable); its hierarchy is
+     *                     mutated on the FX thread, others on the detached copy
+     * @param openName     name of the open image (nullable)
+     * @param token        checked at phase boundaries and between images in pass 2
+     * @param log          progress sink — phase messages ("Pooling X/N images",
+     *                     "Building kNN graph…", "Running Leiden…",
+     *                     "Writing X/N images") plus per-image detail
+     * @param progress     fraction sink in [0,1] for the write (pass 2) phase
+     */
+    public static AllCellsResult writeClusterAllCells(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            int graphK,
+            double resolution,
+            int randomStarts,
+            long seed,
+            boolean reproducible,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            CancellationToken token,
+            Consumer<String> log,
+            DoubleConsumer progress) {
+
+        log.accept(String.format("Pooling %d image(s)…", images.size()));
+        PooledData pooled = poolAllCells(project, images, markers, classFilter, normalizer, token, log);
+
+        if (pooled.cancelled() || (token != null && token.isCancelled())) {
+            log.accept("Cancelled during pooling — no images written.");
+            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, true);
+        }
+        if (pooled.rows().length == 0) {
+            log.accept("No matching cells found across the selected images — nothing to cluster.");
+            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, false);
+        }
+
+        log.accept("Building kNN graph…");
+        log.accept("Running Leiden…");
+        LeidenModel.LeidenResult result;
+        try {
+            result = LeidenModel.clusterViaAnn(pooled.rows(), graphK, resolution, randomStarts, seed, reproducible);
+        } catch (AnnRecallException e) {
+            logger.warn("All-cells ANN recall gate failed: {}", e.getMessage());
+            log.accept("ANN recall gate failed — aborting, no Cluster measurement written: " + e.getMessage());
+            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), true, false);
+        }
+
+        int[] labels = result.labels();
+        int nClusters = result.nClusters();
+        boolean classFilterActive = classFilter != null && !classFilter.isBlank();
+        String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
+        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
+
+        long cellsWritten = 0;
+        List<String> written = new ArrayList<>();
+        List<String> notWritten = new ArrayList<>();
+        boolean cancelledDuringWrite = false;
+        int done = 0;
+
+        for (int ord = 0; ord < images.size(); ord++) {
+            String name = images.get(ord);
+            if (token != null && token.isCancelled()) {
+                cancelledDuringWrite = true;
+                for (int rem = ord; rem < images.size(); rem++) {
+                    notWritten.add(images.get(rem));
+                }
+                log.accept("Cancelled — stopping before [" + name + "].");
+                break;
+            }
+
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                log.accept("[" + name + "] not in project — skipped");
+                notWritten.add(name);
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            boolean isOpen = name.equals(openName);
+            ImageData<BufferedImage> imageData;
+            try {
+                imageData = isOpen ? openData : entry.readImageData();
+            } catch (Exception e) {
+                log.accept("[" + name + "] could not load — skipped");
+                notWritten.add(name);
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            if (imageData == null) {
+                log.accept("[" + name + "] could not load — skipped");
+                notWritten.add(name);
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+
+            List<PathObject> cells = detections(imageData);
+            int n = cells.size();
+            if (n == 0) {
+                log.accept("[" + name + "] no detections — skipped");
+                notWritten.add(name);
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+
+            Map<UuidKey, Integer> labelMap =
+                    labelMapForImage(pooled.uuidMsb(), pooled.uuidLsb(), pooled.imageOrdinal(), labels, ord);
+
+            double[] values = new double[n];
+            Arrays.fill(values, -1.0);
+            int assigned = 0;
+            for (int i = 0; i < n; i++) {
+                if (classFilterActive) {
+                    PathClass pc = cells.get(i).getPathClass();
+                    if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
+                        continue;
+                    }
+                }
+                var id = cells.get(i).getID();
+                Integer label = labelMap.get(new UuidKey(id.getMostSignificantBits(), id.getLeastSignificantBits()));
+                if (label != null) {
+                    values[i] = label + 1.0;
+                    assigned++;
+                }
+            }
+
+            applyMeasurement(imageData, cells, values, isOpen);
+            try {
+                entry.saveImageData(imageData);
+                written.add(name);
+                cellsWritten += assigned;
+                log.accept(String.format(
+                        "Writing %d/%d images — [%s] cluster written to %,d of %,d cells",
+                        done + 1, images.size(), name, assigned, n));
+            } catch (Exception e) {
+                logger.error("Failed to save {}", name, e);
+                log.accept("[" + name + "] save failed: " + e.getMessage());
+                notWritten.add(name);
+            }
+
+            done++;
+            progress.accept(done / (double) images.size());
+        }
+
+        return new AllCellsResult(nClusters, -1.0, cellsWritten, written, notWritten, false, cancelledDuringWrite);
+    }
+
     /** Growable primitive {@code long} array — avoids boxed {@code Long} allocation while pooling tens of millions of UUID halves. */
     private static final class GrowableLongArray {
         private long[] data = new long[1024];
