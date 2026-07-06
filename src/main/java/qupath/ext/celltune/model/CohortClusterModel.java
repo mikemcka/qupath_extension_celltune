@@ -2,10 +2,13 @@ package qupath.ext.celltune.model;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import javafx.application.Platform;
@@ -31,6 +34,19 @@ import qupath.lib.projects.ProjectImageEntry;
  * </ol>
  * Because a single model is fit once and applied everywhere, cluster identity is
  * consistent across the cohort (cluster 3 = the same phenotype in every image).
+ * <p>
+ * A third, all-cells mode (LEI-06/LEI-08, true-scanpy {@code sc.tl.leiden} style)
+ * is also two-pass, but pools EVERY cell (not a bounded sample) and clusters them
+ * in a single {@link LeidenModel#clusterViaAnn} partition rather than fitting on a
+ * sample and transferring: {@link #poolAllCells} streams every image once,
+ * z-scoring the full cohort and capturing each cell's packed {@code (msb,lsb)}
+ * UUID before releasing its hierarchy; the single Leiden partition then runs over
+ * the fully pooled matrix; {@link #writeClusterAllCells} re-reads each image and
+ * writes the {@link #CLUSTER_MEASUREMENT} by UUID lookup ({@link #labelMapForImage}),
+ * so a reordered second read still labels every cell correctly. A
+ * {@link CancellationToken} allows honoring cancellation between images and at
+ * phase boundaries, and an {@link AnnRecallException} from {@code clusterViaAnn}
+ * aborts before any label is written.
  * <p>
  * No JavaFX UI is built here; the only FX dependency is marshalling mutations of
  * the open image's live hierarchy onto the FX thread, which QuPath requires.
@@ -644,6 +660,246 @@ public final class CohortClusterModel {
             }
         } else {
             apply.run();
+        }
+    }
+
+    // ── All-cells cohort driver (LEI-06/LEI-08) ─────────────────────────────────
+
+    /**
+     * Minimal mid-run cancellation primitive. No existing analog in this codebase
+     * covers TRUE mid-run cancellation — only pre-flight dialog-decline
+     * "cancellations" exist elsewhere (see {@code ScatterPlotView}'s scope-switch
+     * confirm). Checked at phase boundaries (pool / cluster / write) and between
+     * images within each pass. Deliberately kept to a single flag, not a generic
+     * task-cancellation framework (RESEARCH.md "Don't Hand-Roll").
+     */
+    public static final class CancellationToken {
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+
+        public void cancel() {
+            cancelled.set(true);
+        }
+
+        public boolean isCancelled() {
+            return cancelled.get();
+        }
+    }
+
+    /**
+     * Pass-1 (all-cells) pooling result: every (matching) cell's z-scored marker
+     * row, its packed {@code (msb,lsb)} UUID, and the ordinal of its source image
+     * within the {@code images} list passed to {@link #poolAllCells} — so pass 2
+     * can filter this pooled data down to one image's slice by ordinal without
+     * re-deriving identity from iteration order.
+     *
+     * @param rows         [m][nMarkers] z-scored marker rows for every pooled cell
+     * @param uuidMsb      {@code PathObject.getID().getMostSignificantBits()} per row
+     * @param uuidLsb      {@code PathObject.getID().getLeastSignificantBits()} per row
+     * @param imageOrdinal index into {@code images} (the pass-1 input list) per row
+     * @param imageNames   the {@code images} list, in the same order used for ordinals
+     * @param mean         per-marker mean used to z-score (fit over every pooled cell)
+     * @param sd           per-marker sd used to z-score
+     * @param totalCells   total detections seen across the pooled images (before any
+     *                     {@code classFilter})
+     * @param cancelled    true if pooling stopped early because the token was cancelled
+     *                     (in which case {@code rows}/etc. reflect only the images
+     *                     processed so far)
+     */
+    public record PooledData(
+            double[][] rows,
+            long[] uuidMsb,
+            long[] uuidLsb,
+            int[] imageOrdinal,
+            String[] imageNames,
+            double[] mean,
+            double[] sd,
+            int totalCells,
+            boolean cancelled) {}
+
+    /**
+     * Pass 1 of the all-cells cohort driver (LEI-06/LEI-08): streams EVERY cell
+     * across {@code images} (no sample cap, unlike {@link #sample}), z-scoring the
+     * full pooled matrix and capturing each cell's packed UUID before releasing its
+     * hierarchy — mirrors {@link #sample}'s per-image "read, extract, move on"
+     * shape (no explicit {@code close()} exists on this QuPath API either; the
+     * hierarchy is simply not retained past the loop iteration).
+     * <p>
+     * UUID identity is captured as a primitive {@code (long, long)} pair via
+     * {@code getID().getMostSignificantBits()}/{@code getLeastSignificantBits()},
+     * NOT {@code getID().toString()} — a deliberate, phase-specific deviation from
+     * this codebase's usual UUID-as-string convention (used everywhere else at
+     * per-image, not per-cohort, scale). At tens of millions of pooled cells the
+     * ~10-20x string/object overhead of the {@code .toString()} form is
+     * prohibitive (RESEARCH.md Pattern 2 / Anti-Pattern) — do not "fix" this back.
+     *
+     * @param project     the open project
+     * @param images      image names to pool from
+     * @param markers     marker measurement names to extract (column order)
+     * @param classFilter when non-blank, only cells whose current classification
+     *                    contains it (case-insensitive) are pooled
+     * @param normalizer  feature normalizer to apply during extraction (nullable)
+     * @param token       checked at the top of each per-image iteration; pooling
+     *                    stops early (returning what has been pooled so far, with
+     *                    {@code cancelled=true}) if already cancelled
+     * @param log         progress sink (called off the FX thread)
+     */
+    public static PooledData poolAllCells(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            CancellationToken token,
+            Consumer<String> log) {
+        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
+        int nMarkers = markers.size();
+        var extractor = new CellFeatureExtractor(markers, normalizer);
+        boolean classFilterActive = classFilter != null && !classFilter.isBlank();
+        String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
+
+        List<double[]> rawRows = new ArrayList<>();
+        GrowableLongArray msbList = new GrowableLongArray();
+        GrowableLongArray lsbList = new GrowableLongArray();
+        GrowableIntArray ordinalList = new GrowableIntArray();
+        int totalCells = 0;
+        boolean cancelled = false;
+
+        for (int ord = 0; ord < images.size(); ord++) {
+            if (token != null && token.isCancelled()) {
+                cancelled = true;
+                break;
+            }
+            String name = images.get(ord);
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                log.accept("[" + name + "] not in project — skipped");
+                continue;
+            }
+            ImageData<BufferedImage> imageData;
+            try {
+                imageData = entry.readImageData();
+            } catch (Exception e) {
+                log.accept("[" + name + "] could not load — skipped");
+                continue;
+            }
+            if (imageData == null) {
+                log.accept("[" + name + "] could not load — skipped");
+                continue;
+            }
+            List<PathObject> cells = detections(imageData);
+            int n = cells.size();
+            if (n == 0) {
+                log.accept("[" + name + "] no detections — skipped");
+                continue;
+            }
+            float[] flat = extractor.extractMatrix(cells);
+            int pooledFromImage = 0;
+            for (int i = 0; i < n; i++) {
+                PathObject cell = cells.get(i);
+                if (classFilterActive) {
+                    PathClass pc = cell.getPathClass();
+                    if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
+                        continue;
+                    }
+                }
+                double[] row = new double[nMarkers];
+                int off = i * nMarkers;
+                for (int j = 0; j < nMarkers; j++) {
+                    row[j] = flat[off + j];
+                }
+                rawRows.add(row);
+                var id = cell.getID();
+                msbList.add(id.getMostSignificantBits());
+                lsbList.add(id.getLeastSignificantBits());
+                ordinalList.add(ord);
+                pooledFromImage++;
+            }
+            totalCells += n;
+            // imageData/hierarchy is not retained past this iteration — released for
+            // GC exactly as sample() already does.
+            log.accept(String.format(
+                    "Pooling %d/%d images — [%s] pooled %,d of %,d cells",
+                    ord + 1, images.size(), name, pooledFromImage, n));
+        }
+
+        double[][] raw = rawRows.toArray(new double[0][]);
+        double[] mean = new double[nMarkers];
+        double[] sd = new double[nMarkers];
+        double[][] zscored = ScatterMath.standardizeColumns(raw, mean, sd);
+
+        return new PooledData(
+                zscored,
+                msbList.toArray(),
+                lsbList.toArray(),
+                ordinalList.toArray(),
+                images.toArray(new String[0]),
+                mean,
+                sd,
+                totalCells,
+                cancelled);
+    }
+
+    /** Packed-UUID map key ({@code (msb,lsb)} pair) — avoids the boxed-String/{@code getID().toString()} overhead at cohort scale. */
+    record UuidKey(long msb, long lsb) {}
+
+    /**
+     * Pure, testable helper (LEI-08): builds a reorder-independent
+     * {@code (msb,lsb) → community label} lookup for ONE image's slice of the
+     * pooled arrays, filtering by {@code targetOrdinal}. Because the lookup is
+     * keyed on each cell's exact UUID value (not its position in {@code labels}),
+     * a caller reading that image's cells back in ANY order — shuffled, reversed,
+     * whatever a second {@code readImageData()} happens to return — still resolves
+     * every cell to the correct label.
+     *
+     * @param msb           packed UUID most-significant bits, parallel to {@code labels}
+     * @param lsb           packed UUID least-significant bits, parallel to {@code labels}
+     * @param imageOrdinal  source-image ordinal per pooled row, parallel to {@code labels}
+     * @param labels        community label per pooled row (from a single
+     *                      {@link LeidenModel#clusterViaAnn} partition)
+     * @param targetOrdinal the image ordinal to build the lookup for
+     */
+    static Map<UuidKey, Integer> labelMapForImage(
+            long[] msb, long[] lsb, int[] imageOrdinal, int[] labels, int targetOrdinal) {
+        Map<UuidKey, Integer> map = new HashMap<>();
+        for (int i = 0; i < imageOrdinal.length; i++) {
+            if (imageOrdinal[i] == targetOrdinal) {
+                map.put(new UuidKey(msb[i], lsb[i]), labels[i]);
+            }
+        }
+        return map;
+    }
+
+    /** Growable primitive {@code long} array — avoids boxed {@code Long} allocation while pooling tens of millions of UUID halves. */
+    private static final class GrowableLongArray {
+        private long[] data = new long[1024];
+        private int size = 0;
+
+        void add(long v) {
+            if (size == data.length) {
+                data = Arrays.copyOf(data, data.length * 2);
+            }
+            data[size++] = v;
+        }
+
+        long[] toArray() {
+            return Arrays.copyOf(data, size);
+        }
+    }
+
+    /** Growable primitive {@code int} array — avoids boxed {@code Integer} allocation while pooling tens of millions of image ordinals. */
+    private static final class GrowableIntArray {
+        private int[] data = new int[1024];
+        private int size = 0;
+
+        void add(int v) {
+            if (size == data.length) {
+                data = Arrays.copyOf(data, data.length * 2);
+            }
+            data[size++] = v;
+        }
+
+        int[] toArray() {
+            return Arrays.copyOf(data, size);
         }
     }
 
