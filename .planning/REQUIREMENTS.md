@@ -77,6 +77,14 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - [ ] LEI-04: A pure-array LeidenModel (feature kNN, edge weighting, community detection, kNN label transfer) is covered by JUnit tests on synthetic graphs (community recovery by purity/modularity, self-exclusion, resolution behaviour, label transfer), with no QuPath/JavaFX types.
 - [ ] LEI-05: Leiden runs are reproducible run-to-run via a seeded RNG + random-starts, exposed as a reproducibility toggle mirroring the k-means multi-restart option.
 
+### Graph-based Phenotype Clustering — All-Cells (True-Scanpy)
+
+- [ ] LEI-06: Cohort/project Leiden offers an all-cells mode that clusters every cell across all images in one graph (pool → single CWTS Leiden partition → write labels back), selectable alongside the retained Phase 14 kNN label-transfer mode.
+- [ ] LEI-07: Leiden kNN graph construction (single-image and cohort) uses an approximate-NN index (HNSW) whose recall is validated at runtime against exact brute-force featureKnn on a subsample and gated at ≥95% (auto-tune then abort on failure).
+- [ ] LEI-08: All-cells cohort write is memory-safe via two passes (pool marker features + record per-cell identity, releasing hierarchies; then re-read and write) and maps community labels back to cells by stable PathObject UUID.
+- [ ] LEI-09: The interactive scatter/UMAP preview remains subsample-based for resolution selection while the persisted Cluster measurement is produced by the full all-cells run; the preview-vs-final divergence is surfaced to the user.
+- [ ] LEI-10: Automated tests cover cohort pooling/identity mapping, the ANN recall gate vs exact kNN, UUID-keyed label write-back, and all-cells community recovery on synthetic clouds.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -122,10 +130,15 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | LEI-03 | Phase 14 | Pending |
 | LEI-04 | Phase 14 | Pending |
 | LEI-05 | Phase 14 | Pending |
+| LEI-06 | Phase 15 | Pending |
+| LEI-07 | Phase 15 | Pending |
+| LEI-08 | Phase 15 | Pending |
+| LEI-09 | Phase 15 | Pending |
+| LEI-10 | Phase 15 | Pending |
 
 Coverage:
-- requirements listed in this file: 35
-- mapped to phases: 33
+- requirements listed in this file: 40
+- mapped to phases: 38
 - unmapped: 2 (COMP-06, COMP-07)
 
 ---

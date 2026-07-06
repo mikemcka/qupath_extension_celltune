@@ -165,6 +165,19 @@ Plans: 1 plan
 Plans:
 - [ ] 14-01-PLAN.md - Bundle CWTS Leiden + build LeidenModel (kNN graph/Leiden/label transfer), wire Method selector + resolution/reproducibility controls, cohort kNN-transfer, docs, with unit tests
 
+### Phase 15 - All-Cells Leiden Clustering (True-Scanpy)
+
+Goal: Replace the Phase 14 cohort kNN label-transfer (sc.tl.ingest-style) with a single all-cohort clustering (sc.tl.leiden-style): pool every cell across all project images into one feature matrix, build an approximate-NN (HNSW) kNN graph over all cells, SNN/Jaccard-weight it, run one CWTS Leiden partition, and write each cell's community label back to its source image — no label transfer.
+Depends on: Phase 14 (LeidenModel feature kNN/edge weighting/CWTS Leiden, CohortClusterModel streaming passes, ScatterPlotView cohort write action).
+Requirements: LEI-06, LEI-07, LEI-08, LEI-09, LEI-10
+Success Criteria:
+1. Cohort clustering offers an all-cells mode (pool all cells → one graph → single Leiden → write labels back) selectable alongside the retained kNN label-transfer mode.
+2. The Leiden kNN graph (single-image and cohort) is built with an approximate-NN index (HNSW) and validated at runtime against exact brute-force featureKnn by a recall gate (≥95%, auto-tune then abort) on a subsample.
+3. Write-back is memory-safe (two-pass: pool features + record identity, release hierarchies; re-read + write) and maps labels to cells by stable PathObject UUID.
+4. The interactive scatter/UMAP preview stays subsample-based for resolution selection; the persisted Cluster measurement comes from the full all-cells run, with the preview-vs-final divergence documented.
+5. Automated tests cover pooling/identity mapping, the ANN recall gate vs exact kNN, UUID write-back, and all-cells community recovery on synthetic clouds.
+Plans: To be planned
+
 
 ## Progress
 
