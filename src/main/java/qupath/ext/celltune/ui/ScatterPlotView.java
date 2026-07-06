@@ -227,8 +227,11 @@ public class ScatterPlotView {
     // Visible only during an all-cells run (D-12); cancels the in-flight CancellationToken.
     private final Button cancelAllCellsBtn;
     // The token for the in-flight all-cells run, if any (null otherwise) — set at the start of
-    // writeClusterAllCellsAcrossProject() so cancelAllCellsBtn's action can reach it.
-    private CohortClusterModel.CancellationToken allCellsToken;
+    // writeClusterAllCellsAcrossProject() so cancelAllCellsBtn's action can reach it. Written on
+    // the FX thread (set here, cleared in the FX-thread runLater alongside hiding the Cancel
+    // button) and read on the FX thread (Cancel button's action); volatile guards against any
+    // stale read if that ever changes.
+    private volatile CohortClusterModel.CancellationToken allCellsToken;
     private final Spinner<Integer> kSpinner;
     private final Spinner<Double> resolutionSpinner;
     private final CheckBox reproducibleCheck;
@@ -2252,12 +2255,12 @@ public class ScatterPlotView {
                                 Platform.runLater(
                                         () -> statusLabel.setText("All-cells cluster write failed: " + t.getMessage()));
                             } finally {
-                                allCellsToken = null;
                                 Platform.runLater(() -> {
                                     progress.setVisible(false);
                                     progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
                                     setControlsDisabled(false);
                                     cancelAllCellsBtn.setVisible(false);
+                                    allCellsToken = null;
                                     applying = false;
                                 });
                             }
