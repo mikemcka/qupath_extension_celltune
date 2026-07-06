@@ -343,15 +343,35 @@ public final class LeidenModel {
         }
 
         int[][] neighbors = featureKnn(rows, k);
+        return clusterFromNeighbors(neighbors, resolution, randomStarts, seed);
+    }
+
+    /**
+     * Shared driver for {@link #cluster} and {@link #clusterViaAnn}: builds the Jaccard-weighted
+     * kNN {@link Network} from an already-computed neighbour list, normalizes it (association-
+     * strength correction — see below), runs the CWTS Leiden algorithm for {@code randomStarts}
+     * restarts keeping the best by CPM quality, and relabels to a dense {@code 0..nClusters-1}
+     * range via {@code removeEmptyClusters}. {@link #cluster} (exact brute-force
+     * {@link #featureKnn} neighbours) and {@link #clusterViaAnn} (ANN neighbours, recall-gated)
+     * differ ONLY in how {@code neighbors} was produced — this method is neighbour-source
+     * agnostic, so extracting it keeps both callers byte-identical to their pre-extraction
+     * behaviour.
+     *
+     * <p>Association-strength normalization ({@code
+     * Network.createNormalizedNetworkUsingAssociationStrength}) divides each edge weight by its
+     * expected weight under a random-configuration null model, exactly like modularity's
+     * null-model correction. Without it, CPM's resolution has no natural "1.0" scale against raw
+     * Jaccard weights (<=1) and even resolution=1.0 shatters every node into its own singleton
+     * community — empirically confirmed while developing this method. With normalization,
+     * resolution in the plan's UI range (0.1-3.0, default 1.0) behaves like the familiar
+     * scanpy/leidenalg resolution knob.
+     *
+     * @param neighbors symmetric kNN neighbour list, one row per point ({@code n == neighbors.length})
+     */
+    private static LeidenResult clusterFromNeighbors(
+            int[][] neighbors, double resolution, int randomStarts, long seed) {
+        int n = neighbors.length;
         Network rawNetwork = buildJaccardWeightedNetwork(n, neighbors);
-        // Association-strength normalization (Network.createNormalizedNetworkUsingAssociationStrength)
-        // divides each edge weight by its expected weight under a random-configuration
-        // null model, exactly like modularity's null-model correction. Without it, CPM's
-        // resolution has no natural "1.0" scale against raw Jaccard weights (<=1) and
-        // even resolution=1.0 shatters every node into its own singleton community —
-        // empirically confirmed while developing this method. With normalization,
-        // resolution in the plan's UI range (0.1-3.0, default 1.0) behaves like the
-        // familiar scanpy/leidenalg resolution knob.
         Network network = rawNetwork.createNormalizedNetworkUsingAssociationStrength();
 
         int starts = Math.max(1, randomStarts);
@@ -401,28 +421,7 @@ public final class LeidenModel {
         }
 
         int[][] neighbors = annNeighborsWithGate(rows, k, seed, reproducible);
-        Network rawNetwork = buildJaccardWeightedNetwork(n, neighbors);
-        // Association-strength normalization -- see cluster()'s comment above;
-        // unchanged downstream consumer, do not re-derive.
-        Network network = rawNetwork.createNormalizedNetworkUsingAssociationStrength();
-
-        int starts = Math.max(1, randomStarts);
-        Random random = new Random(seed);
-        LeidenAlgorithm leiden = new LeidenAlgorithm(resolution, DEFAULT_ITERATIONS, DEFAULT_RANDOMNESS, random);
-
-        Clustering best = null;
-        double bestQuality = Double.NEGATIVE_INFINITY;
-        for (int r = 0; r < starts; r++) {
-            Clustering candidate = leiden.findClustering(network);
-            double quality = leiden.calcQuality(network, candidate);
-            if (best == null || quality > bestQuality) {
-                best = candidate;
-                bestQuality = quality;
-            }
-        }
-        best.removeEmptyClusters();
-        int[] labels = best.getClusters();
-        return new LeidenResult(labels, best.getNClusters());
+        return clusterFromNeighbors(neighbors, resolution, randomStarts, seed);
     }
 
     /**
