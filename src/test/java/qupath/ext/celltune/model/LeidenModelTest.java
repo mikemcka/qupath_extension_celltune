@@ -319,6 +319,34 @@ class LeidenModelTest {
     }
 
     @Test
+    void clusterViaAnnReturnsAMeasuredPassingRecall() {
+        // Item 8 (D-09): clusterViaAnn must thread the recall-gate's measured passing recall
+        // through into its LeidenResult, instead of the caller only ever seeing a hardcoded
+        // sentinel. A passing run's recall must be a real, measured value in (0, 1].
+        Random rng = new Random(88);
+        int per = 60;
+        int n = per * 3;
+        double[][] rows = new double[n][2];
+        fillBlob(rows, rng, 0, per, 0.0, 0.0, 0.3);
+        fillBlob(rows, rng, per, 2 * per, 20.0, 0.0, 0.3);
+        fillBlob(rows, rng, 2 * per, n, 0.0, 20.0, 0.3);
+
+        LeidenResult res = LeidenModel.clusterViaAnn(rows, 15, 0.3, 5, 12L, true);
+
+        assertTrue(res.recall() > 0.0 && res.recall() <= 1.0, "measured recall must be in (0, 1], got " + res.recall());
+    }
+
+    @Test
+    void clusterExactPathReportsRecallOfOne() {
+        // The exact (brute-force featureKnn) path never approximates, so its recall is a
+        // constant 1.0, not left at some sentinel or unset value.
+        Random rng = new Random(89);
+        double[][] rows = randomCloud(rng, 50, 3);
+        LeidenResult res = LeidenModel.cluster(rows, 10, 1.0, 3, 5L);
+        assertEquals(1.0, res.recall());
+    }
+
+    @Test
     void clusterViaAnnAbortsWhenRecallGateFails() {
         // D-09 deliberately hides ALL ann knobs from callers (no user-facing way
         // to "cripple" the real HnswKnnIndex from outside), so -- exactly as in

@@ -996,12 +996,12 @@ public final class CohortClusterModel {
      * @param nClusters       distinct community label count from the single
      *                        {@link LeidenModel#clusterViaAnn} partition (0 on
      *                        abort/cancel-before-clustering)
-     * @param recall          measured ANN recall (D-09), or {@code -1.0} when not
-     *                        exposed at this layer — {@link LeidenModel#clusterViaAnn}
-     *                        does not currently return its internal recall-gate
-     *                        measurement; surfacing it end-to-end is left to the
-     *                        caller/UI layer if/when that is added, per this plan's
-     *                        "if clusterViaAnn exposes it" scope
+     * @param recall          measured ANN recall (D-09) from the single
+     *                        {@link LeidenModel#clusterViaAnn} partition on a successful run
+     *                        (see {@link LeidenModel.LeidenResult#recall()}), or {@code -1.0}
+     *                        on the aborted/cancel-before-clustering/no-matching-cells early
+     *                        returns below, where no partition (and therefore no recall
+     *                        measurement) exists at all
      * @param cellsWritten    total cells that received a non-(-1) cluster id across
      *                        every successfully-saved image
      * @param imagesWritten   images successfully re-read, labelled and saved
@@ -1299,7 +1299,7 @@ public final class CohortClusterModel {
 
         return new AllCellsResult(
                 nClusters,
-                -1.0,
+                clusterOutcome.result().recall(),
                 cellsWrittenBox[0],
                 outcome.written(),
                 outcome.notWritten(),

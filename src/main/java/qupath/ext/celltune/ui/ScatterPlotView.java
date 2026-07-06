@@ -1008,6 +1008,10 @@ public class ScatterPlotView {
                                 int nClustersEff;
                                 double[][] leidenRef = null;
                                 int[] leidenRefLabels = null;
+                                // D-09: the single-image/preview fit can cheaply surface its own measured
+                                // ANN recall too (clusterViaAnn now always returns one) — -1 (not shown)
+                                // for the k-means branch, which never touches the ANN gate.
+                                double leidenRecall = -1.0;
                                 if (method == ClusterMethod.LEIDEN) {
                                     int randomStarts = reproducible ? LEIDEN_REPRODUCIBLE_STARTS : LEIDEN_SINGLE_START;
                                     long seed = reproducible ? LEIDEN_SEED : System.nanoTime();
@@ -1037,6 +1041,7 @@ public class ScatterPlotView {
                                     }
                                     System.arraycopy(leidenResult.labels(), 0, subCluster, 0, m);
                                     nClustersEff = Math.max(1, leidenResult.nClusters());
+                                    leidenRecall = leidenResult.recall();
                                     // Retained for the cohort-scope Leiden assign path (kNN label
                                     // transfer against this labelled sample, Task 5) — the SAME space
                                     // (PC-reduced when PCA applied, marker space otherwise) Leiden was
@@ -1190,6 +1195,9 @@ public class ScatterPlotView {
                                             + String.format(
                                                     " · PCA: %d → %d comps, %.1f%% variance",
                                                     selCols.length, fPcaComponents, fPcaCumVariance * 100);
+                                }
+                                if (leidenRecall >= 0) {
+                                    notice = notice + String.format(" · ANN recall %.3f", leidenRecall);
                                 }
 
                                 final String fNotice = notice;
@@ -2226,9 +2234,11 @@ public class ScatterPlotView {
                                         // fitNClusters — redraw so the legend picks it up immediately).
                                         plot.redraw();
                                     }
-                                    // D-09: report the measured ANN recall when the driver exposes one;
-                                    // omit the number (rather than showing a fabricated value) when it
-                                    // does not — see CohortClusterModel.AllCellsResult javadoc.
+                                    // D-09: report the measured ANN recall from the all-cells partition
+                                    // (LeidenModel.LeidenResult.recall(), threaded through
+                                    // AllCellsResult.recall()); the >= 0 guard now only ever excludes the
+                                    // aborted/cancel-before-clustering early-return sentinel (-1.0), never
+                                    // a real successful run — see CohortClusterModel.AllCellsResult javadoc.
                                     String recallMsg =
                                             fRecall >= 0 ? String.format("ANN recall %.3f — passed. ", fRecall) : "";
                                     if (fCancelled) {

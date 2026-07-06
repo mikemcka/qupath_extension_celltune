@@ -315,7 +315,7 @@ class CohortClusterModelTest {
 
     @Test
     void successfulClusterCallIsNotAborted() {
-        LeidenResult fakeResult = new LeidenResult(new int[] {0, 1, 0}, 2);
+        LeidenResult fakeResult = new LeidenResult(new int[] {0, 1, 0}, 2, 0.99);
         ClusterOutcome outcome = CohortClusterModel.clusterOrAbort(() -> fakeResult);
 
         assertFalse(outcome.aborted());
@@ -526,6 +526,43 @@ class CohortClusterModelTest {
         assertNotNull(result.clusterCounts(), "clusterCounts must be populated on a cancelled-but-valid run");
         assertEquals(result.nClusters(), result.clusterCounts().length);
         assertTrue(result.cellsWritten() > 0, "the written image's cells must have received a cluster id");
+    }
+
+    @Test
+    void writeClusterAllCellsCarriesTheMeasuredAnnRecallThroughToAllCellsResult() {
+        // Item 8 (D-09): AllCellsResult.recall() must be the REAL measured recall from the
+        // single clusterViaAnn partition on a successful run, not the old hardcoded -1.0
+        // sentinel -- exercised end-to-end through the real production method.
+        List<String> markers = List.of("M1", "M2", "M3");
+        Random rng = new Random(21);
+        List<PathObject> image1Cells = blobCells(markers, 30, 0, rng);
+        ImageData<BufferedImage> data1 = fakeImageData(hierarchyWith(image1Cells));
+        var project = fakeProject(List.of(fakeEntry("image1", data1)));
+
+        CohortClusterModel.AllCellsResult result = CohortClusterModel.writeClusterAllCells(
+                project,
+                List.of("image1"),
+                markers,
+                10,
+                1.0,
+                1,
+                42L,
+                true,
+                false,
+                0,
+                null,
+                null,
+                null,
+                null,
+                new CancellationToken(),
+                msg -> {},
+                frac -> {});
+
+        assertFalse(result.aborted());
+        assertFalse(result.cancelled());
+        assertTrue(
+                result.recall() > 0.0 && result.recall() <= 1.0,
+                "a successful all-cells run must carry a real measured recall in (0, 1], got " + result.recall());
     }
 
     @Test

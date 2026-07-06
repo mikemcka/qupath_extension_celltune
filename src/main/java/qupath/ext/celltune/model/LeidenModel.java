@@ -32,8 +32,16 @@ public final class LeidenModel {
 
     private LeidenModel() {}
 
-    /** Community labels 0..nClusters-1 for every input row, and the cluster count. */
-    public record LeidenResult(int[] labels, int nClusters) {}
+    /**
+     * Community labels 0..nClusters-1 for every input row, and the cluster count.
+     *
+     * @param recall measured ANN recall (D-09) for the run that produced {@code labels} — 1.0
+     *               for {@link #cluster}'s exact (brute-force featureKnn) path, since there is
+     *               no approximation to measure; the recall-gate's measured passing recall for
+     *               {@link #clusterViaAnn}'s ANN-routed path (also 1.0 for its degenerate
+     *               n==0/n==1 inputs, which never reach the ANN gate)
+     */
+    public record LeidenResult(int[] labels, int nClusters, double recall) {}
 
     // ── Feature-space kNN ────────────────────────────────────────────────────
 
@@ -336,14 +344,15 @@ public final class LeidenModel {
     public static LeidenResult cluster(double[][] rows, int k, double resolution, int randomStarts, long seed) {
         int n = rows.length;
         if (n == 0) {
-            return new LeidenResult(new int[0], 0);
+            return new LeidenResult(new int[0], 0, 1.0);
         }
         if (n == 1) {
-            return new LeidenResult(new int[] {0}, 1);
+            return new LeidenResult(new int[] {0}, 1, 1.0);
         }
 
         int[][] neighbors = featureKnn(rows, k);
-        return clusterFromNeighbors(neighbors, resolution, randomStarts, seed);
+        // Exact brute-force neighbours -- nothing approximate to measure, so recall is 1.0.
+        return clusterFromNeighbors(neighbors, resolution, randomStarts, seed, 1.0);
     }
 
     /**
@@ -367,9 +376,12 @@ public final class LeidenModel {
      * scanpy/leidenalg resolution knob.
      *
      * @param neighbors symmetric kNN neighbour list, one row per point ({@code n == neighbors.length})
+     * @param recall    the measured (or exact-path constant 1.0) recall to carry through into the
+     *                  returned {@link LeidenResult} — this method does not itself measure
+     *                  anything ANN-related, it just threads the caller's already-known value
      */
     private static LeidenResult clusterFromNeighbors(
-            int[][] neighbors, double resolution, int randomStarts, long seed) {
+            int[][] neighbors, double resolution, int randomStarts, long seed, double recall) {
         int n = neighbors.length;
         Network rawNetwork = buildJaccardWeightedNetwork(n, neighbors);
         Network network = rawNetwork.createNormalizedNetworkUsingAssociationStrength();
@@ -390,7 +402,7 @@ public final class LeidenModel {
         }
         best.removeEmptyClusters();
         int[] labels = best.getClusters();
-        return new LeidenResult(labels, best.getNClusters());
+        return new LeidenResult(labels, best.getNClusters(), recall);
     }
 
     /**
@@ -414,15 +426,22 @@ public final class LeidenModel {
             double[][] rows, int k, double resolution, int randomStarts, long seed, boolean reproducible) {
         int n = rows.length;
         if (n == 0) {
-            return new LeidenResult(new int[0], 0);
+            return new LeidenResult(new int[0], 0, 1.0);
         }
         if (n == 1) {
-            return new LeidenResult(new int[] {0}, 1);
+            return new LeidenResult(new int[] {0}, 1, 1.0);
         }
 
-        int[][] neighbors = annNeighborsWithGate(rows, k, seed, reproducible);
-        return clusterFromNeighbors(neighbors, resolution, randomStarts, seed);
+        AnnNeighborsResult annResult = annNeighborsWithGate(rows, k, seed, reproducible);
+        return clusterFromNeighbors(annResult.neighbors(), resolution, randomStarts, seed, annResult.recall());
     }
+
+    /**
+     * {@link #annNeighborsWithGate}'s return value: the full kNN neighbour list AND the
+     * measured (passing) recall the gate settled on (D-09) — surfaced so {@link #clusterViaAnn}
+     * can thread it into its {@link LeidenResult} instead of discarding it.
+     */
+    record AnnNeighborsResult(int[][] neighbors, double recall) {}
 
     /**
      * Builds a live {@link HnswKnnIndex} over {@code rows}, runs the recall
@@ -433,12 +452,12 @@ public final class LeidenModel {
      * Package-private so the recall-gate wiring itself is directly testable
      * without going through the full {@link #clusterViaAnn} pipeline.
      */
-    static int[][] annNeighborsWithGate(double[][] rows, int k, long seed, boolean reproducible) {
+    static AnnNeighborsResult annNeighborsWithGate(double[][] rows, int k, long seed, boolean reproducible) {
         int n = rows.length;
         int keep = Math.min(k, n - 1);
         HnswKnnIndex index = HnswKnnIndex.build(rows, seed, reproducible);
 
-        gateAnnRecall(rows, k, seed, INITIAL_QUERY_EF, (ef, sampleIdx) -> {
+        double recall = gateAnnRecall(rows, k, seed, INITIAL_QUERY_EF, (ef, sampleIdx) -> {
             index.setEf(ef);
             int[][] out = new int[sampleIdx.length][];
             for (int s = 0; s < sampleIdx.length; s++) {
@@ -449,7 +468,7 @@ public final class LeidenModel {
 
         int[][] neighbors = new int[n][];
         IntStream.range(0, n).parallel().forEach(i -> neighbors[i] = queryExcludingSelf(index, rows[i], i, keep));
-        return neighbors;
+        return new AnnNeighborsResult(neighbors, recall);
     }
 
     /**
