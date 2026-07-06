@@ -866,6 +866,12 @@ public final class CohortClusterModel {
         GrowableLongArray msbList = new GrowableLongArray();
         GrowableLongArray lsbList = new GrowableLongArray();
         GrowableIntArray ordinalList = new GrowableIntArray();
+        // NOTE: this is a reporting-only count (PooledData.totalCells / log messages), never used
+        // to size an array — the arrays that actually hold per-cell data are the Growable*Array
+        // instances above, which independently clamp their growth (see nextGrowableCapacity). An
+        // int here would only wrap to a negative, cosmetically-wrong count past ~2.1B cells; it
+        // would not corrupt pooling. Left as int (not worth a long/int[] plumbing change through
+        // PooledData/AllCellsResult) unless a cohort actually approaches that scale.
         int totalCells = 0;
         boolean cancelled = false;
 
@@ -1480,14 +1486,45 @@ public final class CohortClusterModel {
         return totalAssigned;
     }
 
+    // Just under Integer.MAX_VALUE so `newCapacity` computations below never wrap negative
+    // (some JVMs also reserve a few header words per array, hence the small margin).
+    private static final int GROWABLE_ARRAY_MAX_CAPACITY = Integer.MAX_VALUE - 8;
+
+    /**
+     * Computes the next capacity for a doubling primitive array, clamped so it never overflows
+     * into a negative {@code int} (plain {@code data.length * 2} wraps negative past ~2^30
+     * elements, which throws {@link NegativeArraySizeException} on the next {@code copyOf}).
+     * Package-private (not {@code private}) so it is directly unit-testable near the clamp
+     * boundary without needing to actually allocate billion-element arrays.
+     */
+    static int nextGrowableCapacity(int currentLength) {
+        int newCapacity = (int) Math.min((long) currentLength * 2, GROWABLE_ARRAY_MAX_CAPACITY);
+        if (newCapacity <= currentLength) {
+            if (currentLength >= GROWABLE_ARRAY_MAX_CAPACITY) {
+                throw new IllegalStateException("cohort exceeds ~2.1B cells");
+            }
+            newCapacity = currentLength + 1;
+        }
+        return newCapacity;
+    }
+
     /** Growable primitive {@code long} array — avoids boxed {@code Long} allocation while pooling tens of millions of UUID halves. */
-    private static final class GrowableLongArray {
-        private long[] data = new long[1024];
+    static final class GrowableLongArray {
+        private long[] data;
         private int size = 0;
+
+        GrowableLongArray() {
+            this(1024);
+        }
+
+        /** Package-private test seam: forces a tiny starting capacity so growth can be exercised cheaply. */
+        GrowableLongArray(int initialCapacity) {
+            data = new long[initialCapacity];
+        }
 
         void add(long v) {
             if (size == data.length) {
-                data = Arrays.copyOf(data, data.length * 2);
+                data = Arrays.copyOf(data, nextGrowableCapacity(data.length));
             }
             data[size++] = v;
         }
@@ -1498,13 +1535,22 @@ public final class CohortClusterModel {
     }
 
     /** Growable primitive {@code int} array — avoids boxed {@code Integer} allocation while pooling tens of millions of image ordinals. */
-    private static final class GrowableIntArray {
-        private int[] data = new int[1024];
+    static final class GrowableIntArray {
+        private int[] data;
         private int size = 0;
+
+        GrowableIntArray() {
+            this(1024);
+        }
+
+        /** Package-private test seam: forces a tiny starting capacity so growth can be exercised cheaply. */
+        GrowableIntArray(int initialCapacity) {
+            data = new int[initialCapacity];
+        }
 
         void add(int v) {
             if (size == data.length) {
-                data = Arrays.copyOf(data, data.length * 2);
+                data = Arrays.copyOf(data, nextGrowableCapacity(data.length));
             }
             data[size++] = v;
         }

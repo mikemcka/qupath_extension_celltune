@@ -794,4 +794,55 @@ class CohortClusterModelTest {
         int[] pick = CohortClusterModel.sampleIndices(8, 8, new Random(0));
         assertEquals(8, IntStream.of(pick).distinct().count());
     }
+
+    // ── Growable*Array overflow-safe growth ─────────────────────────────────────
+
+    @Test
+    void growableLongArrayGrowsPastATinyForcedCapacityAndPreservesContents() {
+        // Force an initial capacity of 1 so add() must grow several times over a handful
+        // of elements — exercising nextGrowableCapacity's doubling path directly rather
+        // than waiting for the real 1024-element default to fill up.
+        CohortClusterModel.GrowableLongArray arr = new CohortClusterModel.GrowableLongArray(1);
+        long[] expected = new long[50];
+        for (int i = 0; i < expected.length; i++) {
+            expected[i] = i * 7L;
+            arr.add(expected[i]);
+        }
+        assertArrayEquals(expected, arr.toArray(), "growth must preserve every previously-added element in order");
+    }
+
+    @Test
+    void growableIntArrayGrowsPastATinyForcedCapacityAndPreservesContents() {
+        CohortClusterModel.GrowableIntArray arr = new CohortClusterModel.GrowableIntArray(1);
+        int[] expected = new int[50];
+        for (int i = 0; i < expected.length; i++) {
+            expected[i] = i * 3;
+            arr.add(expected[i]);
+        }
+        assertArrayEquals(expected, arr.toArray(), "growth must preserve every previously-added element in order");
+    }
+
+    @Test
+    void nextGrowableCapacityClampsBelowIntOverflowInsteadOfWrappingNegative() {
+        // A length whose doubling overflows a signed int (length*2 > Integer.MAX_VALUE) but
+        // which is still comfortably below the clamped ceiling — the clamp must kick in and
+        // return the ceiling itself, not a wrapped negative value or a NegativeArraySizeException.
+        int length = 1_500_000_000; // length * 2 == 3,000,000,000 > Integer.MAX_VALUE
+        int next = CohortClusterModel.nextGrowableCapacity(length);
+        assertTrue(next > length, "capacity must still increase");
+        assertTrue(next > 0, "clamped capacity must never be negative");
+        assertEquals(Integer.MAX_VALUE - 8, next, "must clamp to the documented ceiling");
+    }
+
+    @Test
+    void nextGrowableCapacityThrowsAtTheClampedCeiling() {
+        int ceiling = Integer.MAX_VALUE - 8;
+        assertThrows(IllegalStateException.class, () -> CohortClusterModel.nextGrowableCapacity(ceiling));
+    }
+
+    @Test
+    void nextGrowableCapacityDoublesNormally() {
+        assertEquals(2048, CohortClusterModel.nextGrowableCapacity(1024));
+        assertEquals(2, CohortClusterModel.nextGrowableCapacity(1));
+    }
 }
