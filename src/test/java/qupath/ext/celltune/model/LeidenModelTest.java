@@ -233,6 +233,79 @@ class LeidenModelTest {
         assertTrue(b.nClusters() >= 2);
     }
 
+    // ── clusterViaAnn: HNSW-routed Leiden ─────────────────────────────────────
+
+    @Test
+    void clusterViaAnnAgreesWithExactClusterByAri() {
+        Random rng = new Random(31);
+        int per = 60;
+        int n = per * 4;
+        double[][] rows = new double[n][2];
+        fillBlob(rows, rng, 0, per, 0.0, 0.0, 0.4);
+        fillBlob(rows, rng, per, 2 * per, 15.0, 0.0, 0.4);
+        fillBlob(rows, rng, 2 * per, 3 * per, 0.0, 15.0, 0.4);
+        fillBlob(rows, rng, 3 * per, n, 15.0, 15.0, 0.4);
+
+        LeidenResult exact = LeidenModel.cluster(rows, 15, 0.3, 10, 42L);
+        LeidenResult viaAnn = LeidenModel.clusterViaAnn(rows, 15, 0.3, 10, 42L, true);
+
+        assertEquals(n, viaAnn.labels().length);
+        double ari = adjustedRandIndex(exact.labels(), viaAnn.labels());
+        assertTrue(ari >= 0.85, "HNSW-routed Leiden must agree with exact Leiden by ARI, got " + ari);
+    }
+
+    @Test
+    void clusterViaAnnCompletesOnLargerSyntheticCloudWithoutThrowing() {
+        Random rng = new Random(55);
+        int per = 1000;
+        int n = per * 2;
+        double[][] rows = new double[n][2];
+        fillBlob(rows, rng, 0, per, 0.0, 0.0, 0.5);
+        fillBlob(rows, rng, per, n, 30.0, 0.0, 0.5);
+
+        LeidenResult res = assertDoesNotThrow(() -> LeidenModel.clusterViaAnn(rows, 15, 0.3, 5, 7L, true));
+        assertEquals(n, res.labels().length);
+        assertTrue(res.nClusters() >= 2, "Expected at least 2 recovered communities, got " + res.nClusters());
+    }
+
+    @Test
+    void clusterViaAnnAbortsWhenRecallGateFails() {
+        // D-09 deliberately hides ALL ann knobs from callers (no user-facing way
+        // to "cripple" the real HnswKnnIndex from outside), so -- exactly as in
+        // the Task 1 recall-gate tests -- degraded ANN params are simulated via
+        // a stub neighbour source rather than the real index. This exercises the
+        // SAME gateAnnRecall wiring that clusterViaAnn/annNeighborsWithGate calls
+        // uncaught, so the thrown AnnRecallException is guaranteed to propagate
+        // out of clusterViaAnn with no LeidenResult ever produced.
+        Random rng = new Random(66);
+        double[][] rows = randomCloud(rng, 400, 6);
+        int k = 10;
+        int keep = Math.min(k, rows.length - 1);
+
+        assertThrows(
+                AnnRecallException.class,
+                () -> LeidenModel.gateAnnRecall(rows, k, 999L, 64, (ef, sampleIdx) -> {
+                    int[][] wrong = new int[sampleIdx.length][];
+                    for (int s = 0; s < sampleIdx.length; s++) {
+                        wrong[s] = bruteForceFarthest(rows, sampleIdx[s], keep);
+                    }
+                    return wrong;
+                }));
+    }
+
+    @Test
+    void clusterViaAnnHandlesDegenerateInputsLikeCluster() {
+        double[][] empty = new double[0][0];
+        LeidenResult resEmpty = LeidenModel.clusterViaAnn(empty, 15, 1.0, 5, 1L, true);
+        assertEquals(0, resEmpty.labels().length);
+        assertEquals(0, resEmpty.nClusters());
+
+        double[][] single = {{1.0, 2.0}};
+        LeidenResult resSingle = LeidenModel.clusterViaAnn(single, 15, 1.0, 5, 1L, true);
+        assertArrayEquals(new int[] {0}, resSingle.labels());
+        assertEquals(1, resSingle.nClusters());
+    }
+
     // ── transferLabels ─────────────────────────────────────────────────────────
 
     @Test
@@ -368,6 +441,62 @@ class LeidenModelTest {
             s.add(v);
         }
         return s;
+    }
+
+    /**
+     * Adjusted Rand Index between two labelings of the same {@code n} items --
+     * chance-corrected agreement, 1.0 for identical partitions (up to label
+     * permutation), ~0.0 for random/independent partitions. Standard
+     * contingency-table formula (Hubert & Arabie 1985).
+     */
+    private static double adjustedRandIndex(int[] a, int[] b) {
+        int n = a.length;
+        if (n == 0) {
+            return 1.0;
+        }
+        int maxA = 0;
+        int maxB = 0;
+        for (int v : a) {
+            maxA = Math.max(maxA, v);
+        }
+        for (int v : b) {
+            maxB = Math.max(maxB, v);
+        }
+        int[][] contingency = new int[maxA + 1][maxB + 1];
+        for (int i = 0; i < n; i++) {
+            contingency[a[i]][b[i]]++;
+        }
+        int[] rowSums = new int[maxA + 1];
+        int[] colSums = new int[maxB + 1];
+        long sumComb = 0;
+        for (int i = 0; i <= maxA; i++) {
+            for (int j = 0; j <= maxB; j++) {
+                int c = contingency[i][j];
+                rowSums[i] += c;
+                colSums[j] += c;
+                sumComb += comb2(c);
+            }
+        }
+        long sumRowComb = 0;
+        for (int s : rowSums) {
+            sumRowComb += comb2(s);
+        }
+        long sumColComb = 0;
+        for (int s : colSums) {
+            sumColComb += comb2(s);
+        }
+        long totalComb = comb2(n);
+        double expectedIndex = (sumRowComb * (double) sumColComb) / (double) totalComb;
+        double maxIndex = 0.5 * (sumRowComb + sumColComb);
+        double denom = maxIndex - expectedIndex;
+        if (denom == 0) {
+            return 1.0;
+        }
+        return (sumComb - expectedIndex) / denom;
+    }
+
+    private static long comb2(long x) {
+        return x * (x - 1) / 2;
     }
 
     /** Fraction of rows in [from,to) that carry the most common label in that range. */

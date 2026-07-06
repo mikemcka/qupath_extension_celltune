@@ -374,6 +374,108 @@ public final class LeidenModel {
     }
 
     /**
+     * Same contract as {@link #cluster}, but builds the kNN graph via the
+     * approximate-NN {@link HnswKnnIndex} (LEI-07) instead of the brute-force
+     * {@link #featureKnn} scan, guarded by the runtime recall gate
+     * (D-07/D-08): recall is measured on a capped subsample against the exact
+     * bounded-heap reference, escalating query-time {@code ef} geometrically
+     * on failure, and the run aborts via {@link AnnRecallException} (writing
+     * NO labels) if recall stays below 0.95 after the escalation cap. On
+     * pass, the ANN-sourced neighbour list feeds the SAME unchanged
+     * Jaccard/SNN weighting + association-strength normalization + CWTS
+     * Leiden pipeline as {@link #cluster} -- only the neighbour source
+     * differs.
+     *
+     * @param reproducible when true, builds the underlying HNSW index
+     *     single-threaded in fixed row order (best-effort, not bit-proven,
+     *     determinism -- see {@link HnswKnnIndex} class javadoc)
+     */
+    public static LeidenResult clusterViaAnn(
+            double[][] rows, int k, double resolution, int randomStarts, long seed, boolean reproducible) {
+        int n = rows.length;
+        if (n == 0) {
+            return new LeidenResult(new int[0], 0);
+        }
+        if (n == 1) {
+            return new LeidenResult(new int[] {0}, 1);
+        }
+
+        int[][] neighbors = annNeighborsWithGate(rows, k, seed, reproducible);
+        Network rawNetwork = buildJaccardWeightedNetwork(n, neighbors);
+        // Association-strength normalization -- see cluster()'s comment above;
+        // unchanged downstream consumer, do not re-derive.
+        Network network = rawNetwork.createNormalizedNetworkUsingAssociationStrength();
+
+        int starts = Math.max(1, randomStarts);
+        Random random = new Random(seed);
+        LeidenAlgorithm leiden = new LeidenAlgorithm(resolution, DEFAULT_ITERATIONS, DEFAULT_RANDOMNESS, random);
+
+        Clustering best = null;
+        double bestQuality = Double.NEGATIVE_INFINITY;
+        for (int r = 0; r < starts; r++) {
+            Clustering candidate = leiden.findClustering(network);
+            double quality = leiden.calcQuality(network, candidate);
+            if (best == null || quality > bestQuality) {
+                best = candidate;
+                bestQuality = quality;
+            }
+        }
+        best.removeEmptyClusters();
+        int[] labels = best.getClusters();
+        return new LeidenResult(labels, best.getNClusters());
+    }
+
+    /**
+     * Builds a live {@link HnswKnnIndex} over {@code rows}, runs the recall
+     * gate ({@link #gateAnnRecall}) against it (escalating the SAME built
+     * index's query-time {@code ef} via {@link HnswKnnIndex#setEf}, never
+     * rebuilding), and -- only if the gate passes -- queries the full kNN
+     * graph (every row, self excluded) at the final passing {@code ef}.
+     * Package-private so the recall-gate wiring itself is directly testable
+     * without going through the full {@link #clusterViaAnn} pipeline.
+     */
+    static int[][] annNeighborsWithGate(double[][] rows, int k, long seed, boolean reproducible) {
+        int n = rows.length;
+        int keep = Math.min(k, n - 1);
+        HnswKnnIndex index = HnswKnnIndex.build(rows, seed, reproducible);
+
+        gateAnnRecall(rows, k, seed, INITIAL_QUERY_EF, (ef, sampleIdx) -> {
+            index.setEf(ef);
+            int[][] out = new int[sampleIdx.length][];
+            for (int s = 0; s < sampleIdx.length; s++) {
+                out[s] = queryExcludingSelf(index, rows[sampleIdx[s]], sampleIdx[s], keep);
+            }
+            return out;
+        });
+
+        int[][] neighbors = new int[n][];
+        IntStream.range(0, n).parallel().forEach(i -> neighbors[i] = queryExcludingSelf(index, rows[i], i, keep));
+        return neighbors;
+    }
+
+    /**
+     * Nearest {@code keep} row indices to {@code vector} from the live
+     * {@code index}, excluding {@code selfIdx} -- {@link HnswKnnIndex#queryRow}
+     * is a general-purpose primitive with no self-exclusion of its own (the
+     * caller may query a vector that is not itself a row in the index), so
+     * self-exclusion is applied here by over-fetching by one and filtering.
+     */
+    private static int[] queryExcludingSelf(HnswKnnIndex index, double[] vector, int selfIdx, int keep) {
+        int[] raw = index.queryRow(vector, keep + 1);
+        int[] out = new int[keep];
+        int count = 0;
+        for (int id : raw) {
+            if (id == selfIdx) {
+                continue;
+            }
+            if (count < keep) {
+                out[count++] = id;
+            }
+        }
+        return count == keep ? out : Arrays.copyOf(out, count);
+    }
+
+    /**
      * Builds the undirected, Jaccard-weighted {@link Network} from a symmetric kNN
      * neighbour list. Each undirected edge {@code (i, j)} with {@code i < j} is
      * added once; the {@code Network} constructor used here (verified against the
