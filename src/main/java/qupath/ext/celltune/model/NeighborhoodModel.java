@@ -8,6 +8,7 @@ import org.locationtech.jts.index.strtree.ItemBoundable;
 import org.locationtech.jts.index.strtree.ItemDistance;
 import org.locationtech.jts.index.strtree.STRtree;
 import smile.clustering.KMeans;
+import smile.math.MathEx;
 
 /**
  * Pure numerical core of the cellular-neighborhood (CN) analysis — the
@@ -249,25 +250,73 @@ public final class NeighborhoodModel {
     public record ClusterResult(int[] labels, double[][] centroids, int kEffective) {}
 
     /**
+     * Number of k-means restarts used by {@link #clusterCompositions(double[][], int)}.
+     * Mirrors scikit-learn's historic {@code n_init=10} default and the
+     * "extension method" validation configuration against the Schürch/Nolan
+     * published labels. A single k-means run is init-sensitive — on the paper's
+     * CRC cohort agreement with {@code neighborhood10} swings from ARI ~0.57 to
+     * ~0.72 depending on the seed — whereas keeping the lowest-inertia fit over
+     * several restarts lands reliably near the top of that range.
+     */
+    public static final int DEFAULT_N_INIT = 10;
+
+    /**
+     * Fixed seed for the k-means restarts, set via {@link MathEx#setSeed(long)} once
+     * before the restart loop — mirrors {@code ScatterPlotView}'s {@code KMEANS_SEED}
+     * so cellular-neighborhood clustering is reproducible run-to-run on the same
+     * composition matrix, the same way the scatter-plot's k-means path already is.
+     */
+    public static final long SEED = 42L;
+
+    /**
      * Cluster the (optionally pre-standardized) composition rows with k-means,
      * reusing the Smile {@code KMeans.fit} + per-cluster-mean recompute pattern
-     * from {@code ScatterPlotView}. {@code kEffective = min(k, nRows)}; with fewer
-     * than two rows or {@code k < 2} every row is assigned cluster 0. Centroids
-     * are recomputed as the per-cluster means of the fed rows (empty clusters
-     * stay all-zero).
-     *
-     * <p>Note: Smile seeds k-means internally, so labels are not bit-reproducible
-     * across runs; tests assert blob recovery by cluster purity, not raw label
-     * ids.
+     * from {@code ScatterPlotView}, with {@link #DEFAULT_N_INIT} restarts. See
+     * {@link #clusterCompositions(double[][], int, int)} for the semantics.
      */
     public static ClusterResult clusterCompositions(double[][] composition, int k) {
+        return clusterCompositions(composition, k, DEFAULT_N_INIT);
+    }
+
+    /**
+     * Cluster the (optionally pre-standardized) composition rows with k-means,
+     * keeping the best of {@code nInit} independent restarts (lowest within-cluster
+     * inertia, i.e. Smile's {@code distortion}), reusing the Smile {@code KMeans.fit}
+     * + per-cluster-mean recompute pattern from {@code ScatterPlotView}.
+     * {@code kEffective = min(k, nRows)}; with fewer than two rows or {@code k < 2}
+     * every row is assigned cluster 0. Centroids are recomputed as the per-cluster
+     * means of the fed rows (empty clusters stay all-zero).
+     *
+     * <p>{@link MathEx#setSeed(long)} is called once with {@link #SEED} immediately
+     * before the restart loop (mirroring {@code ScatterPlotView}'s reproducible
+     * k-means path), so Smile's k-means++ initialization draws from a deterministic
+     * seeded stream instead of an unseeded one — repeated runs over the same {@code
+     * composition} matrix therefore produce IDENTICAL per-cell labels, not merely
+     * "reproducible on a given thread" by accident. {@code nInit > 1} still
+     * genuinely explores {@code nInit} distinct restarts (the seeded stream advances
+     * between {@code fit} calls) and keeps the tightest partition. {@code nInit} is
+     * clamped to at least 1.
+     *
+     * <p>Note: raw label ids are still not meaningful across runs (cluster 3 in
+     * one fit need not be cluster 3 in another); tests assert blob recovery by
+     * cluster purity, not raw label ids.
+     */
+    public static ClusterResult clusterCompositions(double[][] composition, int k, int nInit) {
         int n = composition.length;
         int nCols = n == 0 ? 0 : composition[0].length;
         int kEff = Math.min(Math.max(k, 1), Math.max(n, 1));
+        int restarts = Math.max(1, nInit);
         int[] labels = new int[n];
         if (n >= 2 && kEff >= 2) {
-            KMeans km = KMeans.fit(composition, kEff);
-            System.arraycopy(km.y, 0, labels, 0, n);
+            MathEx.setSeed(SEED);
+            KMeans best = KMeans.fit(composition, kEff);
+            for (int r = 1; r < restarts; r++) {
+                KMeans cand = KMeans.fit(composition, kEff);
+                if (cand.distortion < best.distortion) {
+                    best = cand;
+                }
+            }
+            System.arraycopy(best.y, 0, labels, 0, n);
         }
         double[][] centroids = perClusterMeans(labels, composition, kEff, nCols);
         return new ClusterResult(labels, centroids, kEff);

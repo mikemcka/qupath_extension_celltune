@@ -69,6 +69,31 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - [ ] CN-03: A CN × cell-type enrichment heatmap, a per-image CN-frequency CSV, and a non-destructive Classification ⟷ CN viewer color toggle are available from the dialog.
 - [ ] CN-04: Automated tests cover kNN/radius neighbor finding (self-excluded), composition normalization, clustering, and per-CN mean composition.
 
+### Graph-based Phenotype Clustering (Leiden)
+
+- [ ] LEI-01: The Scatter Plots & Clustering dialog offers a Method selector {k-means, Leiden}; choosing Leiden replaces the "Clusters (k)" control with a resolution control plus a reproducibility toggle, and lets Leiden decide the cluster count.
+- [ ] LEI-02: Leiden clusters the same z-scored active marker matrix k-means uses — via a feature-space kNN graph, Jaccard/SNN edge weights, and the CWTS Leiden algorithm — returning a label array that drives plot colouring, legend, and cluster→class assignment identically to k-means.
+- [ ] LEI-03: Project/cohort scope supports Leiden by fitting on the pooled sample and assigning every cell across images via kNN label transfer (majority vote of nearest sampled cells), leaving the k-means centroid path unchanged.
+- [ ] LEI-04: A pure-array LeidenModel (feature kNN, edge weighting, community detection, kNN label transfer) is covered by JUnit tests on synthetic graphs (community recovery by purity/modularity, self-exclusion, resolution behaviour, label transfer), with no QuPath/JavaFX types.
+- [ ] LEI-05: Leiden runs are reproducible run-to-run via a seeded RNG + random-starts, exposed as a reproducibility toggle mirroring the k-means multi-restart option.
+
+### Graph-based Phenotype Clustering — All-Cells (True-Scanpy)
+
+- [x] LEI-06: Cohort/project Leiden offers an all-cells mode that clusters every cell across all images in one graph (pool → single CWTS Leiden partition → write labels back), selectable alongside the retained Phase 14 kNN label-transfer mode.
+- [x] LEI-07: Leiden kNN graph construction (single-image and cohort) uses an approximate-NN index (HNSW) whose recall is validated at runtime against exact brute-force featureKnn on a subsample and gated at ≥95% (auto-tune then abort on failure).
+- [x] LEI-08: All-cells cohort write is memory-safe via two passes (pool marker features + record per-cell identity, releasing hierarchies; then re-read and write) and maps community labels back to cells by stable PathObject UUID.
+- [x] LEI-09: The interactive scatter/UMAP preview remains subsample-based for resolution selection while the persisted Cluster measurement is produced by the full all-cells run; the preview-vs-final divergence is surfaced to the user.
+- [x] LEI-10: Automated tests cover cohort pooling/identity mapping, the ANN recall gate vs exact kNN, UUID-keyed label write-back, and all-cells community recovery on synthetic clouds.
+
+### Graph-based Phenotype Clustering — Conditional PCA Reduction
+
+- [x] PCA-01: With feature count above the configurable threshold (default 50) and PCA enabled, the clustering kNN graph (single-image, all-cells cohort, and Leiden kNN-transfer) is built on the PCA-projected matrix, verified by tests asserting the matrix fed to the graph builder has the reduced column count.
+- [x] PCA-02: With feature count at or below the threshold, or PCA disabled via the "Reduce dims (PCA)" checkbox, clustering is byte-identical to the pre-PCA behaviour (regression guard on the existing curated-panel path).
+- [x] PCA-03: Two reproducible runs (seed 42) on the same above-threshold input yield identical PCA projections and identical downstream cluster labels — the exact (non-randomized) Smile PCA introduces no nondeterminism.
+- [x] PCA-04: On a synthetic dataset where a small number of true signal columns are drowned by many independent noise columns, PCA-on recovers the known communities at materially higher ARI than PCA-off, demonstrating the dominance/degradation fix.
+- [x] PCA-05: The all-cells cohort path fits one PCA projection on a bounded seeded subsample and applies it to every pooled row; per-cluster centroids remain in original marker space regardless of the space clustering ran in, and peak fit memory stays within a documented bound independent of total cell count.
+- [x] PCA-06: Component count kept and cumulative variance explained are reported to the status line/log.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -109,10 +134,26 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | CN-02 | Phase 13 | Pending |
 | CN-03 | Phase 13 | Pending |
 | CN-04 | Phase 13 | Pending |
+| LEI-01 | Phase 14 | Pending |
+| LEI-02 | Phase 14 | Pending |
+| LEI-03 | Phase 14 | Pending |
+| LEI-04 | Phase 14 | Pending |
+| LEI-05 | Phase 14 | Pending |
+| LEI-06 | Phase 15 | Complete |
+| LEI-07 | Phase 15 | Complete |
+| LEI-08 | Phase 15 | Complete |
+| LEI-09 | Phase 15 | Complete |
+| LEI-10 | Phase 15 | Complete |
+| PCA-01 | Phase 16 | Complete |
+| PCA-02 | Phase 16 | Complete |
+| PCA-03 | Phase 16 | Complete |
+| PCA-04 | Phase 16 | Complete |
+| PCA-05 | Phase 16 | Complete |
+| PCA-06 | Phase 16 | Complete |
 
 Coverage:
-- requirements listed in this file: 30
-- mapped to phases: 28
+- requirements listed in this file: 46
+- mapped to phases: 44
 - unmapped: 2 (COMP-06, COMP-07)
 
 ---

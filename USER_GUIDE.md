@@ -37,6 +37,7 @@ Windows and boxes can be expanded or contracted by clicking and dragging corners
     - [11.3 Apply Clusters — assign classes to clusters](#113-apply-clusters--assign-classes-to-clusters)
     - [11.4 Cluster-within-clusters (hierarchical gating)](#114-cluster-within-clusters-hierarchical-gating)
     - [11.5 Project-wide clustering across images](#115-project-wide-clustering-across-images)
+    - [11.6 Clustering method: k-means vs Leiden](#116-clustering-method-k-means-vs-leiden)
 12. [Exporting results](#12-exporting-results)
     - [12.1 Cell table export](#121-cell-table-export)
     - [12.2 Ground truth export & import](#122-ground-truth-export--import)
@@ -66,7 +67,7 @@ Windows and boxes can be expanded or contracted by clicking and dragging corners
 
 ## 1. Install & launch
 
-1. **Download** `qupath-extension-celltune-0.1.1-all.jar` from the [Releases page](https://github.com/mikemcka/qupath_extension_celltune/releases), or build it from source — see [CLAUDE.md](CLAUDE.md#build--test).
+1. **Download** `qupath-extension-celltune-0.2.0-all.jar` from the [Releases page](https://github.com/mikemcka/qupath_extension_celltune/releases), or build it from source — see [CLAUDE.md](CLAUDE.md#build--test).
 2. Drop the JAR into QuPath's `extensions/` folder, or drag-and-drop it onto the running QuPath window.
 3. Restart QuPath. The **CellTune Classifier** panel docks into the analysis tab pane on the right, you can mouse over the area and scroll the mouse wheel to uncover it.
 4. Some commands also live under the **Extensions → CellTune Classifier** menu.
@@ -606,8 +607,9 @@ Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for t
 ## 11. Cell scatter plot — clustering & gating
 
 **Extensions → CellTune Classifier → Scatter Plots and Clustering...** opens an interactive
-2D scatter plot for **unsupervised exploration**: cells are clustered by k-means
-on their marker measurements and projected into a 2D embedding so you can see,
+2D scatter plot for **unsupervised exploration**: cells are clustered — by
+k-means or, optionally, graph-based Leiden clustering (§[11.6](#116-clustering-method-k-means-vs-leiden))
+— on their marker measurements and projected into a 2D embedding so you can see,
 label, and sub-cluster populations. This is independent of the trained
 classifier — it writes to QuPath classifications, not CellTune training labels.
 
@@ -631,11 +633,15 @@ embedding on a background thread.
   shows e.g. *"309,584 clustered · 19,432 plotted"*). Tick **Full UMAP** to embed
   every cell instead — much slower and more memory-hungry on large images, but
   nothing is left out of the plot. PCA always plots all cells.
+- **Method** — `k-means` (default) or `Leiden`. Choosing Leiden replaces
+  **Clusters (k)** with a **Resolution** control and a reproducibility toggle —
+  see §[11.6](#116-clustering-method-k-means-vs-leiden).
 - **Clusters (k)** — number of k-means clusters (2–50). The legend shrinks to
-  keep all clusters visible and clickable.
-- **Recompute** — re-fit k-means + the embedding on the current rows (the open
-  image, or the project sample). It does **not** re-sample — use **Images…** in
-  project scope for that.
+  keep all clusters visible and clickable. *k-means only* — Leiden decides its
+  own cluster count from the resolution instead (§11.6).
+- **Recompute** — re-fit the selected clustering method + the embedding on the
+  current rows (the open image, or the project sample). It does **not**
+  re-sample — use **Images…** in project scope for that.
 - **Scope: Current image / Project** — a toggle. *Current image* (default)
   clusters every cell of the open image with full viewer interaction. *Project*
   fits **one** k-means on a sample pooled across images you choose and drives the
@@ -661,8 +667,9 @@ embedding on a background thread.
   least 2 markers must be ticked.
 
 **Bottom row**
-- **Colour by** — `CLUSTER` (k-means id), `CLASS` (current/predicted class), or
-  `MARKER` (single-marker intensity gradient; pick the marker alongside).
+- **Colour by** — `CLUSTER` (k-means or Leiden cluster id), `CLASS`
+  (current/predicted class), or `MARKER` (single-marker intensity gradient; pick
+  the marker alongside).
 - **Select: Box / Lasso** — drag on the plot to select those cells (in the viewer
   in current-image scope; a plot-only highlight in project scope — see §11.2).
 - **Apply Clusters… / Assign Clusters…** — see §11.3. The button's label follows
@@ -736,13 +743,15 @@ e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
 ### 11.5 Project-wide clustering across images
 
 To cluster a **whole cohort consistently**, flip the **Scope** toggle to
-**Project**. CellTune fits **one** k-means model on a sample pooled across the
+**Project**. CellTune fits **one** model on a sample pooled across the
 images you choose, then (when you assign) maps *every* cell in *every* selected
-image to its nearest cohort centroid — so cluster 3 means the same phenotype in
+image to that same cohort clustering — so cluster 3 means the same phenotype in
 every image (unlike clustering each image separately, which gives non-comparable
 cluster ids). It all happens in the same window, so every tool — colour-by-marker,
 within-class gating, the cluster-marker subset, the centroid heatmap — is
 available for naming the cohort's clusters.
+**k-means** assigns by nearest cohort centroid; **Leiden** assigns by kNN label
+transfer against the labelled fitted sample — see §[11.6](#116-clustering-method-k-means-vs-leiden).
 
 **Entering project scope**
 
@@ -773,9 +782,11 @@ highlights on the plot only (§11.2). Everything else applies:
 **Assigning across the cohort**
 
 Click **Assign Clusters…**. The shared assignment dialog (§11.3) shows the
-centroid heatmap and a class dropdown per cluster. On confirm, CellTune streams
-each selected image, assigns all matching cells to their nearest centroid, writes
-the mapped classes, and **saves each image**, with progress in the status bar.
+per-cluster mean marker heatmap and a class dropdown per cluster. On confirm,
+CellTune streams each selected image, assigns all matching cells to their cluster
+(nearest centroid for k-means; kNN label transfer against the fitted sample for
+Leiden — §[11.6](#116-clustering-method-k-means-vs-leiden)), writes the mapped
+classes, and **saves each image**, with progress in the status bar.
 
 > **Measurement scaling & batch effects.** Clustering applies CellTune's feature
 > normalisation (§[4.2](#42-normalise-features)) — the **same** arcsinh / sqrt
@@ -783,6 +794,174 @@ the mapped classes, and **saves each image**, with progress in the status bar.
 > at fit time. So if you've configured normalisation, it shapes the clusters and
 > the colour-by-marker view too. (The normalizer is captured when the window
 > opens; change it via *Normalise Features* and reopen the plot to pick it up.)
+
+**Leiden cohort modes: "Cluster all cells" vs "Transfer from sample"**
+
+When **Method = Leiden** and **Scope = Project**, a radio pair appears next to the
+Method selector (hidden for k-means, and hidden in current-image scope):
+
+- **Cluster all cells** (default) — the exact, true-scanpy `sc.tl.leiden`-style
+  mode: **every** cell across every selected image is pooled into one feature
+  matrix, one approximate-NN (HNSW) kNN graph is built over the whole cohort, a
+  **single** CWTS Leiden partition runs over that entire graph, and each cell's
+  community label is written back to its source image by its stable cell UUID
+  (not by iteration order — safe even if a second read of an image returns cells
+  in a different order). This genuinely clusters every cell, rather than
+  approximating the rest of the cohort from a sample.
+- **Transfer from sample** — the fast/approximate mode retained from the previous
+  release: Leiden fits once on the pooled sample, then every other cell is
+  assigned by kNN label transfer against that labelled sample (`sc.tl.ingest`-style
+  — see §[11.6](#116-clustering-method-k-means-vs-leiden)).
+
+Clicking **Assign Clusters…** / **By cluster (all images)** with **Cluster all
+cells** selected runs the two-pass all-cells driver instead of the transfer path:
+
+- **Soft cell-count ceiling.** Before pooling starts, CellTune does a quick
+  count-only pass over the selected images to estimate the total pooled cell
+  count. If that estimate is above a configurable ceiling (50,000,000 cells by
+  default), an extra confirm dialog warns you before the run begins — it warns,
+  it does not hard-block.
+- **Per-phase progress.** The status bar reports each phase as it happens —
+  *"Pooling 12/40 images"* → *"Building kNN graph…"* → *"Running Leiden…"* →
+  *"Writing 12/40 images"* — followed by the run's outcome.
+- **ANN recall gate.** The HNSW graph build is checked at runtime against an
+  exact nearest-neighbour reference on a small sample; the status line reports
+  the measured recall (e.g. *"ANN recall 0.982 — passed"*) when the driver
+  exposes it. If recall cannot reach the required 95% after auto-tuning, the run
+  **aborts with no `Cluster` labels written at all** — an actionable error
+  explains why; existing `Cluster` measurements from a previous successful run
+  are left untouched.
+- **Cancel.** A **Cancel** button appears only during an all-cells run. Cancelling
+  stops the write pass before its next image — images already written keep their
+  `Cluster` measurement (no rollback); the final status line reports how many
+  images were, and were not, written.
+- **Legend re-sync.** After a successful (non-cancelled, non-aborted) all-cells
+  write, the scatter legend and the open image's overlay re-sync to the **final
+  all-cells cluster count** — the number Leiden actually found across the whole
+  cohort — not the interactive preview's (subsample-based) cluster count. The
+  interactive plot itself always stays subsample-based for responsiveness; only
+  the persisted `Cluster` measurement (and, after the write, the legend/overlay)
+  reflects the full all-cells run.
+
+Single-image Leiden (current-image scope, and the interactive project-scope
+preview fit) also builds its kNN graph through the same HNSW approximate-NN index
+now, rather than a brute-force scan — this is transparent (no extra control) and
+only matters if you happen to hit the same recall gate on a single image, in
+which case the status bar reports it and asks you to try more cells or different
+markers.
+
+> **Fidelity vs stock scanpy.** CellTune's Leiden clustering (both cohort modes
+> and the single-image path) is a close, but not bit-identical, match to running
+> `sc.tl.leiden` in Python. Two remaining documented gaps (a third — PCA — is now
+> implemented, see below):
+>
+> 1. **Quality function** — the bundled CWTS Leiden library optimises the
+>    **Constant Potts Model (CPM)**, not scanpy's default **modularity**
+>    (RBConfiguration). The `Resolution` control behaves like the familiar
+>    scanpy/leidenalg knob (association-strength normalisation keeps it on the
+>    same rough scale), but is not numerically identical to a modularity run.
+> 2. **Edge weighting** — CellTune weights the kNN graph by **Jaccard
+>    similarity of shared nearest neighbours (SNN)**, not scanpy's **UMAP
+>    fuzzy-simplicial-set connectivities**.
+>
+> Neither is expected to change population-level conclusions for multiplex-
+> imaging marker panels, but an external `sc.tl.leiden` run on the same data is
+> not guaranteed to reproduce identical cluster boundaries.
+
+> **PCA dimensionality reduction (scanpy `scale → PCA → neighbors` recipe).**
+> Both cohort modes and the single-image path apply a conditional PCA reduction
+> to the z-scored marker matrix *before* building the clustering kNN graph (both
+> k-means and Leiden) — a **"Reduce dims (PCA)"** checkbox (on by default) and a
+> components spinner (default 50) sit next to the Resolution/k controls. Below
+> ~50 active marker columns this is a no-op (a small, curated panel is already
+> low-dimensional — projecting onto ≥ p components is just a lossless rotation),
+> preserving the exact prior small-panel behaviour. Above that threshold — real
+> projects can carry hundreds to 1000+ per-cell measurements (each marker × mean/
+> median/percentile × nucleus/cytoplasm/membrane) — unreduced Euclidean kNN both
+> lets whichever marker happens to have the most measurement columns dominate
+> the distance, and suffers high-dimensional distance concentration; PCA fixes
+> both. The reduction uses the same exact (deterministic, non-randomized) Smile
+> `PCA` eigendecomposition already used for the 2D display embedding, so the
+> reproducible-seed clustering path stays bit-stable. Per-cluster centroids (the
+> Assign-dialog heatmap) and the interpretive marker view are always computed in
+> the **original marker space**, never the PCA space — only the neighbour graph
+> itself is built on the reduced matrix. On the all-cells cohort path, the PCA
+> projection is **fit on a bounded seeded subsample** (like the ANN recall gate's
+> sampling) when the pooled cohort is very large, then applied to every pooled
+> cell — bounding fit cost/memory independent of total cell count. When applied,
+> the status bar/log reports `PCA: {p} → {nComp} comps, {variance}% variance`.
+
+> **Citing.** Graph-based clustering here uses the **Leiden algorithm** (Traag,
+> Waltman & van Eck, *Sci. Rep.* 2019) and mirrors the **scanpy** scale → PCA →
+> neighbours → Leiden recipe (Wolf, Angerer & Theis, *Genome Biol.* 2018); the
+> scalable kNN graph uses **HNSW** (Malkov & Yashunin, *IEEE TPAMI* 2020). If
+> graph-based clustering is central to your analysis, please cite these — full
+> citations and the bundled-library licenses (CWTS `networkanalysis`, jelmerk
+> `hnswlib-core`) are in the [README acknowledgements](README.md#acknowledgements).
+
+### 11.6 Clustering method: k-means vs Leiden
+
+The **Method** selector (§11.1) switches the clustering algorithm; everything
+else in this section — the embedding, colouring, selection, within-class gating,
+cluster-marker subsetting, and cluster→class assignment — works identically for
+both, because both ultimately produce the same per-cell cluster label array.
+
+- **k-means** (default) partitions cells into a **fixed** number of clusters (the
+  **Clusters (k)** spinner, 2–50). It assumes clusters are roughly spherical and
+  similarly sized, and you must pick `k` up front.
+- **Leiden** is graph-based community detection — the same family of algorithm
+  used by scanpy, scimap, and SPACEc for single-cell / multiplex-imaging
+  phenotyping (it traces back to PhenoGraph). Instead of a fixed `k`, CellTune
+  builds a nearest-neighbour graph over the z-scored marker matrix, weights edges
+  by neighbourhood similarity (Jaccard), and runs the Leiden algorithm — the
+  **number of clusters is decided by the data**, not chosen in advance. This finds
+  non-spherical and unequal-size populations — including rare cell types — that
+  k-means tends to under-resolve or merge into a larger neighbour.
+
+![Leiden clustering of cells in the scatter plot, coloured by community](doc_images/leiden_clustering.png)
+
+**Controls when Method = Leiden**
+
+- **Resolution** (0.1–3.0, default 1.0) — replaces **Clusters (k)**. Higher
+  resolution finds **more, smaller** communities; lower resolution finds **fewer,
+  larger** ones. There is no fixed cluster count to set — after **Recompute** the
+  status bar reports how many clusters Leiden found, e.g.
+  *"…· Leiden found 7 cluster(s)"*. If you want more (or fewer) populations,
+  raise (or lower) the resolution and **Recompute** again.
+- **Sample multiple seeds** (checkbox) — mirrors k-means' multi-restart
+  reproducibility: when ticked, Leiden runs several random-seeded passes and keeps
+  the best-quality partition, so repeated runs with the same settings return
+  identical clusters. Left unticked, Leiden runs a single faster pass whose exact
+  result may vary run to run (the same *populations* are still found — only which
+  integer id each gets can shift).
+
+The kNN graph-neighbour count and edge-weighting scheme are fixed, sensible
+defaults (not exposed as controls in this release) — see the design note in the
+repository for the full recipe and rationale.
+
+**Cohort (project scope) assignment differs by method**
+
+Leiden has no centroids to assign new cells to — averaging a non-spherical
+community into one point would defeat the method. So in **Project** scope
+(§11.5), Leiden fits once on the pooled sample exactly like k-means does, but the
+**assignment** pass differs:
+
+- **k-means** assigns each cell to its **nearest cohort centroid** (Euclidean, in
+  z-scored marker space).
+- **Leiden**, with **Transfer from sample** selected (§11.5), assigns each cell by
+  **kNN label transfer**: it finds that cell's nearest neighbours *within the
+  labelled fitted sample* and takes a majority vote of their Leiden labels — the
+  same approach scanpy uses (`sc.tl.ingest`) to map new cells onto an existing
+  clustering. Per-cluster mean marker profiles are still computed for the
+  assignment-pane heatmap either way — only the per-cell assignment mechanism
+  differs. With **Cluster all cells** selected instead, there is no separate
+  "assign" step at all — every cell is a first-class member of the single
+  cohort-wide Leiden partition (§11.5).
+
+Both methods otherwise share the exact same pipeline: the same z-scored active
+marker matrix, the same `cluster[]` label array driving plot colour/legend/box
+selection, and the same **Apply Clusters… / Assign Clusters…** dialog for naming
+populations.
 > Even so, per-marker normalisation does not fully correct **per-image** staining
 > differences, so when cells are pooled across a cohort, comparable staining still
 > matters: globally brighter slides can shift the pooled clusters. Normalise
@@ -1127,18 +1306,20 @@ It is fully **non-destructive**: the CN id is written as a numeric `CN` measurem
 The pipeline is the same four steps whether you run one image or the whole project:
 
 1. **Neighbour window** — for every cell, find its local spatial neighbourhood, in one of two modes:
-   - **k nearest neighbours** — each cell's `k` closest cells of *any* type (Euclidean on centroids; paper default `k = 10`).
+   - **k nearest neighbours** — each cell's `k` closest *other* cells of *any* type (Euclidean on centroids). With **Include centre cell** on, the window is the **centre plus `k` neighbours**, so the default **`k = 9` gives a 10-cell window that matches the paper** (Schürch et al. use the 10 nearest neighbours *including the cell itself*).
    - **within radius** — every cell within a fixed radius (in µm when calibrated, else px).
 
-   Both use a spatially-indexed search (JTS `STRtree`), so it scales to hundreds of thousands of cells per image. A cell's own coordinates are excluded from its neighbour list.
+   Both use a spatially-indexed search (JTS `STRtree`), so it scales to hundreds of thousands of cells per image. A cell's own coordinates are excluded from its neighbour list (the centre is added back separately by the option below).
 
-2. **Composition vector** — each window becomes a vector of **cell-type fractions** (what proportion of the window is Tumour, CD4 T, Treg, …), over the cell types you ticked. With **Include centre cell in its own window** on (paper default), the cell's own type is counted too. Cells whose class you didn't select — or that are unclassified/ignored — are excluded from the fractions. A window that ends up empty (no selected-type neighbours) is flagged `CN = -1` and left out of clustering.
+2. **Composition vector** — each window becomes a vector of **cell-type fractions** (what proportion of the window is Tumour, CD4 T, Treg, …), over the cell types you ticked. With **Include centre cell in its own window** on (paper default), the cell's own type is counted too. Cells whose class you didn't select — or that are unclassified/ignored — are excluded from the fractions. A window that ends up empty (no selected-type neighbours) is flagged `CN = -1` and left out of clustering. (The paper clusters raw type *counts*; for a fixed-size kNN window that is mathematically identical to clustering fractions, since every window is scaled by the same `k`.)
 
-3. **k-means clustering** — the composition vectors are clustered into **Number of CNs** groups with k-means. Each resulting cluster is one cellular neighborhood; every cell gets its cluster id written to the `CN` measurement (1-based; empty windows = `-1`).
+3. **k-means clustering** — the composition vectors are clustered into **Number of CNs** groups with k-means. Each resulting cluster is one cellular neighborhood; every cell gets its cluster id written to the `CN` measurement (1-based; empty windows = `-1`). By default k-means is run several times from different seeds and the tightest (lowest-inertia) fit is kept — see the reproducibility note below.
 
 4. **Interpretation** — the mean composition of each CN feeds the enrichment heatmap and the diversity overlay.
 
 > **Raw vs standardized (the most important knob).** By default k-means clusters the **raw fractions**, matching the paper — this tends to resolve the *dominant* architecture (a tumour-purity gradient, stroma, interface). Tick **Standardize compositions before clustering** to z-score each cell-type column first, putting rare and common types on equal footing. Standardization pulls out **specific immune niches** far more sharply (each rare population tends to claim its own CN), but it **coarsens the tumour/stroma bulk** (much of the tissue collapses into one or two large CNs). Neither is "more correct" — pick by your question: architecture → leave it off; immune contexture → turn it on. If you want both, standardize at a higher **Number of CNs** (12–15) and merge the redundant tumour CNs afterward (§18.5).
+
+> **Seed reproducibility.** k-means starts from a random guess, so a single run is a dice roll — on validation data (the Schürch/Nolan replication) agreement with the published neighborhoods swung by ~0.3 (ARI) on seed alone. Tick **Sample multiple k-means seeds** (on by default) to run the clustering 10× and keep the lowest-inertia result, so runs are **reproducible** and unlucky seeds are avoided. Untick it for a single, faster run when iterating on parameters. It does not change *what* the method finds, only which local optimum you land in.
 
 ### 18.3 Scope: current image vs whole project
 
@@ -1161,13 +1342,13 @@ To pool several QuPath projects into **one** fit — e.g. two staining batches o
 
 ![The Cellular Neighborhoods dialog](doc_images/cellular_neighbourhoods.png)
 
-*The dialog set for a whole-project run: 41 images pooled, a 500k-window fit sample, kNN window (`k = 10`), 10 CNs, the cell-type checklist, and the three option tick-boxes. See §18.2 for what each option does.*
+*The dialog set for a whole-project run: 41 images pooled, a 500k-window fit sample, a kNN window, 10 CNs, the cell-type checklist, and the option tick-boxes. (This screenshot pre-dates the default change; the paper-matching default is now `k = 9`, and a fourth option — **Sample multiple k-means seeds** — has since been added — see §18.2.) See §18.2 for what each option does.*
 
 1. Open **Cellular Neighborhoods…**. Pick **Scope** (and, for project scope, **Choose images…**, plus **Add project…** to pool other projects).
-2. Choose the **Neighborhood window**: **k nearest neighbours** (set `k`) or **within radius** (set the radius). Radius in tissue units is the more physically interpretable choice when calibrated.
+2. Choose the **Neighborhood window**: **k nearest neighbours** (set `k`; default `9` → a 10-cell window with the centre cell, matching the paper — see §18.2) or **within radius** (set the radius). Radius in tissue units is the more physically interpretable choice when calibrated.
 3. Set **Number of CNs** (paper default 10). Fewer = coarser regions; more = finer, but expect redundancy you can merge later.
 4. Tick the **Cell types** to include (**All** / **None** shortcuts). Leave out debris/ignore classes.
-5. Options: **Include centre cell** (leave on to match the paper), **Standardize compositions** (see §18.2), **Show enrichment heatmap after run**.
+5. Options: **Include centre cell** (leave on to match the paper), **Standardize compositions** (see §18.2), **Sample multiple k-means seeds** (leave on for reproducible results — see §18.2), **Show enrichment heatmap after run**.
 6. **Pixel size** (µm/pixel) — optional; pre-filled from the image calibration. Set it if your images are uncalibrated and you want the radius interpreted in microns.
 7. For project scope, set **Sample windows for fit** and **Parallel workers**.
 8. Click **Run**. The log streams progress; in project scope you'll see per-image `sampled …` then `CN assigned …` lines, interleaved across workers.
@@ -1212,7 +1393,7 @@ Both cohort passes (sample and assign) process images **in parallel**, one worke
 - **Each worker loads a full image's cell hierarchy**, so higher worker counts are faster but use more memory. Dial it back on very large slides (hundreds of thousands of cells each).
 - **Many small images:** raise the worker count.
 - **A few very large images:** 2–4 workers is often the sweet spot.
-- Results are **deterministic regardless of worker count** — each image is sampled with its own fixed seed, so the fit is reproducible run to run.
+- Results are **deterministic regardless of worker count** — each image is sampled with its own fixed seed, so the fit is reproducible run to run (and with **Sample multiple k-means seeds** on, the k-means fit itself is stabilised too — §18.2).
 
 ### 18.7 Viewer overlays
 

@@ -94,7 +94,7 @@ See [CLAUDE.md](CLAUDE.md#build--test) for prerequisites (JDK 25), platform-spec
 ```bash
 export JAVA_HOME=/path/to/jdk-25
 ./gradlew shadowJar
-# → build/libs/qupath-extension-celltune-0.1.1-all.jar
+# → build/libs/qupath-extension-celltune-0.2.0-all.jar
 ```
 
 ## Project Structure
@@ -143,8 +143,10 @@ Copyright (C) 2026 mikemcka.
 ## Acknowledgements
 
 ### References
-- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.weizmann.ac.il/mcb/Keren/home) — the active learning cell classification workflow that this extension emulates. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
-- **Cellular neighborhoods** — the CN analysis (§18 of the [User Guide](USER_GUIDE.md)) implements the neighbourhood-clustering method of **Schürch CM, Bhate SS, Barlow GL, et al. "Coordinated Cellular Neighborhoods Orchestrate Antitumoral Immunity at the Colorectal Cancer Invasive Front." *Cell* 182(5):1341–1359.e19 (2020). [doi:10.1016/j.cell.2020.07.005](https://doi.org/10.1016/j.cell.2020.07.005)**. If you use the cellular neighborhoods feature in your analysis, please cite this paper.
+- **[CellTune](https://celltune.org/)** by the [Keren Lab](https://www.weizmann.ac.il/mcb/Keren/home) —  The human in the loop cell classification workflow that this extension derives functions from. See [the CellTune preprint](https://www.biorxiv.org/content/10.1101/2025.05.05.652215v1).
+- **Cellular neighborhoods** — the CN analysis (§18 of the [User Guide](USER_GUIDE.md)) implements the neighbourhood-clustering method of **Schürch CM, Bhate SS, Barlow GL, et al. "Coordinated Cellular Neighborhoods Orchestrate Antitumoral Immunity at the Colorectal Cancer Invasive Front." *Cell* 182(5):1341–1359.e19 (2020). [doi:10.1016/j.cell.2020.07.005](https://doi.org/10.1016/j.cell.2020.07.005)**. If you use the cellular neighborhoods feature in your analysis, please cite this paper. Reference implementation: [nolanlab/NeighborhoodCoordination](https://github.com/nolanlab/NeighborhoodCoordination) (the authors' Python/Jupyter code) — CellTune reimplements the same kNN-window + k-means approach in Java.
+- **Leiden clustering & the scanpy recipe** — the graph-based clustering (§11 of the [User Guide](USER_GUIDE.md)) uses the **Leiden algorithm**: **Traag VA, Waltman L, van Eck NJ. "From Louvain to Leiden: guaranteeing well-connected communities." *Scientific Reports* 9:5233 (2019). [doi:10.1038/s41598-019-41695-z](https://doi.org/10.1038/s41598-019-41695-z)** (implemented here via the CWTS `networkanalysis` library — same authors as the Python `leidenalg`). The pipeline deliberately mirrors **scanpy**'s single-cell recipe (scale → PCA → neighbours → Leiden): **Wolf FA, Angerer P, Theis FJ. "SCANPY: large-scale single-cell gene expression data analysis." *Genome Biology* 19:15 (2018). [doi:10.1186/s13059-017-1382-0](https://doi.org/10.1186/s13059-017-1382-0)**. CellTune's Leiden clustering was validated against scanpy's Leiden on the Schürch et al. CODEX CRC dataset. If graph-based clustering is central to your analysis, please cite the Leiden algorithm and scanpy.
+- **Approximate nearest neighbours (HNSW)** — the scalable kNN graph behind cohort/all-cells Leiden uses **Hierarchical Navigable Small World graphs**: **Malkov YA, Yashunin DA. "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs." *IEEE TPAMI* 42(4):824–836 (2020). [doi:10.1109/TPAMI.2018.2889473](https://doi.org/10.1109/TPAMI.2018.2889473)** (implemented here via the jelmerk `hnswlib-core` library).
 - **[pixel-patrol](https://pypi.org/project/pixel-patrol/)** (MIT) — the whole-image, per-channel pixel-statistics approach behind the **image pixel prescreen** (which summary statistics to compute and how images are flagged) was adapted from pixel-patrol. The Java implementation (`model/ImagePixelStats`, `model/ImagePixelStatsReader`, `model/PixelCohortAnalyzer`) is original to this project.
 - **[qupath-extension-xgboost](https://github.com/zindy/qupath-extension-xgboost)** by [Zindy](https://github.com/zindy) — a QuPath 0.7 XGBoost extension whose project structure, Gradle configuration, and XGBoost4J integration patterns served as a reference implementation for this extension.
 - Built on the [QuPath extension template](https://github.com/qupath/qupath-extension-template).
@@ -159,3 +161,5 @@ The shadow ("fat") JAR bundles the following third-party libraries; their licens
 | [XGBoost4J](https://github.com/dmlc/xgboost) | Apache-2.0 | Gradient-boosted model 1 |
 | [LightGBM4J](https://github.com/metarank/lightgbm4j) wrapping [LightGBM](https://github.com/microsoft/LightGBM) | MIT / MIT | Gradient-boosted model 2 |
 | [Bytedeco JavaCPP presets](https://github.com/bytedeco/javacpp-presets) → native [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS), [ARPACK-NG](https://github.com/opencollab/arpack-ng) | Apache-2.0 / BSD-3-Clause / BSD-3-Clause | Native BLAS/LAPACK for Smile's PCA/UMAP (pulled in transitively by Smile) |
+| [CWTS networkanalysis](https://github.com/CWTSLeiden/networkanalysis) | MIT | Leiden community detection (CPM) for graph-based cell clustering (§11) |
+| [hnswlib-core](https://github.com/jelmerk/hnswlib) (jelmerk) | Apache-2.0 | HNSW approximate-nearest-neighbour kNN graph for Leiden at cohort/all-cells scale |

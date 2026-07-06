@@ -7,6 +7,7 @@
 - [x] v1.2 Cohort Outlier Analytics (shipped 2026-04-30)
 - [ ] v1.3 Cross-Project Binary Ground Truth Portability (planned)
 - [ ] v1.4 Cellular Neighborhood Analytics (planned)
+- [ ] v1.5 Graph-based Phenotype Clustering (planned)
 
 ## Milestone v1.1 - Reliability and Verification Hardening
 
@@ -145,6 +146,59 @@ Plans:
 - [ ] 13-01-PLAN.md - Build NeighborhoodModel + dialog + enrichment heatmap/CSV + menu wiring with unit tests (filed from prior plan-mode draft)
 
 
+## Milestone v1.5 - Graph-based Phenotype Clustering
+
+Goal: Add Leiden graph-based community detection as a selectable alternative to k-means in the interactive Scatter Plots & Clustering (phenotyping) workflow, for both current-image and whole-project scope — the field-standard method (scanpy/scimap/SPACEc) for resolving non-spherical and rare cell populations.
+
+### Phase 14 - Leiden Phenotype Clustering
+
+Goal: Add a Method {k-means, Leiden} selector to the scatter clustering dialog; Leiden builds a feature-space kNN graph (Jaccard-weighted) and runs the CWTS Leiden algorithm with a resolution control and reproducibility toggle, reusing the existing colouring/legend/assignment machinery and adding a kNN label-transfer path for cohort scope.
+Depends on: Existing scatter/cluster machinery (ScatterPlotView, ScatterMath, CohortClusterModel) and the k-means multi-restart reproducibility pattern (NeighborhoodModel). Research: .planning/notes/leiden-clustering-design.md.
+Requirements: LEI-01, LEI-02, LEI-03, LEI-04, LEI-05
+Success Criteria:
+1. Dialog offers Method {k-means, Leiden}; Leiden shows resolution + reproducibility controls and decides the cluster count.
+2. Leiden clusters the same z-scored active matrix via kNN graph + CWTS Leiden and drives colouring/legend/assignment identically to k-means.
+3. Project scope fits Leiden on the pooled sample and assigns all cells across images via kNN label transfer; k-means cohort path unchanged.
+4. Automated tests cover feature kNN, community recovery, resolution behaviour, reproducibility, and label transfer.
+Plans: 1 plan
+
+Plans:
+- [ ] 14-01-PLAN.md - Bundle CWTS Leiden + build LeidenModel (kNN graph/Leiden/label transfer), wire Method selector + resolution/reproducibility controls, cohort kNN-transfer, docs, with unit tests
+
+### Phase 15 - All-Cells Leiden Clustering (True-Scanpy)
+
+Goal: Replace the Phase 14 cohort kNN label-transfer (sc.tl.ingest-style) with a single all-cohort clustering (sc.tl.leiden-style): pool every cell across all project images into one feature matrix, build an approximate-NN (HNSW) kNN graph over all cells, SNN/Jaccard-weight it, run one CWTS Leiden partition, and write each cell's community label back to its source image — no label transfer.
+Depends on: Phase 14 (LeidenModel feature kNN/edge weighting/CWTS Leiden, CohortClusterModel streaming passes, ScatterPlotView cohort write action).
+Requirements: LEI-06, LEI-07, LEI-08, LEI-09, LEI-10
+Success Criteria:
+1. Cohort clustering offers an all-cells mode (pool all cells → one graph → single Leiden → write labels back) selectable alongside the retained kNN label-transfer mode.
+2. The Leiden kNN graph (single-image and cohort) is built with an approximate-NN index (HNSW) and validated at runtime against exact brute-force featureKnn by a recall gate (≥95%, auto-tune then abort) on a subsample.
+3. Write-back is memory-safe (two-pass: pool features + record identity, release hierarchies; re-read + write) and maps labels to cells by stable PathObject UUID.
+4. The interactive scatter/UMAP preview stays subsample-based for resolution selection; the persisted Cluster measurement comes from the full all-cells run, with the preview-vs-final divergence documented.
+5. Automated tests cover pooling/identity mapping, the ANN recall gate vs exact kNN, UUID write-back, and all-cells community recovery on synthetic clouds.
+Plans: 5 plans
+- [x] 15-01-PLAN.md - Bundle hnswlib-core (implementation+shadow) and add the pure HnswKnnIndex ANN kNN wrapper with seeded-deterministic build + recall tests
+- [x] 15-02-PLAN.md - Route Leiden through HNSW (clusterViaAnn) guarded by the runtime recall gate (AnnRecallException abort); HNSW-vs-exact ARI tests
+- [x] 15-03-PLAN.md - Primitive-array SNN/Jaccard rewrite for cohort scale (byte-identical equivalence) + all-cells recovery/reproducibility tests
+- [x] 15-04-PLAN.md - CohortClusterModel two-pass all-cells driver (poolAllCells + writeClusterAllCells) with packed-UUID write-back + cancellation; reorder/pooling/cancel tests
+- [x] 15-05-PLAN.md - ScatterPlotView cohort-mode radio pair, soft-ceiling confirm, per-phase progress + cancel + recall status, preview re-sync, and USER_GUIDE/CLAUDE.md fidelity-gap docs (completed 2026-07-06, human-verify checkpoint approved incl. full multi-image project)
+
+### Phase 16 - PCA Dimensionality Reduction for Clustering
+
+Goal: Add an optional, deterministic PCA reduction step between z-scoring and the clustering kNN graph build (single-image preview, all-cells cohort driver, Leiden kNN-transfer), mirroring scanpy's `scale -> PCA -> neighbors -> leiden` recipe and closing the third and final documented scanpy-fidelity gap ("no PCA before neighbours").
+Depends on: Phase 15 (all-cells Leiden clustering, ScatterMath/CohortClusterModel/ScatterPlotView machinery this PCA step is inserted in front of).
+Requirements: PCA-01, PCA-02, PCA-03, PCA-04, PCA-05, PCA-06
+Success Criteria:
+1. Above a configurable feature-count threshold (default 50) with PCA enabled, the clustering kNN graph is built on the PCA-projected matrix in all three entry points (single-image preview, all-cells cohort, Leiden kNN-transfer).
+2. At or below the threshold, or with PCA disabled, clustering is byte-identical to the pre-PCA behaviour.
+3. PCA reduction is deterministic (exact Smile covariance eigendecomposition, no randomized SVD) and demonstrably fixes the noise-dominance/distance-degradation failure mode on synthetic data (dominance ARI test).
+4. The all-cells cohort path fits the projection on a bounded seeded subsample and applies it to every pooled row; per-cluster centroids stay in original marker space regardless of clustering space; component count and variance explained are reported to the status line.
+Plans: 1 plan (recorded retroactively — implemented inline, then documented)
+
+Plans:
+- [x] 16-01-PLAN.md - ScatterMath.pcaReduce conditional dimensionality reduction, wired into the all-cells driver + Leiden transfer + scatter-plot preview fit/UI, with dominance/determinism/marker-space-centroid tests and USER_GUIDE/CLAUDE.md fidelity-gap docs (completed 2026-07-06, recorded retroactively)
+
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -158,3 +212,6 @@ Plans:
 | 11. Project Summary Cohort Outlier Analytics | v1.2 | COH-01,COH-02,COH-03,COH-04 | 2/2 | Complete (2026-04-30) |
 | 12. Binary Ground Truth Bundle Export/Import | v1.3 | XFER-01,XFER-02,XFER-03,XFER-04 | 0/2 | Not started |
 | 13. CN Spatial Clustering | v1.4 | CN-01,CN-02,CN-03,CN-04 | 0/1 | Planned |
+| 14. Leiden Phenotype Clustering | v1.5 | LEI-01,LEI-02,LEI-03,LEI-04,LEI-05 | 0/1 | Planned |
+| 15. All-Cells Leiden Clustering (True-Scanpy) | v1.5 | LEI-06,LEI-07,LEI-08,LEI-09,LEI-10 | 5/5 | Complete (2026-07-06) |
+| 16. PCA Dimensionality Reduction | v1.5 | PCA-01..PCA-06 | 1/1 | Complete (2026-07-06) |

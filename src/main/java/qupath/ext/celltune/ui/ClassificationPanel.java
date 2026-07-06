@@ -945,7 +945,7 @@ public class ClassificationPanel extends VBox {
                                     batchTargetImages,
                                     workers,
                                     classifier,
-                                    finalFeatureNames,
+                                    classifier.getFeatureNames(),
                                     featureNormalizer,
                                     this,
                                     trainLog);
