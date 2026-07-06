@@ -46,7 +46,14 @@ import qupath.lib.projects.ProjectImageEntry;
  * so a reordered second read still labels every cell correctly. A
  * {@link CancellationToken} allows honoring cancellation between images and at
  * phase boundaries, and an {@link AnnRecallException} from {@code clusterViaAnn}
- * aborts before any label is written.
+ * aborts before any label is written. {@link AllCellsResult} also carries the
+ * pooled partition's per-cluster centroids/counts and z-scoring mean/sd ({@link
+ * #centroidsAndCounts}) so a UI caller can re-sync its cluster-assign heatmap to
+ * the all-cells partition instead of a preview subsample's fit. Because the
+ * all-cells partition is written to disk (not just fit in memory), assigning
+ * classes afterward must read the WRITTEN {@link #CLUSTER_MEASUREMENT} rather than
+ * re-transferring against any preview reference — {@link #assignAcrossProjectByMeasurement}
+ * (backed by the pure {@link #assignmentsFromMeasurement} seam) is that path.
  * <p>
  * No JavaFX UI is built here; the only FX dependency is marshalling mutations of
  * the open image's live hierarchy onto the FX thread, which QuPath requires.
@@ -889,6 +896,17 @@ public final class CohortClusterModel {
      * @param aborted         true if the ANN recall gate failed — no image was
      *                        written in this case (T-15-10)
      * @param cancelled       true if the token was cancelled before or during the run
+     * @param centroids       [nClusters][nMarkers] mean z-scored marker row per
+     *                        cluster, over the FULL pooled all-cells matrix (LEI-09
+     *                        UI re-sync) — {@code null} when {@code nClusters == 0}
+     *                        (abort/cancel-before-clustering/no matching cells)
+     * @param clusterCounts   pooled (matching) cell count per cluster, length
+     *                        {@code nClusters} — {@code null} alongside {@code centroids}
+     * @param mean            per-marker mean used to z-score the pooled matrix (same
+     *                        standardization the caller must reuse for a consistent
+     *                        assign-dialog heatmap) — {@code null} alongside {@code centroids}
+     * @param sd              per-marker sd used to z-score the pooled matrix —
+     *                        {@code null} alongside {@code centroids}
      */
     public record AllCellsResult(
             int nClusters,
@@ -897,7 +915,51 @@ public final class CohortClusterModel {
             List<String> imagesWritten,
             List<String> imagesNotWritten,
             boolean aborted,
-            boolean cancelled) {}
+            boolean cancelled,
+            double[][] centroids,
+            int[] clusterCounts,
+            double[] mean,
+            double[] sd) {}
+
+    /** Per-cluster mean z-scored marker row + pooled cell count, from {@link #centroidsAndCounts}. */
+    public record CentroidsAndCounts(double[][] centroids, int[] counts) {}
+
+    /**
+     * Pure, testable helper: computes the mean z-scored marker row (centroid) and
+     * pooled cell count for every cluster in {@code labels}, over the pooled
+     * all-cells matrix {@code rows}. Rows whose label is out of {@code [0,nClusters)}
+     * (should not normally occur — {@code clusterViaAnn} labels every row) are
+     * skipped defensively rather than throwing. Empty clusters (count 0) keep an
+     * all-zero centroid row.
+     *
+     * @param rows       [m][nMarkers] pooled z-scored marker rows
+     * @param labels     community label per row, parallel to {@code rows}
+     * @param nClusters  distinct cluster count (centroid/count array length)
+     * @param nMarkers   marker column count (centroid row length)
+     */
+    static CentroidsAndCounts centroidsAndCounts(double[][] rows, int[] labels, int nClusters, int nMarkers) {
+        double[][] centroids = new double[nClusters][nMarkers];
+        int[] counts = new int[nClusters];
+        for (int i = 0; i < rows.length; i++) {
+            int lab = labels[i];
+            if (lab < 0 || lab >= nClusters) {
+                continue;
+            }
+            counts[lab]++;
+            double[] row = rows[i];
+            for (int j = 0; j < nMarkers; j++) {
+                centroids[lab][j] += row[j];
+            }
+        }
+        for (int lab = 0; lab < nClusters; lab++) {
+            if (counts[lab] > 0) {
+                for (int j = 0; j < nMarkers; j++) {
+                    centroids[lab][j] /= counts[lab];
+                }
+            }
+        }
+        return new CentroidsAndCounts(centroids, counts);
+    }
 
     /** Outcome of {@link #clusterOrAbort}: either a successful partition, or an aborted run with the recall-gate message. */
     record ClusterOutcome(LeidenModel.LeidenResult result, boolean aborted, String abortMessage) {}
@@ -982,11 +1044,12 @@ public final class CohortClusterModel {
 
         if (pooled.cancelled() || (token != null && token.isCancelled())) {
             log.accept("Cancelled during pooling — no images written.");
-            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, true);
+            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, true, null, null, null, null);
         }
         if (pooled.rows().length == 0) {
             log.accept("No matching cells found across the selected images — nothing to cluster.");
-            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), false, false);
+            return new AllCellsResult(
+                    0, -1.0, 0, List.of(), List.copyOf(images), false, false, null, null, null, null);
         }
 
         log.accept("Building kNN graph…");
@@ -997,11 +1060,14 @@ public final class CohortClusterModel {
             logger.warn("All-cells ANN recall gate failed: {}", clusterOutcome.abortMessage());
             log.accept("ANN recall gate failed — aborting, no Cluster measurement written: "
                     + clusterOutcome.abortMessage());
-            return new AllCellsResult(0, -1.0, 0, List.of(), List.copyOf(images), true, false);
+            return new AllCellsResult(
+                    0, -1.0, 0, List.of(), List.copyOf(images), true, false, null, null, null, null);
         }
 
         int[] labels = clusterOutcome.result().labels();
         int nClusters = clusterOutcome.result().nClusters();
+        int nMarkers = markers.size();
+        CentroidsAndCounts centroidsAndCounts = centroidsAndCounts(pooled.rows(), labels, nClusters, nMarkers);
         boolean classFilterActive = classFilter != null && !classFilter.isBlank();
         String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
         Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
@@ -1088,7 +1154,11 @@ public final class CohortClusterModel {
                 outcome.written(),
                 outcome.notWritten(),
                 false,
-                outcome.cancelled());
+                outcome.cancelled(),
+                centroidsAndCounts.centroids(),
+                centroidsAndCounts.counts(),
+                pooled.mean(),
+                pooled.sd());
     }
 
     /** Outcome of {@link #runPass2Loop}: which images were written, which weren't, and whether cancellation stopped the loop early. */
@@ -1136,6 +1206,136 @@ public final class CohortClusterModel {
             }
         }
         return new Pass2Outcome(written, notWritten, cancelled);
+    }
+
+    // ── Cluster→class assign from an already-written all-cells measurement ─────
+
+    /**
+     * Pure, testable helper: maps ONE cell's already-written {@link #CLUSTER_MEASUREMENT}
+     * value to a {@link PathClass} via {@code mapping} — {@code null} for a missing
+     * measurement ({@code NaN}), an unclustered cell ({@code -1}, which decodes to
+     * label {@code -2} and is never a mapping key), or a cluster id absent from
+     * {@code mapping} (the user chose "skip" for it).
+     * <p>
+     * The written value is 1-based ({@link #writeClusterAllCells}/{@link
+     * #writeClusterAcrossProject} both write {@code label + 1}), so the inverse here
+     * is {@code (int) Math.round(value) - 1}.
+     */
+    static PathClass classForMeasurementValue(double value, Map<Integer, PathClass> mapping) {
+        if (Double.isNaN(value)) {
+            return null;
+        }
+        int label = (int) Math.round(value) - 1;
+        return mapping.get(label);
+    }
+
+    /** Parallel-list result of {@link #assignmentsFromMeasurement}: cells to change, and the class to set on each. */
+    record MeasurementAssignment(List<PathObject> objects, List<PathClass> classes) {}
+
+    /**
+     * Pure, testable helper (mirrors {@link #runPass2Loop}/{@link #clusterOrAbort}'s
+     * "extract a live-I/O-free seam" pattern): scans {@code cells} for an already-written
+     * {@link #CLUSTER_MEASUREMENT} value and maps each to a class via {@code mapping}
+     * ({@link #classForMeasurementValue}), returning the (cell, class) pairs to apply.
+     * Cells with no match (unclustered, or mapped to "skip") are simply omitted — never
+     * reclassified. Exercised directly against real {@link PathObject}s with a
+     * measurement set, no live {@code Project}/{@code ImageData} required.
+     */
+    static MeasurementAssignment assignmentsFromMeasurement(List<PathObject> cells, Map<Integer, PathClass> mapping) {
+        List<PathObject> objs = new ArrayList<>();
+        List<PathClass> classes = new ArrayList<>();
+        for (PathObject cell : cells) {
+            double v = cell.getMeasurementList().get(CLUSTER_MEASUREMENT);
+            PathClass pc = classForMeasurementValue(v, mapping);
+            if (pc != null) {
+                objs.add(cell);
+                classes.add(pc);
+            }
+        }
+        return new MeasurementAssignment(objs, classes);
+    }
+
+    /**
+     * Assigns classes across {@code images} by reading each cell's ALREADY-WRITTEN
+     * {@link #CLUSTER_MEASUREMENT} (not by re-transferring against any preview fit) —
+     * the correct cohort-assign path after a completed {@link #writeClusterAllCells}
+     * run, where the persisted measurement (not any in-memory preview reference) is
+     * the source of truth for which cluster each cell belongs to. Mirrors {@link
+     * #assignAcrossProject}'s per-image stream/save/progress contract, but the labelling
+     * step is {@link #assignmentsFromMeasurement} instead of a z-scored-row classifier.
+     *
+     * @param project  the open project
+     * @param images   image names to stream (cohort scope)
+     * @param mapping  cluster id (0-based, i.e. written-value - 1) -> class
+     * @param openData open image's live data (nullable); mutated on the FX thread
+     * @param openName name of the open image (nullable)
+     * @param log      progress sink (off the FX thread)
+     * @param progress fraction sink in [0,1] (off the FX thread)
+     * @return total cells reclassified
+     */
+    public static long assignAcrossProjectByMeasurement(
+            Project<BufferedImage> project,
+            List<String> images,
+            Map<Integer, PathClass> mapping,
+            ImageData<BufferedImage> openData,
+            String openName,
+            Consumer<String> log,
+            DoubleConsumer progress) {
+        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
+
+        long totalAssigned = 0;
+        int done = 0;
+        for (String name : images) {
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                log.accept("[" + name + "] not in project — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            boolean isOpen = name.equals(openName);
+            ImageData<BufferedImage> imageData;
+            try {
+                imageData = isOpen ? openData : entry.readImageData();
+            } catch (Exception e) {
+                log.accept("[" + name + "] could not load — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+            if (imageData == null) {
+                log.accept("[" + name + "] could not load — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+
+            List<PathObject> cells = detections(imageData);
+            int n = cells.size();
+            if (n == 0) {
+                log.accept("[" + name + "] no detections — skipped");
+                done++;
+                progress.accept(done / (double) images.size());
+                continue;
+            }
+
+            MeasurementAssignment assignment = assignmentsFromMeasurement(cells, mapping);
+            applyClasses(imageData, assignment.objects(), assignment.classes(), isOpen);
+            try {
+                entry.saveImageData(imageData);
+            } catch (Exception e) {
+                logger.error("Failed to save {}", name, e);
+                log.accept("[" + name + "] save failed: " + e.getMessage());
+            }
+            totalAssigned += assignment.objects().size();
+            log.accept(String.format(
+                    "[%s] assigned %,d of %,d cells (from written Cluster measurement)",
+                    name, assignment.objects().size(), n));
+
+            done++;
+            progress.accept(done / (double) images.size());
+        }
+        return totalAssigned;
     }
 
     /** Growable primitive {@code long} array — avoids boxed {@code Long} allocation while pooling tens of millions of UUID halves. */
