@@ -183,6 +183,21 @@ Plans: 5 plans
 - [x] 15-04-PLAN.md - CohortClusterModel two-pass all-cells driver (poolAllCells + writeClusterAllCells) with packed-UUID write-back + cancellation; reorder/pooling/cancel tests
 - [x] 15-05-PLAN.md - ScatterPlotView cohort-mode radio pair, soft-ceiling confirm, per-phase progress + cancel + recall status, preview re-sync, and USER_GUIDE/CLAUDE.md fidelity-gap docs (completed 2026-07-06, human-verify checkpoint approved incl. full multi-image project)
 
+### Phase 16 - PCA Dimensionality Reduction for Clustering
+
+Goal: Add an optional, deterministic PCA reduction step between z-scoring and the clustering kNN graph build (single-image preview, all-cells cohort driver, Leiden kNN-transfer), mirroring scanpy's `scale -> PCA -> neighbors -> leiden` recipe and closing the third and final documented scanpy-fidelity gap ("no PCA before neighbours").
+Depends on: Phase 15 (all-cells Leiden clustering, ScatterMath/CohortClusterModel/ScatterPlotView machinery this PCA step is inserted in front of).
+Requirements: PCA-01, PCA-02, PCA-03, PCA-04, PCA-05, PCA-06
+Success Criteria:
+1. Above a configurable feature-count threshold (default 50) with PCA enabled, the clustering kNN graph is built on the PCA-projected matrix in all three entry points (single-image preview, all-cells cohort, Leiden kNN-transfer).
+2. At or below the threshold, or with PCA disabled, clustering is byte-identical to the pre-PCA behaviour.
+3. PCA reduction is deterministic (exact Smile covariance eigendecomposition, no randomized SVD) and demonstrably fixes the noise-dominance/distance-degradation failure mode on synthetic data (dominance ARI test).
+4. The all-cells cohort path fits the projection on a bounded seeded subsample and applies it to every pooled row; per-cluster centroids stay in original marker space regardless of clustering space; component count and variance explained are reported to the status line.
+Plans: 1 plan (recorded retroactively — implemented inline, then documented)
+
+Plans:
+- [x] 16-01-PLAN.md - ScatterMath.pcaReduce conditional dimensionality reduction, wired into the all-cells driver + Leiden transfer + scatter-plot preview fit/UI, with dominance/determinism/marker-space-centroid tests and USER_GUIDE/CLAUDE.md fidelity-gap docs (completed 2026-07-06, recorded retroactively)
+
 
 ## Progress
 
@@ -199,3 +214,4 @@ Plans: 5 plans
 | 13. CN Spatial Clustering | v1.4 | CN-01,CN-02,CN-03,CN-04 | 0/1 | Planned |
 | 14. Leiden Phenotype Clustering | v1.5 | LEI-01,LEI-02,LEI-03,LEI-04,LEI-05 | 0/1 | Planned |
 | 15. All-Cells Leiden Clustering (True-Scanpy) | v1.5 | LEI-06,LEI-07,LEI-08,LEI-09,LEI-10 | 5/5 | Complete (2026-07-06) |
+| 16. PCA Dimensionality Reduction | v1.5 | PCA-01..PCA-06 | 1/1 | Complete (2026-07-06) |

@@ -85,6 +85,15 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - [x] LEI-09: The interactive scatter/UMAP preview remains subsample-based for resolution selection while the persisted Cluster measurement is produced by the full all-cells run; the preview-vs-final divergence is surfaced to the user.
 - [x] LEI-10: Automated tests cover cohort pooling/identity mapping, the ANN recall gate vs exact kNN, UUID-keyed label write-back, and all-cells community recovery on synthetic clouds.
 
+### Graph-based Phenotype Clustering — Conditional PCA Reduction
+
+- [x] PCA-01: With feature count above the configurable threshold (default 50) and PCA enabled, the clustering kNN graph (single-image, all-cells cohort, and Leiden kNN-transfer) is built on the PCA-projected matrix, verified by tests asserting the matrix fed to the graph builder has the reduced column count.
+- [x] PCA-02: With feature count at or below the threshold, or PCA disabled via the "Reduce dims (PCA)" checkbox, clustering is byte-identical to the pre-PCA behaviour (regression guard on the existing curated-panel path).
+- [x] PCA-03: Two reproducible runs (seed 42) on the same above-threshold input yield identical PCA projections and identical downstream cluster labels — the exact (non-randomized) Smile PCA introduces no nondeterminism.
+- [x] PCA-04: On a synthetic dataset where a small number of true signal columns are drowned by many independent noise columns, PCA-on recovers the known communities at materially higher ARI than PCA-off, demonstrating the dominance/degradation fix.
+- [x] PCA-05: The all-cells cohort path fits one PCA projection on a bounded seeded subsample and applies it to every pooled row; per-cluster centroids remain in original marker space regardless of the space clustering ran in, and peak fit memory stays within a documented bound independent of total cell count.
+- [x] PCA-06: Component count kept and cumulative variance explained are reported to the status line/log.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -135,10 +144,16 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | LEI-08 | Phase 15 | Complete |
 | LEI-09 | Phase 15 | Complete |
 | LEI-10 | Phase 15 | Complete |
+| PCA-01 | Phase 16 | Complete |
+| PCA-02 | Phase 16 | Complete |
+| PCA-03 | Phase 16 | Complete |
+| PCA-04 | Phase 16 | Complete |
+| PCA-05 | Phase 16 | Complete |
+| PCA-06 | Phase 16 | Complete |
 
 Coverage:
-- requirements listed in this file: 40
-- mapped to phases: 38
+- requirements listed in this file: 46
+- mapped to phases: 44
 - unmapped: 2 (COMP-06, COMP-07)
 
 ---
