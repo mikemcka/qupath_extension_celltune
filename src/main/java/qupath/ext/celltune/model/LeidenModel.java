@@ -484,32 +484,18 @@ public final class LeidenModel {
      * sets (each node's set includes itself) — the PhenoGraph/shared-nearest-
      * neighbour convention — so two nodes that are each other's only neighbour get
      * weight 1.0 rather than an undefined/zero weight.
+     *
+     * <p>Deliberately implemented with primitive sorted {@code int[]} neighbour
+     * arrays and a two-pointer merge-intersection walk (no {@code HashSet<Integer>}/
+     * {@code HashSet<Long>} boxing) — RESEARCH Pitfall 2 found that the previous
+     * boxed per-node {@code HashSet<Integer>[]} plus a global {@code HashSet<Long>}
+     * edge-dedup set allocate tens of GB of collection/boxing overhead at cohort
+     * scale (~30M nodes x k~15). Do not "simplify" this back to boxed collections
+     * — correctness vs. the retired boxed implementation is pinned by
+     * {@code LeidenModelTest}'s boxed-vs-primitive equivalence test.
      */
     private static Network buildJaccardWeightedNetwork(int n, int[][] neighbors) {
-        Set<Integer>[] closedSets = buildClosedNeighborSets(n, neighbors);
-        Set<Long> seenEdges = new HashSet<>();
-
-        LargeIntArray from = new LargeIntArray(0);
-        LargeIntArray to = new LargeIntArray(0);
-        LargeDoubleArray weights = new LargeDoubleArray(0);
-
-        for (int i = 0; i < n; i++) {
-            for (int j : neighbors[i]) {
-                int a = Math.min(i, j);
-                int b = Math.max(i, j);
-                if (a == b) {
-                    continue;
-                }
-                long key = (((long) a) << 32) | (b & 0xffffffffL);
-                if (!seenEdges.add(key)) {
-                    continue;
-                }
-                double w = jaccard(closedSets[a], closedSets[b]);
-                from.append(a);
-                to.append(b);
-                weights.append(w);
-            }
-        }
+        JaccardEdgeArrays raw = computeJaccardEdges(n, neighbors);
 
         // Network(nNodes, setNodeWeightsToTotalEdgeWeights, edges, edgeWeights,
         // sortedEdges, checkIntegrity) — verified against the CWTS source
@@ -522,33 +508,154 @@ public final class LeidenModel {
         // setNodeWeightsToTotalEdgeWeights=true so createNormalizedNetworkUsingAssociationStrength()
         // (called by the caller right after this) has a meaningful node-weight
         // basis for its null-model correction.
-        return new Network(n, true, new LargeIntArray[] {from, to}, weights, false, true);
+        return new Network(n, true, new LargeIntArray[] {raw.from(), raw.to()}, raw.weights(), false, true);
     }
 
-    @SuppressWarnings("unchecked")
-    private static Set<Integer>[] buildClosedNeighborSets(int n, int[][] neighbors) {
-        Set<Integer>[] sets = new HashSet[n];
+    /**
+     * Package-private test seam: exposes the exact same undirected edge list +
+     * Jaccard weights that {@link #buildJaccardWeightedNetwork} feeds into the
+     * CWTS {@link Network}, as plain arrays, so {@code LeidenModelTest}'s
+     * boxed-vs-primitive equivalence test can assert byte-identical output
+     * against the retired boxed reference implementation (kept only in the test
+     * file). Not called from any production code path.
+     */
+    static JaccardEdges jaccardEdgesForTest(int n, int[][] neighbors) {
+        JaccardEdgeArrays raw = computeJaccardEdges(n, neighbors);
+        return new JaccardEdges(
+                raw.from().toArray(), raw.to().toArray(), raw.weights().toArray());
+    }
+
+    /** Test-seam return type for {@link #jaccardEdgesForTest}. */
+    record JaccardEdges(int[] from, int[] to, double[] weights) {}
+
+    /** Internal accumulator shared by the production ({@link #buildJaccardWeightedNetwork}) and test-seam entry points. */
+    private record JaccardEdgeArrays(LargeIntArray from, LargeIntArray to, LargeDoubleArray weights) {}
+
+    /**
+     * Computes the undirected Jaccard-weighted edge list over the CLOSED (self-
+     * included) neighbour sets, via primitive sorted-{@code int[]} neighbour
+     * arrays and a two-pointer merge-intersection walk (O(k) per pair) — no
+     * boxed {@code HashSet<Integer>}/{@code HashSet<Long>} anywhere (RESEARCH
+     * Pitfall 2). Edge dedup is achieved by construction rather than a global
+     * seen-edges set: for an unordered pair {@code {a,b}} with {@code a < b},
+     * the edge is emitted while processing the LOWER-indexed endpoint {@code a}'s
+     * neighbour list whenever {@code b} appears there (covers both symmetric kNN
+     * links and asymmetric links where only {@code a} lists {@code b}); it is
+     * emitted while processing the HIGHER-indexed endpoint {@code b} ONLY when
+     * {@code a} does not already list {@code b} (the asymmetric case where only
+     * {@code b} lists {@code a}). This never double-counts because the outer loop
+     * visits nodes in ascending order, so the lower endpoint's pass always
+     * happens first — exactly mirroring the append order the retired boxed
+     * {@code HashSet<Long>} edge-dedup produced (first-occurrence-in-iteration-
+     * order wins either way), which is why the resulting edge arrays are
+     * byte-identical to (not merely set-equivalent to) the boxed baseline.
+     */
+    private static JaccardEdgeArrays computeJaccardEdges(int n, int[][] neighbors) {
+        int[][] closed = buildClosedNeighborArrays(n, neighbors);
+
+        LargeIntArray from = new LargeIntArray(0);
+        LargeIntArray to = new LargeIntArray(0);
+        LargeDoubleArray weights = new LargeDoubleArray(0);
+
         for (int i = 0; i < n; i++) {
-            Set<Integer> s = new HashSet<>(neighbors[i].length * 2 + 1);
-            s.add(i);
             for (int j : neighbors[i]) {
-                s.add(j);
+                if (j == i) {
+                    continue;
+                }
+                int a = Math.min(i, j);
+                int b = Math.max(i, j);
+                if (i != a && containsSorted(closed[a], b)) {
+                    // i is the higher-indexed endpoint and the lower endpoint's
+                    // neighbour list already contains it -- this edge was (or will
+                    // be) emitted while processing node a instead. Skip to avoid a
+                    // duplicate.
+                    continue;
+                }
+                double w = jaccardPrimitive(closed[a], closed[b]);
+                from.append(a);
+                to.append(b);
+                weights.append(w);
             }
-            sets[i] = s;
         }
-        return sets;
+
+        return new JaccardEdgeArrays(from, to, weights);
     }
 
-    private static double jaccard(Set<Integer> a, Set<Integer> b) {
-        Set<Integer> smaller = a.size() <= b.size() ? a : b;
-        Set<Integer> larger = a.size() <= b.size() ? b : a;
-        int intersection = 0;
-        for (Integer v : smaller) {
-            if (larger.contains(v)) {
-                intersection++;
+    /**
+     * Per-node CLOSED (self-included) neighbour list as a sorted, deduplicated
+     * primitive {@code int[]} — replaces the boxed {@code HashSet<Integer>[]}
+     * used before this plan's rewrite (RESEARCH Pitfall 2).
+     */
+    private static int[][] buildClosedNeighborArrays(int n, int[][] neighbors) {
+        int[][] closed = new int[n][];
+        for (int i = 0; i < n; i++) {
+            int[] neigh = neighbors[i];
+            int[] combined = new int[neigh.length + 1];
+            combined[0] = i;
+            System.arraycopy(neigh, 0, combined, 1, neigh.length);
+            closed[i] = sortedDedup(combined);
+        }
+        return closed;
+    }
+
+    /** Sorts {@code arr} ascending and removes duplicate values (returns a possibly-shorter copy; input untouched). */
+    private static int[] sortedDedup(int[] arr) {
+        int[] sorted = arr.clone();
+        Arrays.sort(sorted);
+        int w = 0;
+        for (int r = 0; r < sorted.length; r++) {
+            if (r == 0 || sorted[r] != sorted[r - 1]) {
+                sorted[w++] = sorted[r];
             }
         }
-        int union = a.size() + b.size() - intersection;
+        return w == sorted.length ? sorted : Arrays.copyOf(sorted, w);
+    }
+
+    /** True if the sorted array {@code arr} contains {@code value} (binary search, no boxing). */
+    private static boolean containsSorted(int[] arr, int value) {
+        int lo = 0;
+        int hi = arr.length - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int v = arr[mid];
+            if (v == value) {
+                return true;
+            }
+            if (v < value) {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Jaccard similarity of two sorted, deduplicated closed-neighbour arrays via a
+     * two-pointer merge-intersection walk — O(|a|+|b|) per pair, no hashing or
+     * boxed {@code Integer} allocation. Mathematically identical to (and, per
+     * {@code LeidenModelTest}'s equivalence test, byte-identical in output to) the
+     * retired boxed set-based {@code jaccard(Set,Set)} implementation: both reduce
+     * to {@code intersectionCount / (double) unionCount} over the same integer
+     * counts, so there is no floating-point summation-order sensitivity to worry
+     * about.
+     */
+    private static double jaccardPrimitive(int[] a, int[] b) {
+        int i = 0;
+        int j = 0;
+        int intersection = 0;
+        while (i < a.length && j < b.length) {
+            if (a[i] == b[j]) {
+                intersection++;
+                i++;
+                j++;
+            } else if (a[i] < b[j]) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+        int union = a.length + b.length - intersection;
         return union == 0 ? 0.0 : intersection / (double) union;
     }
 

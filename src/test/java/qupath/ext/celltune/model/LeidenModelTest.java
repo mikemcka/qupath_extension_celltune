@@ -147,6 +147,52 @@ class LeidenModelTest {
                 "Exception message must include the measured (failing) recall: " + ex.getMessage());
     }
 
+    // ── primitive-array Jaccard/SNN weighting rewrite (Plan 15-03) ────────────
+
+    @Test
+    void jaccardEdgesForTestMatchesBoxedReferenceOnVariousSizes() {
+        // n = 10..200, several k values -- the primitive sorted-array
+        // merge-intersection weighting must produce the SAME edges with
+        // BYTE-IDENTICAL (exact ==) Jaccard weights as the retired boxed
+        // HashSet<Integer>[]/HashSet<Long> implementation (preserved here only
+        // as the equivalence baseline). Jaccard is intersection/union of integer
+        // counts -- no floating-point summation-order sensitivity -- so exact
+        // equality is the correct assertion, not a tolerance.
+        int[] sizes = {10, 37, 80, 200};
+        int[] ks = {2, 5, 15};
+        for (int n : sizes) {
+            for (int k : ks) {
+                Random rng = new Random(1000 + n * 31 + k);
+                double[][] rows = randomCloud(rng, n, Math.max(2, Math.min(6, n / 4)));
+                int[][] neighbors = LeidenModel.featureKnn(rows, k);
+
+                LeidenModel.JaccardEdges primitive = LeidenModel.jaccardEdgesForTest(n, neighbors);
+                LeidenModel.JaccardEdges boxed = buildJaccardEdgesBoxedReference(n, neighbors);
+
+                assertArrayEquals(boxed.from(), primitive.from(), "from[] mismatch at n=" + n + " k=" + k);
+                assertArrayEquals(boxed.to(), primitive.to(), "to[] mismatch at n=" + n + " k=" + k);
+                assertArrayEquals(
+                        boxed.weights(),
+                        primitive.weights(),
+                        0.0,
+                        "weights[] must be byte-identical at n=" + n + " k=" + k);
+            }
+        }
+    }
+
+    @Test
+    void jaccardEdgesForTestGivesClosedSetWeightOneForMutualOnlyNeighbours() {
+        // Two nodes that are each other's ONLY neighbour: closed sets are
+        // {0,1} and {1,0} -- identical sets -- so Jaccard must be 1.0, not an
+        // undefined/zero weight (the PhenoGraph/SNN closed-set convention).
+        int[][] neighbors = {{1}, {0}};
+        LeidenModel.JaccardEdges edges = LeidenModel.jaccardEdgesForTest(2, neighbors);
+        assertEquals(1, edges.from().length, "Exactly one undirected edge expected");
+        assertEquals(0, edges.from()[0]);
+        assertEquals(1, edges.to()[0]);
+        assertEquals(1.0, edges.weights()[0], 0.0, "Mutual-only closed neighbour sets must weight 1.0");
+    }
+
     // ── cluster: community recovery ───────────────────────────────────────────
 
     @Test
@@ -433,6 +479,65 @@ class LeidenModelTest {
             sum += diff * diff;
         }
         return sum;
+    }
+
+    /**
+     * Reference (boxed) Jaccard/SNN weighting -- the pre-Plan-15-03
+     * implementation, preserved here ONLY as the equivalence baseline for the
+     * primitive-array rewrite ({@code jaccardEdgesForTestMatchesBoxedReferenceOnVariousSizes}).
+     * Not used by any production code path -- {@link LeidenModel} itself no
+     * longer contains a boxed {@code HashSet<Integer>}/{@code HashSet<Long>}
+     * weighting implementation (RESEARCH Pitfall 2).
+     */
+    private static LeidenModel.JaccardEdges buildJaccardEdgesBoxedReference(int n, int[][] neighbors) {
+        @SuppressWarnings("unchecked")
+        Set<Integer>[] closedSets = new HashSet[n];
+        for (int i = 0; i < n; i++) {
+            Set<Integer> s = new HashSet<>(neighbors[i].length * 2 + 1);
+            s.add(i);
+            for (int j : neighbors[i]) {
+                s.add(j);
+            }
+            closedSets[i] = s;
+        }
+        Set<Long> seenEdges = new HashSet<>();
+        java.util.List<Integer> fromList = new java.util.ArrayList<>();
+        java.util.List<Integer> toList = new java.util.ArrayList<>();
+        java.util.List<Double> weightList = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            for (int j : neighbors[i]) {
+                int a = Math.min(i, j);
+                int b = Math.max(i, j);
+                if (a == b) {
+                    continue;
+                }
+                long key = (((long) a) << 32) | (b & 0xffffffffL);
+                if (!seenEdges.add(key)) {
+                    continue;
+                }
+                double w = jaccardBoxedReference(closedSets[a], closedSets[b]);
+                fromList.add(a);
+                toList.add(b);
+                weightList.add(w);
+            }
+        }
+        int[] from = fromList.stream().mapToInt(Integer::intValue).toArray();
+        int[] to = toList.stream().mapToInt(Integer::intValue).toArray();
+        double[] weights = weightList.stream().mapToDouble(Double::doubleValue).toArray();
+        return new LeidenModel.JaccardEdges(from, to, weights);
+    }
+
+    private static double jaccardBoxedReference(Set<Integer> a, Set<Integer> b) {
+        Set<Integer> smaller = a.size() <= b.size() ? a : b;
+        Set<Integer> larger = a.size() <= b.size() ? b : a;
+        int intersection = 0;
+        for (Integer v : smaller) {
+            if (larger.contains(v)) {
+                intersection++;
+            }
+        }
+        int union = a.size() + b.size() - intersection;
+        return union == 0 ? 0.0 : intersection / (double) union;
     }
 
     private static Set<Integer> toSet(int[] a) {
