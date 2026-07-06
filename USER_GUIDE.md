@@ -795,6 +795,83 @@ classes, and **saves each image**, with progress in the status bar.
 > the colour-by-marker view too. (The normalizer is captured when the window
 > opens; change it via *Normalise Features* and reopen the plot to pick it up.)
 
+**Leiden cohort modes: "Cluster all cells" vs "Transfer from sample"**
+
+When **Method = Leiden** and **Scope = Project**, a radio pair appears next to the
+Method selector (hidden for k-means, and hidden in current-image scope):
+
+- **Cluster all cells** (default) — the exact, true-scanpy `sc.tl.leiden`-style
+  mode: **every** cell across every selected image is pooled into one feature
+  matrix, one approximate-NN (HNSW) kNN graph is built over the whole cohort, a
+  **single** CWTS Leiden partition runs over that entire graph, and each cell's
+  community label is written back to its source image by its stable cell UUID
+  (not by iteration order — safe even if a second read of an image returns cells
+  in a different order). This genuinely clusters every cell, rather than
+  approximating the rest of the cohort from a sample.
+- **Transfer from sample** — the fast/approximate mode retained from the previous
+  release: Leiden fits once on the pooled sample, then every other cell is
+  assigned by kNN label transfer against that labelled sample (`sc.tl.ingest`-style
+  — see §[11.6](#116-clustering-method-k-means-vs-leiden)).
+
+Clicking **Assign Clusters…** / **By cluster (all images)** with **Cluster all
+cells** selected runs the two-pass all-cells driver instead of the transfer path:
+
+- **Soft cell-count ceiling.** Before pooling starts, CellTune does a quick
+  count-only pass over the selected images to estimate the total pooled cell
+  count. If that estimate is above a configurable ceiling (50,000,000 cells by
+  default), an extra confirm dialog warns you before the run begins — it warns,
+  it does not hard-block.
+- **Per-phase progress.** The status bar reports each phase as it happens —
+  *"Pooling 12/40 images"* → *"Building kNN graph…"* → *"Running Leiden…"* →
+  *"Writing 12/40 images"* — followed by the run's outcome.
+- **ANN recall gate.** The HNSW graph build is checked at runtime against an
+  exact nearest-neighbour reference on a small sample; the status line reports
+  the measured recall (e.g. *"ANN recall 0.982 — passed"*) when the driver
+  exposes it. If recall cannot reach the required 95% after auto-tuning, the run
+  **aborts with no `Cluster` labels written at all** — an actionable error
+  explains why; existing `Cluster` measurements from a previous successful run
+  are left untouched.
+- **Cancel.** A **Cancel** button appears only during an all-cells run. Cancelling
+  stops the write pass before its next image — images already written keep their
+  `Cluster` measurement (no rollback); the final status line reports how many
+  images were, and were not, written.
+- **Legend re-sync.** After a successful (non-cancelled, non-aborted) all-cells
+  write, the scatter legend and the open image's overlay re-sync to the **final
+  all-cells cluster count** — the number Leiden actually found across the whole
+  cohort — not the interactive preview's (subsample-based) cluster count. The
+  interactive plot itself always stays subsample-based for responsiveness; only
+  the persisted `Cluster` measurement (and, after the write, the legend/overlay)
+  reflects the full all-cells run.
+
+Single-image Leiden (current-image scope, and the interactive project-scope
+preview fit) also builds its kNN graph through the same HNSW approximate-NN index
+now, rather than a brute-force scan — this is transparent (no extra control) and
+only matters if you happen to hit the same recall gate on a single image, in
+which case the status bar reports it and asks you to try more cells or different
+markers.
+
+> **Fidelity vs stock scanpy.** CellTune's Leiden clustering (both cohort modes
+> and the single-image path) is a close, but not bit-identical, match to running
+> `sc.tl.leiden` in Python. Three documented gaps:
+>
+> 1. **Quality function** — the bundled CWTS Leiden library optimises the
+>    **Constant Potts Model (CPM)**, not scanpy's default **modularity**
+>    (RBConfiguration). The `Resolution` control behaves like the familiar
+>    scanpy/leidenalg knob (association-strength normalisation keeps it on the
+>    same rough scale), but is not numerically identical to a modularity run.
+> 2. **Edge weighting** — CellTune weights the kNN graph by **Jaccard
+>    similarity of shared nearest neighbours (SNN)**, not scanpy's **UMAP
+>    fuzzy-simplicial-set connectivities**.
+> 3. **No PCA** — CellTune clusters directly on z-scored marker measurements;
+>    there is no PCA dimensionality-reduction step before building the
+>    neighbour graph (near-identity for a typical ~20-marker panel; scanpy
+>    workflows usually reduce to ~50 principal components first, which matters
+>    more for higher-dimensional data like scRNA-seq gene panels).
+>
+> None of these are expected to change population-level conclusions for
+> multiplex-imaging marker panels, but an external `sc.tl.leiden` run on the same
+> data is not guaranteed to reproduce identical cluster boundaries.
+
 ### 11.6 Clustering method: k-means vs Leiden
 
 The **Method** selector (§11.1) switches the clustering algorithm; everything
@@ -842,12 +919,15 @@ community into one point would defeat the method. So in **Project** scope
 
 - **k-means** assigns each cell to its **nearest cohort centroid** (Euclidean, in
   z-scored marker space).
-- **Leiden** assigns each cell by **kNN label transfer**: it finds that cell's
-  nearest neighbours *within the labelled fitted sample* and takes a majority vote
-  of their Leiden labels — the same approach scanpy uses (`sc.tl.ingest`) to map
-  new cells onto an existing clustering. Per-cluster mean marker profiles are
-  still computed for the assignment-pane heatmap either way — only the
-  per-cell assignment mechanism differs.
+- **Leiden**, with **Transfer from sample** selected (§11.5), assigns each cell by
+  **kNN label transfer**: it finds that cell's nearest neighbours *within the
+  labelled fitted sample* and takes a majority vote of their Leiden labels — the
+  same approach scanpy uses (`sc.tl.ingest`) to map new cells onto an existing
+  clustering. Per-cluster mean marker profiles are still computed for the
+  assignment-pane heatmap either way — only the per-cell assignment mechanism
+  differs. With **Cluster all cells** selected instead, there is no separate
+  "assign" step at all — every cell is a first-class member of the single
+  cohort-wide Leiden partition (§11.5).
 
 Both methods otherwise share the exact same pipeline: the same z-scored active
 marker matrix, the same `cluster[]` label array driving plot colour/legend/box
