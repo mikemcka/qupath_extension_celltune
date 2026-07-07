@@ -24,8 +24,9 @@ import qupath.ext.celltune.model.FeatureNormalizer.Transform;
  * Recommended arcsinh cofactors:
  * <ul>
  *   <li><b>1</b> — fluorescence imaging (COMET, CODEX, IF)</li>
- *   <li><b>100</b> — mass spectrometry (MIBI, IMC)</li>
+ *   <li><b>0.05</b> — MIBI mass-spectrometry mean intensities (Hartmann et al. 2021; squidpy MIBI-TOF tutorial)</li>
  * </ul>
+ * The ideal value tracks the measurement intensity scale — see the User Guide (§4.2).
  */
 public class NormalizationPane {
 
@@ -77,7 +78,7 @@ public class NormalizationPane {
         cofactorSpinner.setEditable(true);
         cofactorSpinner.setPrefWidth(100);
 
-        cofactorHint = new Label("(1 for fluorescence, 100 for mass spec)");
+        cofactorHint = new Label("(1 for fluorescence, 0.05 for MIBI)");
         cofactorHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11;");
 
         HBox transformRow =
