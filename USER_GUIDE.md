@@ -187,7 +187,8 @@ Per-feature transforms applied during feature extraction. Same prefix/search/sel
 - **Transform** dropdown:
   - **arcsinh** — `arcsinh(x / cofactor)`. Recommended default.
     - **Cofactor = 1** for fluorescence (COMET, CODEX, IF).
-    - **Cofactor = 100** for mass cytometry (MIBI, IMC).
+    - **Cofactor = 0.05** for MIBI mass-spectrometry intensities — the community-standard value from Hartmann et al. (2021) / the squidpy MIBI-TOF tutorial, applied to per-cell mean intensities (see [References](README.md#references)).
+    - The ideal cofactor tracks your data's intensity **scale**: pick it near the background/signal boundary. A cofactor far larger than the data leaves nearly every cell in the near-linear part of arcsinh (≈ no transform) — e.g. cofactor 1 on MIBI mean intensities that mostly fall below 1 is close to no transform at all. For other mass-spectrometry panels (e.g. IMC), start near 0.05 and check the transformed histogram.
   - **sqrt** — `sqrt(max(0, x))`. Simple variance stabilisation, no cofactor.
 
 ![Normalise features](doc_images/normalise_features.png)
