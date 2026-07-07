@@ -186,9 +186,9 @@ Per-feature transforms applied during feature extraction. Same prefix/search/sel
 
 - **Transform** dropdown:
   - **arcsinh** — `arcsinh(x / cofactor)`. Recommended default.
-    - **Cofactor = 1** for fluorescence (COMET, CODEX, IF).
-    - **Cofactor = 0.05** for MIBI mass-spectrometry intensities — the community-standard value from Hartmann et al. (2021) / the squidpy MIBI-TOF tutorial, applied to per-cell mean intensities (see [References](README.md#references)).
-    - The ideal cofactor tracks your data's intensity **scale**: pick it near the background/signal boundary. A cofactor far larger than the data leaves nearly every cell in the near-linear part of arcsinh (≈ no transform) — e.g. cofactor 1 on MIBI mean intensities that mostly fall below 1 is close to no transform at all. For other mass-spectrometry panels (e.g. IMC), start near 0.05 and check the transformed histogram.
+    - **Fluorescence (COMET, CODEX, IF)** — scale-dependent, so there is no single right number. For **raw 16-bit-style panels** (values in the hundreds–thousands, e.g. a raw COMET panel) a cofactor in the **tens (~25–50)** fits well; ~1 suits only already-normalised / low-range intensities, and a large value (e.g. 150) leaves the dim markers essentially untransformed.
+    - **MIBI mass spectrometry** — **cofactor = 0.05**, the community-standard value from Hartmann et al. (2021) / the squidpy MIBI-TOF tutorial, applied to per-cell mean intensities (see [References](README.md#references)).
+    - **The ideal cofactor tracks your data's intensity scale** — pick it near the background/signal boundary. Quick check: if almost every cell's raw value is *below* the cofactor, nearly all cells sit in the near-linear part of arcsinh and the transform is ≈ a no-op (e.g. cofactor 1 on MIBI means that mostly fall below 1, or 150 on dim fluorescence markers). If almost every value is *far above* it, everything is log-compressed and the low-end detail is lost. Aim for the value where the background collapses but the positive population stays resolved, and eyeball the transformed histogram to confirm.
   - **sqrt** — `sqrt(max(0, x))`. Simple variance stabilisation, no cofactor.
 
 ![Normalise features](doc_images/normalise_features.png)

@@ -8,7 +8,7 @@ A QuPath 0.7 extension for human-in-the-loop cell classification using dual-mode
 
 ## Build & test
 
-Requires **JDK 25** with `JAVA_HOME` set to it (QuPath 0.7 mandates Java 25; verify with `java -version` → starts with `25`). Use the bundled Gradle wrapper — no separate Gradle install needed.
+Requires a full **JDK 25** (with `javac`) and `JAVA_HOME` set to it (QuPath 0.7 mandates Java 25). Verify with **`javac -version` → `javac 25.x`**, not just `java -version` — a **JRE** 25 passes `java -version` but has no compiler, so `compileJava` fails with a misleading toolchain error (see Troubleshooting below). Use the bundled Gradle wrapper — no separate Gradle install needed.
 
 ```bash
 # Linux/macOS
@@ -47,7 +47,25 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 - Linux: `~/.local/share/QuPath/v0.7/extensions/`
 - macOS: `~/Library/Application Support/QuPath/v0.7/extensions/`
 
-Troubleshooting: build fails with toolchain errors → confirm `JAVA_HOME` points to JDK 25. No menu entries → confirm the new JAR is in the correct folder and QuPath was restarted fully. Old behaviour persists after updating → an older CellTune JAR is still in the extensions folder; delete it so only the new one remains. Native model issues → use the shadow JAR only, never partial classpath JARs.
+Troubleshooting: build fails with toolchain errors → confirm `JAVA_HOME` points to a full **JDK 25 with `javac`** (see the toolchain note below). No menu entries → confirm the new JAR is in the correct folder and QuPath was restarted fully. Old behaviour persists after updating → an older CellTune JAR is still in the extensions folder; delete it so only the new one remains. Native model issues → use the shadow JAR only, never partial classpath JARs.
+
+#### Toolchain gotcha: "JvmVendorSpec … does not have member field 'IBM_SEMERU'" (really means "no JDK 25")
+
+The wrapper pins Gradle `9.2.1`, and Gradle needs a **JDK 25** toolchain (with `javac`) to run `compileJava` (`languageVersion=25`). If no JDK 25 is found, Gradle falls back to toolchain **auto-provisioning**, which trips a bug in the pinned `foojay-resolver-convention` `0.9.0` plugin on Gradle 9.x and throws a misleading error:
+
+```
+Class org.gradle.jvm.toolchain.JvmVendorSpec does not have member field
+'org.gradle.jvm.toolchain.JvmVendorSpec IBM_SEMERU'
+```
+
+This is **not** a plugin or code problem — it means Gradle couldn't find a local JDK 25, so it tried to download one. The usual cause is that `JAVA_HOME` points to a **JRE** 25 (has `java` but no `javac`), which `java -version` won't reveal. Diagnose and fix:
+
+```bash
+javac -version                 # must print "javac 25.x"; if "command not found", JAVA_HOME is a JRE
+./gradlew javaToolchains       # lists detected JDKs; a JRE shows "Is JDK: false" and is unusable for compiling
+```
+
+Fixes (in order of preference): (1) point `JAVA_HOME` at a full JDK 25; (2) if the JDK lives elsewhere, add it explicitly and stay offline so Gradle never enters the broken auto-provision path — `./gradlew compileJava -Dorg.gradle.java.installations.paths=/path/to/jdk-25 -Dorg.gradle.java.installations.auto-download=false` (or put those two keys in `$GRADLE_USER_HOME/gradle.properties`). Do **not** try to "fix" this by editing the foojay/Gradle versions — supplying a real JDK 25 sidesteps the buggy code path entirely. (A separate, unrelated symptom on shared/network filesystems is `The contents of the immutable workspace … have been modified` — that's Gradle cache corruption; clear `$GRADLE_USER_HOME/caches/<gradle-version>/transforms` and rebuild.)
 
 ### Static analysis (SpotBugs)
 

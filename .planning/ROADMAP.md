@@ -8,6 +8,7 @@
 - [ ] v1.3 Cross-Project Binary Ground Truth Portability (planned)
 - [ ] v1.4 Cellular Neighborhood Analytics (planned)
 - [ ] v1.5 Graph-based Phenotype Clustering (planned)
+- [ ] v1.6 Normalization / Cofactor Assistance (planned)
 
 ## Milestone v1.1 - Reliability and Verification Hardening
 
@@ -199,6 +200,25 @@ Plans:
 - [x] 16-01-PLAN.md - ScatterMath.pcaReduce conditional dimensionality reduction, wired into the all-cells driver + Leiden transfer + scatter-plot preview fit/UI, with dominance/determinism/marker-space-centroid tests and USER_GUIDE/CLAUDE.md fidelity-gap docs (completed 2026-07-06, recorded retroactively)
 
 
+## Milestone v1.6 - Normalization / Cofactor Assistance
+
+Goal: Let users derive a sound arcsinh normalization cofactor from their own in-project cell measurements, in-app, instead of guessing or hardcoding a platform default.
+
+### Phase 17 - In-QuPath Cofactor Suggestion
+
+Goal: Add a "Suggest cofactor…" tool to the Normalise Features workflow that estimates a good arcsinh cofactor from the project's in-memory cell measurements. The user picks a calibration feature-set from a grouped, searchable picker (independent of the normalize set, no hardcoded measurement name); the tool estimates each selected feature's background/signal structure, presents a per-feature table plus one recommended global cofactor, and applies it into the existing cofactor spinner. Open-image or whole-project (pooled) scope.
+Depends on: Phase 5 (feature normalisation — NormalizationPane, FeatureNormalizer), the FeatureSelectionPane grouping/search UI, and Phase 15 (CohortClusterModel.poolAllCells for project-scope pooling).
+Requirements: COF-01, COF-02, COF-03, COF-04, COF-05, COF-06, COF-07, COF-08
+Success Criteria:
+1. A "Suggest cofactor…" control reachable from the Normalise Features workflow opens a grouped, searchable feature picker whose calibration selection is independent of the normalize selection.
+2. The tool computes suggestions from in-memory cell measurements (no external geojson/file streaming) for the chosen scope — open image or whole project pooled.
+3. The tool displays a per-feature results table (feature → value-scale summary → suggested cofactor) plus one recommended global cofactor aggregated across the selected features.
+4. Applying the recommendation sets the existing Normalise Features cofactor input to that value in a single action.
+5. On a known raw-fluorescence-scale panel the recommended global cofactor lands in a data-driven range (tens, not the platform default), consistent with the MIBI/COMET cohort assessments.
+
+Plans: TBD (run /gsd-spec-phase 17 then /gsd-plan-phase 17)
+
+
 ## Progress
 
 | Phase | Milestone | Requirements | Plans Complete | Status |
@@ -215,3 +235,4 @@ Plans:
 | 14. Leiden Phenotype Clustering | v1.5 | LEI-01,LEI-02,LEI-03,LEI-04,LEI-05 | 0/1 | Planned |
 | 15. All-Cells Leiden Clustering (True-Scanpy) | v1.5 | LEI-06,LEI-07,LEI-08,LEI-09,LEI-10 | 5/5 | Complete (2026-07-06) |
 | 16. PCA Dimensionality Reduction | v1.5 | PCA-01..PCA-06 | 1/1 | Complete (2026-07-06) |
+| 17. In-QuPath Cofactor Suggestion | v1.6 | COF-01..COF-08 | 0/0 | Planned |
