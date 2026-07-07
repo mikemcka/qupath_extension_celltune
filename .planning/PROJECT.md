@@ -89,24 +89,39 @@ Bioimaging researchers can iteratively improve cell classifiers by reviewing mod
 - Milestone execution footprint: 4 phases, 9 plans, 28 planned tasks.
 - Archived milestone artifacts live under .planning/milestones/.
 
-## Current Milestone: v1.1 Reliability and Verification Hardening
+## Current Milestone: v1.6 Normalization / Cofactor Assistance
 
-> Note (2026-06-30): a v1.4 "Cellular Neighborhood Analytics" plan (Phase 13) has been filed and
-> is ready to execute *ahead of* the remaining v1.1 hardening debt (phases 6-9) and v1.3 (phase 12).
-> See ROADMAP.md / STATE.md. v1.1 remains the nominal current milestone until that debt is cleared.
-
-Goal: Harden v1.0 delivery quality by normalizing phase verification evidence and fixing high-impact reliability risks.
+Goal: Let users derive a sound arcsinh normalization cofactor from their own in-project cell measurements, in-app — instead of guessing or hardcoding a platform default.
 
 Target features:
-- Formal VERIFICATION artifacts for phases 1-3
-- Nyquist VALIDATION coverage for phases 1-4
-- Reliability hardening for persistence, thread safety, and feature schema validation
-- UX safety improvements for project-context warnings and binary feature-importance display
+- "Suggest cofactor…" action in the Normalise Features workflow
+- Grouped, searchable calibration-feature picker (reuses the Feature Selection pane); the calibration feature-set is chosen independently of the normalize feature-set and is naming-convention-agnostic (no hardcoded "Cell: Mean")
+- Per-feature background estimate via a 2-component GMM (Smile, already bundled) on in-memory cell measurements; open-image or project-pooled scope (reuses CohortClusterModel.poolAllCells)
+- Per-feature table (marker → scale → suggested cofactor) plus one recommended global cofactor, applied into the existing NormalizationPane cofactor spinner
+
+Key context: Grounded in the MIBI (cofactor 0.05, matching Hartmann 2021/squidpy) and COMET (~25–50, not the 150 platform default which leaves 93–99% of dim immune markers in the arcsinh linear/no-op regime) cohort assessments; this feature reproduces that diagnostic in-app and near-instantly since the cell means are already in memory. Caveat: the cofactor is a monotonic no-op for a plain per-cell XGBoost model, so its value matters mainly for the Neighbors/clustering/visualization paths.
 
 ## Next Milestone Goals
 
-- Complete verification and validation normalization debt carried from v1.0.
-- Ship reliability fixes currently listed in Active requirements.
-- Establish regression tests for hardened workflows.
+- Clear remaining v1.1 reliability/verification debt (phases 6-9).
+- Optional follow-on: true per-marker cofactors (FeatureNormalizer currently holds one shared cofactor).
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-04-29 after phase 5 verification backfill completion*
+*Last updated: 2026-07-07 — milestone v1.6 (Normalization / Cofactor Assistance) started*

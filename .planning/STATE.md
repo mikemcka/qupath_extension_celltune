@@ -1,29 +1,30 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: - Reliability and Verification Hardening
-status: unknown
-last_updated: "2026-07-06T03:08:00.821Z"
+milestone: v1.6
+milestone_name: Normalization / Cofactor Assistance
+status: planning
+last_updated: "2026-07-07T00:00:00.000Z"
 progress:
-  total_phases: 12
-  completed_phases: 10
-  total_plans: 24
-  completed_plans: 21
-  percent: 88
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Current Position
 
-- Milestone: v1.5 Graph-based Phenotype Clustering (Phases 15 and 16 — COMPLETE)
-- Phase: 16 (PCA dimensionality reduction for clustering) RECORDED and COMPLETE — retroactive plan/summary filed for the conditional-PCA feature that was implemented inline after Phase 15's checkpoint approval; 15 (all-cells true-scanpy Leiden) SPEC + CONTEXT + RESEARCH + VALIDATION + 5 PLANs filed and checker-passed, all executed; 14 code complete (transfer path); 13 planned; v1.1 phases 6-9 still pending; 5/10/11 complete
-- Plan: 16-01 (retroactive record) COMPLETE — documents ScatterMath.pcaReduce (conditional, deterministic Smile PCA reduction between z-scoring and the clustering kNN graph) wired into the single-image/preview fit, the all-cells cohort driver, and the Leiden kNN-transfer query path; UI checkbox + components spinner; dominance/determinism/marker-space-centroid tests; USER_GUIDE/CLAUDE.md docs closing scanpy fidelity gap #3. Delivered by commits 41415fa..decc05f (2026-07-06); real-data validation against the Nolan CODEX CRC set (56→50 comps, 98.4% variance, ARI 0.204→0.233 vs no-PCA) lives in the sibling nolan_paper_validation repo.
-- Status: Phase 15 COMPLETE — 15-VERIFICATION.md passed (24/24 must-haves; LEI-06..10 all satisfied and marked Complete in REQUIREMENTS.md). One accepted non-blocking deviation: D-09 recall status line is graceful/non-fabricated because clusterViaAnn does not surface its internal recall (AllCellsResult.recall = -1.0 sentinel); the recall gate itself is fully implemented + tested. Phase 16 (conditional PCA, PCA-01..06) now RECORDED and marked Complete in ROADMAP.md/REQUIREMENTS.md/STATE.md — the feature was implemented and validated inline before this bookkeeping pass; no source code was modified while recording it.
-- Last activity: 2026-07-06 - Phase 15 verified and marked complete (all 5 plans + human-verify approved on a full multi-image project); conditional PCA before the clustering kNN graph was then added inline (separate work, commits 41415fa..decc05f) and has now been recorded retroactively as Phase 16 (16-01-PLAN.md/16-01-SUMMARY.md, PCA-01..06 added to REQUIREMENTS.md, ROADMAP.md Phase 16 section + progress row); scanpy/Leiden/HNSW acknowledgements and a Leiden User-Guide figure were also added inline around the same time.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-07-07 — Milestone v1.6 (Normalization / Cofactor Assistance) started
 
 ## Carry-Forward Context
 
+- Milestone v1.5 (Graph-based Phenotype Clustering) COMPLETE — Phases 14 (Leiden transfer), 15 (all-cells true-scanpy Leiden), 16 (conditional PCA) all recorded and complete.
+- v1.1 reliability/verification hardening debt (phases 6-9) still pending; also open: Phase 12 (binary ground-truth bundle), Phase 13 (CN spatial clustering).
 - Previous milestone archived: v1.0 Binary Composite Classification.
 - Verification evidence debt for phases 1-3 is normalized via formal VERIFICATION artifacts.
 - Documentation and build guidance now include project prediction summary workflow and reproducible build steps.
