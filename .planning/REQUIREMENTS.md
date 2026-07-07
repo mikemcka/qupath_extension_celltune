@@ -94,6 +94,17 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 - [x] PCA-05: The all-cells cohort path fits one PCA projection on a bounded seeded subsample and applies it to every pooled row; per-cluster centroids remain in original marker space regardless of the space clustering ran in, and peak fit memory stays within a documented bound independent of total cell count.
 - [x] PCA-06: Component count kept and cumulative variance explained are reported to the status line/log.
 
+### Normalization / Cofactor Assistance (v1.6)
+
+- [ ] COF-01: User can launch a cofactor-suggestion tool from the Normalise Features workflow.
+- [ ] COF-02: User selects which measurements/markers to calibrate the cofactor from via a grouped, searchable picker, independently of the features chosen for normalization.
+- [ ] COF-03: Suggestions are computed from the project's in-memory cell measurements, with no external geojson/file streaming.
+- [ ] COF-04: The tool derives a per-feature suggested cofactor from each selected feature's background-vs-signal intensity structure.
+- [ ] COF-05: The tool presents a per-feature results table (feature, value-scale summary, suggested cofactor).
+- [ ] COF-06: The tool reports one recommended global cofactor aggregated across the selected features.
+- [ ] COF-07: User can apply the recommended cofactor into the existing Normalise Features cofactor input in one action.
+- [ ] COF-08: User can choose the estimation scope — the open image, or the whole project (pooled).
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -150,10 +161,18 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | PCA-04 | Phase 16 | Complete |
 | PCA-05 | Phase 16 | Complete |
 | PCA-06 | Phase 16 | Complete |
+| COF-01 | Phase 17 | Pending |
+| COF-02 | Phase 17 | Pending |
+| COF-03 | Phase 17 | Pending |
+| COF-04 | Phase 17 | Pending |
+| COF-05 | Phase 17 | Pending |
+| COF-06 | Phase 17 | Pending |
+| COF-07 | Phase 17 | Pending |
+| COF-08 | Phase 17 | Pending |
 
 Coverage:
-- requirements listed in this file: 46
-- mapped to phases: 44
+- requirements listed in this file: 54
+- mapped to phases: 52
 - unmapped: 2 (COMP-06, COMP-07)
 
 ---
