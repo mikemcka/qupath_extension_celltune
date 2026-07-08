@@ -958,6 +958,141 @@ public final class CohortClusterModel {
                 cancelled);
     }
 
+    /**
+     * Raw sibling of {@link #poolAllCells} — identical memory-safe two-pass,
+     * no-sampling loop (every matching cell across every selected image is pooled;
+     * each non-open hierarchy is released per iteration and cancellation is honored
+     * at each per-image boundary via {@code token}), but returns RAW un-standardized
+     * rows: it SKIPS the final {@link ScatterMath#standardizeColumns} that
+     * {@link #poolAllCells} applies and returns the pooled raw marker matrix instead.
+     * <p>
+     * Required by the cofactor estimator (critical correction #3 / RESEARCH.md
+     * Pitfall 1), which tracks the RAW background intensity level: feeding it
+     * z-scored rows would yield {@code p50 ≈ 0} and an invalid non-positive cofactor.
+     * Do not reuse the z-scored path and do not "recover" raw via {@code z*sd+mean}
+     * (that couples the estimator to z-score internals). {@code mean}/{@code sd} are
+     * returned as zero arrays here (unused by the estimator) purely to keep the
+     * {@link PooledData} record shape identical. Callers pass {@code normalizer =
+     * null} so {@link CellFeatureExtractor#extractMatrix} returns un-normalized values.
+     *
+     * @param project     the open project
+     * @param images      image names to pool from
+     * @param markers     marker measurement names to extract (column order)
+     * @param classFilter when non-blank, only cells whose current classification
+     *                    contains it (case-insensitive) are pooled
+     * @param normalizer  feature normalizer to apply during extraction (nullable —
+     *                    callers pass null for RAW values)
+     * @param openData    open image's live data (nullable); pooled directly instead
+     *                    of re-read from disk when its name matches {@code openName}
+     * @param openName    name of the open image (nullable)
+     * @param token       checked at the top of each per-image iteration; pooling
+     *                    stops early (returning what has been pooled so far, with
+     *                    {@code cancelled=true}) if already cancelled
+     * @param log         progress sink (called off the FX thread)
+     */
+    public static PooledData poolAllCellsRaw(
+            Project<BufferedImage> project,
+            List<String> images,
+            List<String> markers,
+            String classFilter,
+            FeatureNormalizer normalizer,
+            ImageData<BufferedImage> openData,
+            String openName,
+            CancellationToken token,
+            Consumer<String> log) {
+        Map<String, ProjectImageEntry<BufferedImage>> byName = entriesByName(project);
+        int nMarkers = markers.size();
+        var extractor = new CellFeatureExtractor(markers, normalizer);
+        boolean classFilterActive = classFilter != null && !classFilter.isBlank();
+        String classKw = classFilterActive ? classFilter.trim().toLowerCase() : null;
+
+        List<double[]> rawRows = new ArrayList<>();
+        GrowableLongArray msbList = new GrowableLongArray();
+        GrowableLongArray lsbList = new GrowableLongArray();
+        GrowableIntArray ordinalList = new GrowableIntArray();
+        int totalCells = 0;
+        boolean cancelled = false;
+
+        for (int ord = 0; ord < images.size(); ord++) {
+            if (token != null && token.isCancelled()) {
+                cancelled = true;
+                break;
+            }
+            String name = images.get(ord);
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                log.accept("[" + name + "] not in project — skipped");
+                continue;
+            }
+            ImageData<BufferedImage> imageData;
+            try {
+                imageData = selectImageSource(name, openName, openData, () -> {
+                    try {
+                        return entry.readImageData();
+                    } catch (Exception e) {
+                        throw new PoolReadException(e);
+                    }
+                });
+            } catch (PoolReadException e) {
+                log.accept("[" + name + "] could not load — skipped");
+                continue;
+            }
+            if (imageData == null) {
+                log.accept("[" + name + "] could not load — skipped");
+                continue;
+            }
+            List<PathObject> cells = detections(imageData);
+            int n = cells.size();
+            if (n == 0) {
+                log.accept("[" + name + "] no detections — skipped");
+                continue;
+            }
+            float[] flat = extractor.extractMatrix(cells);
+            int pooledFromImage = 0;
+            for (int i = 0; i < n; i++) {
+                PathObject cell = cells.get(i);
+                if (classFilterActive) {
+                    PathClass pc = cell.getPathClass();
+                    if (pc == null || !pc.toString().toLowerCase().contains(classKw)) {
+                        continue;
+                    }
+                }
+                double[] row = new double[nMarkers];
+                int off = i * nMarkers;
+                for (int j = 0; j < nMarkers; j++) {
+                    row[j] = flat[off + j];
+                }
+                rawRows.add(row);
+                var id = cell.getID();
+                msbList.add(id.getMostSignificantBits());
+                lsbList.add(id.getLeastSignificantBits());
+                ordinalList.add(ord);
+                pooledFromImage++;
+            }
+            totalCells += n;
+            // Non-open imageData/hierarchy is not retained past this iteration — released
+            // for GC exactly as poolAllCells / sample() already do.
+            log.accept(String.format(
+                    "Pooling %d/%d images — [%s] pooled %,d of %,d cells",
+                    ord + 1, images.size(), name, pooledFromImage, n));
+        }
+
+        // RAW path: SKIP ScatterMath.standardizeColumns (the whole point of this sibling).
+        double[][] raw = rawRows.toArray(new double[0][]);
+        double[] mean = new double[nMarkers]; // not computed for the raw path; kept for record shape
+        double[] sd = new double[nMarkers]; // not computed for the raw path; kept for record shape
+        return new PooledData(
+                raw, // <-- RAW rows, NOT z-scored (the whole point)
+                msbList.toArray(),
+                lsbList.toArray(),
+                ordinalList.toArray(),
+                images.toArray(new String[0]),
+                mean,
+                sd,
+                totalCells,
+                cancelled);
+    }
+
     /** Packed-UUID map key ({@code (msb,lsb)} pair) — avoids the boxed-String/{@code getID().toString()} overhead at cohort scale. */
     record UuidKey(long msb, long lsb) {}
 
