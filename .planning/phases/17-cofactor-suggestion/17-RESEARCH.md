@@ -358,21 +358,24 @@ s.initModality(Modality.NONE);
 | A3 | Reusing `celltune.allCellsSoftCeiling` (50M) for the cofactor whole-project confirm is acceptable | D-08 | If a separate ceiling is wanted, add a new pref; trivial. |
 | A4 | A `Modality.NONE` window owned by an `APPLICATION_MODAL` stage is interactive (JavaFX owner-subtree exemption) | Pattern 3 / Pitfall 2 | If the JavaFX version blocks even owned children, fall back to `WINDOW_MODAL` owned by the pane (blocks only the pane). **[ASSUMED — standard JavaFX modality semantics; confirm empirically in a manual UI check.]** |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Markers positive in ≥~50% of cells (residual calibration gap).**
    - What we know: p50 recovers a known background within factor-2 up to ~40% positive; at 50% it drifts to ~4.6×.
    - What's unclear: whether any selected calibration marker in a real panel is majority-positive, and whether D-11's exclusion catches it (D-11 targets dead/saturated, not majority-positive).
    - Recommendation: rely on the global-median's robustness to a minority of inflated features; keep per-feature values advisory; optionally extend the D-11 flag to "high foreground coverage" markers. Do NOT change the locked p50 for this — the SPEC tolerance is met for the normal case.
+   - **RESOLVED (Plan 17-01):** locked `BACKGROUND_PERCENTILE = 50.0` unchanged; robustness delegated to the global median of per-feature cofactors + advisory-only per-feature values. No majority-positive-specific handling added.
 
 2. **Exact dead/saturated criteria for D-11 in the per-cell (not per-pixel) setting.**
    - What we know: `PixelCohortAnalyzer` gates on `SIGNAL_FOREGROUND_FLOOR = 0.05` and near-zero p99/variance — but that's per-pixel image stats, not per-cell measurement distributions.
    - What's unclear: the numeric thresholds for "dead" (near-zero variance across cells) and "saturated" (p99 at the panel's max) when operating on per-cell means.
    - Recommendation: dead = `(p99 - min) < EPS` or near-zero MAD; saturated = optional (per-cell means rarely saturate; can flag if p99 equals the observed global max within EPS). Planner to pick thresholds; unit-test both.
+   - **RESOLVED (Plan 17-01):** dead = `DEAD_EPS = 1e-9` near-zero spread; saturated = `p50 >= MAX_COFACTOR (10000)` spinner-ceiling guard. Both flagged and excluded from the global median, both unit-tested (`excludesDeadSaturatedFromGlobalMedian`).
 
 3. **Whether the "background estimate" column should differ from the cofactor percentile.**
    - What we know: D-09 lists `background estimate` and `suggested cofactor` as separate columns; Claude's Discretion allows them to differ.
    - Recommendation: show background = p50 (the cofactor source) plus median and p99 as the scale summary; keeps the table honest and simple. Planner's call.
+   - **RESOLVED (Plan 17-01 / 17-03):** background column = p50 (same statistic that seeds the cofactor); table also shows median and p99 as the value-scale summary. Columns intentionally share p50 — accepted as honest/simple per Claude's Discretion.
 
 ## Environment Availability
 
