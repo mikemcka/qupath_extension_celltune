@@ -117,12 +117,14 @@ Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`
 
 ## Feature Normalization
 
-Optional per-feature transforms can be applied before training and inference:
+Optional per-feature transforms:
 
 | Transform | Formula | Use case |
 |-----------|---------|----------|
-| arcsinh | `arcsinh(x / cofactor)` | Variance-stabilising transform for intensity data |
+| arcsinh | `arcsinh(x / cofactor)` | Compress bright/high-range intensities (near-linear below the cofactor, log above) so no marker dominates Euclidean distance in **scale-dependent methods**: scatter-plot clustering (k-means/Leiden), PCA, gating |
 | sqrt | `√max(0, x)` | Simple variance-stabilising transform |
+
+**What arcsinh is (and isn't) for.** It matters for **distance/scale-dependent methods** — the clustering, PCA and gating workflows — where large raw values would otherwise dominate Euclidean distance. It is a **monotone** rescale, so the **tree classifiers (XGBoost/LightGBM/Random Forest) are invariant to it** — it does not change their predictions at any cofactor. And because it is applied **globally** (identically to every slide), it does **not** correct per-slide staining/batch differences and does **not** by itself improve generalisation to unseen slides — that is a batch-correction and annotation-diversity question. See [User Guide §4.2](USER_GUIDE.md#42-normalise-features).
 
 ## TODO / Future Exploration
 - tab pfn model wrapper

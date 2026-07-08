@@ -197,7 +197,12 @@ You pick **which** features to transform and **one** transform/cofactor applied 
 
 **Do not** normalise morphological features like Cell Area or any pre-normalised features like foundation model embeddings.
 
-**What it buys you.** `Normalisation` compresses the bright outliers in raw intensities while keeping the low end (negative vs dim-positive) linear. This pulls each slide's intensity scale closer together, so the model generalises to unseen slides.
+**What it's for — scale-dependent methods (clustering), not the classifier.** `arcsinh(x / cofactor)` is a monotone, per-feature squash: near-linear below the cofactor, log-compressed above it, so it flattens bright outliers while preserving the dim/low-intensity detail. Its job is to stop a few high-dynamic-range markers from dominating **Euclidean distance / kNN** in the workflows that measure distances between cells — the **scatter-plot clustering** (k-means and Leiden, §[11](#11-cell-scatter-plot--clustering--gating)), the PCA embedding, gating thresholds, and the colour-by-marker views. There it is essential: raw 16-bit intensities left untransformed make clustering track whichever markers happen to be brightest instead of the whole phenotype.
+
+Two things it does **not** do:
+
+- **It does not change the tree classifiers.** XGBoost / LightGBM / Random Forest split on rank order, and arcsinh is a strictly increasing (monotone) rescale — it leaves every cell's rank on a marker unchanged, so the classifier's predictions are the same with or without it, at any cofactor. Configure normalisation for clustering / gating / visualisation, not to improve classification.
+- **It does not correct slide-to-slide (batch) differences, so it does not improve generalisation to unseen slides.** The same global transform is applied identically to every image, so it uses no per-image information and cannot remove per-slide staining/exposure offsets. Generalising across variable samples is a **batch-correction** problem (per-image or reference-based alignment) plus annotating a **diversity** of slides — not something arcsinh addresses.
 
 ### 4.3 Create classes & Class Control
 
@@ -371,7 +376,7 @@ There's also a **Validation Confusion Matrix** view (true class × predicted cla
 
 Top-N (up to 10) features by **mean |SHAP|** per class. Horizontal bars, one colour per class, dropdown to switch classes. SHAP is averaged across whichever models are active (TreeSHAP for XGBoost/LightGBM, normalised split counts for Random Forest).
 
-Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, your normalisation cofactor is probably wrong). It's also where a stray feature you forgot to de-select in Select Features (§4.1) tends to show up — a non-biological column like a cell index or centroid coordinate ranking near the top is a red flag that it leaked into training.
+Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, it probably shouldn't be in the feature set — de-select it in Select Features, §[4.1](#41-select-features); note that changing the arcsinh cofactor won't fix this, since the tree models are invariant to that monotone transform). It's also where a stray feature you forgot to de-select in Select Features (§4.1) tends to show up — a non-biological column like a cell index or centroid coordinate ranking near the top is a red flag that it leaked into training.
 
 ![Feature importance showing a leaked cell-index feature](doc_images/index_feature_leakage.png)
 
