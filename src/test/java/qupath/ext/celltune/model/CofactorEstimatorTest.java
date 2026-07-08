@@ -81,8 +81,8 @@ class CofactorEstimatorTest {
         assertEquals(50.0, CofactorEstimator.BACKGROUND_PERCENTILE, 0.0);
 
         // p50 of a 5-point ramp {0,10,20,30,40} is exactly the midpoint 20.
-        double cofactor =
-                CofactorEstimator.estimateFeature("m", new double[] {0, 10, 20, 30, 40}).cofactor();
+        double cofactor = CofactorEstimator.estimateFeature("m", new double[] {0, 10, 20, 30, 40})
+                .cofactor();
         assertEquals(20.0, cofactor, EPS);
     }
 
@@ -176,8 +176,8 @@ class CofactorEstimatorTest {
         assertEquals(42.0, single.background(), EPS);
 
         // Every feature excluded → global falls back to the neutral positive cofactor 1.0.
-        CofactorSuggestion allExcluded = CofactorEstimator.estimate(
-                new String[] {"dead1", "dead2"}, new double[][] {{5, 5, 5}, {7, 7, 7}});
+        CofactorSuggestion allExcluded =
+                CofactorEstimator.estimate(new String[] {"dead1", "dead2"}, new double[][] {{5, 5, 5}, {7, 7, 7}});
         assertEquals(1.0, allExcluded.globalCofactor(), EPS);
     }
 }
