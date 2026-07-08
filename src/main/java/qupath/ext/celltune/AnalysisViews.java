@@ -377,8 +377,8 @@ final class AnalysisViews {
         List<String> featureNames = snap.getFeatureNames();
         if (featureNames == null || featureNames.isEmpty()) return;
 
+        // Raw features — importance is reported in the same space the classifier trains on.
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
-        extractor.setNormalizer(normalizer);
 
         Thread worker = new Thread(
                 () -> {

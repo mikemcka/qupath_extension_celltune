@@ -173,7 +173,15 @@ public class NormalizationPane {
                 cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
-        VBox root = new VBox(8, transformRow, filterRow, btnRow, listView, okCancelRow);
+        // Clustering-only scope note. The classifier trains/predicts on raw values (tree models
+        // are invariant to these monotone transforms), so normalisation here affects ONLY the
+        // scale-dependent workflows: the scatter-plot clustering (k-means/Leiden), PCA, and gating.
+        Label scopeNote = new Label("Note: normalisation applies to clustering / scatter-plot / gating "
+                + "only — the classifier always uses raw values.");
+        scopeNote.setWrapText(true);
+        scopeNote.setStyle("-fx-text-fill: -fx-accent; -fx-font-size: 11px;");
+
+        VBox root = new VBox(8, scopeNote, transformRow, filterRow, btnRow, listView, okCancelRow);
         root.setPadding(new Insets(10));
 
         stage.initOwner(owner);

@@ -1265,10 +1265,9 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         if (featureNames == null || featureNames.isEmpty()) return false;
 
         try {
+            // Raw inference — the classifier is trained on raw values (normalisation is
+            // a clustering-only concern; tree models are invariant to it anyway).
             var extractor = new CellFeatureExtractor(featureNames);
-            if (featureNormalizer != null) {
-                extractor.setNormalizer(featureNormalizer);
-            }
             classifier.predictOnly(
                     detections, extractor, true, msg -> logger.info("[CellTune] Auto-classify: {}", msg));
             predAll = classifier.getPredALL();
@@ -1703,7 +1702,8 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
                 long count = result.getAllTransforms().size();
                 Dialogs.showInfoNotification(
                         EXTENSION_NAME,
-                        count + " feature(s) will be normalised (cofactor=" + result.getArcsinhCofactor() + ").");
+                        count + " feature(s) will be normalised for clustering (cofactor=" + result.getArcsinhCofactor()
+                                + "). The classifier uses raw values.");
             } else {
                 featureNormalizer = null;
                 Dialogs.showInfoNotification(EXTENSION_NAME, "Feature normalization cleared.");

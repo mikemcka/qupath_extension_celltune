@@ -182,7 +182,7 @@ Your selection is saved in `<project>/celltune/classifier-state.json` and persis
 
 **Menu:** *Extensions → CellTune Classifier → Normalise Features*
 
-Per-feature transforms applied during feature extraction. Same prefix/search/select-all UI as Select Features, plus:
+Per-feature transforms for the **clustering / scatter-plot / gating** workflows. **The classifier always trains and predicts on raw values** — normalisation configured here does not touch the phenotyping model (tree models are invariant to it anyway). Same prefix/search/select-all UI as Select Features, plus:
 
 - **Transform** dropdown:
   - **arcsinh** — `arcsinh(x / cofactor)`. Recommended default.
@@ -201,7 +201,7 @@ You pick **which** features to transform and **one** transform/cofactor applied 
 
 Two things it does **not** do:
 
-- **It does not change the tree classifiers.** XGBoost / LightGBM / Random Forest split on rank order, and arcsinh is a strictly increasing (monotone) rescale — it leaves every cell's rank on a marker unchanged, so the classifier's predictions are the same with or without it, at any cofactor. Configure normalisation for clustering / gating / visualisation, not to improve classification.
+- **It never touches the classifier.** The phenotyping model always trains and predicts on **raw** values — normalisation is applied only in the clustering path. (Even if it were applied, XGBoost / LightGBM / Random Forest split on rank order and arcsinh is a strictly increasing rescale, so predictions would be unchanged at any cofactor.) Auto-prune, feature-importance/SHAP, and ground-truth export all operate on the same raw values the model sees; export no longer writes `__norm` columns.
 - **It does not correct slide-to-slide (batch) differences, so it does not improve generalisation to unseen slides.** The same global transform is applied identically to every image, so it uses no per-image information and cannot remove per-slide staining/exposure offsets. Generalising across variable samples is a **batch-correction** problem (per-image or reference-based alignment) plus annotating a **diversity** of slides — not something arcsinh addresses.
 
 ### 4.3 Create classes & Class Control
@@ -624,9 +624,9 @@ Measurements for Scatter Plot* dialog). The window then computes an initial
 embedding on a background thread.
 
 > Clustering applies any **feature normalisation** you've configured
-> (§[4.2](#42-normalise-features)) — the same transforms the classifier uses —
-> then z-scores each marker over the active cells. The normalizer is captured when
-> the window opens; reopen the plot after changing it.
+> (§[4.2](#42-normalise-features)) — this is clustering-only (the classifier uses raw
+> values) — then z-scores each marker over the active cells. The normalizer is captured
+> when the window opens; reopen the plot after changing it.
 
 ### 11.1 Controls
 
@@ -795,8 +795,8 @@ Leiden — §[11.6](#116-clustering-method-k-means-vs-leiden)), writes the mappe
 classes, and **saves each image**, with progress in the status bar.
 
 > **Measurement scaling & batch effects.** Clustering applies CellTune's feature
-> normalisation (§[4.2](#42-normalise-features)) — the **same** arcsinh / sqrt
-> transforms the classifier uses — then z-scores each marker over the active cells
+> normalisation (§[4.2](#42-normalise-features)) — arcsinh / sqrt, a **clustering-only**
+> step (the classifier uses raw values) — then z-scores each marker over the active cells
 > at fit time. So if you've configured normalisation, it shapes the clusters and
 > the colour-by-marker view too. (The normalizer is captured when the window
 > opens; change it via *Normalise Features* and reopen the plot to pick it up.)
@@ -1014,10 +1014,10 @@ Header (commented):
 # CellTune Ground Truth Export
 # Image: my_image.ome.tiff
 # Exported: 2026-06-02T14:30:45
-Image,Label,CentroidX,CentroidY,Feature1,Feature2,...[,Feature1__norm,...]
+Image,Label,CentroidX,CentroidY,Feature1,Feature2,...
 ```
 
-Dialog asks whether to include raw features, normalised features (`__norm` suffix), or both. Only labelled cells are exported.
+Exports **raw** feature values only — the values the classifier trains/predicts on. (Earlier versions offered a normalised `__norm` column set; that was removed when normalisation became clustering-only.) Only labelled cells are exported.
 
 In multi-class mode the export pools labels from the current image plus all other project images. In **binary mode** use the dedicated menu item **Export ▸ Active Binary Ground Truth...** — it scopes to the active marker and includes previously-imported training rows from prior projects (so you can losslessly round-trip between projects).
 

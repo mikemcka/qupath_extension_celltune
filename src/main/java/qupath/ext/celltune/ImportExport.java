@@ -21,10 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextArea;
@@ -85,32 +82,10 @@ final class ImportExport {
      * @return options, or null if the user cancelled
      */
     private static ExportFeatureOptions askExportFeatureOptions(FeatureNormalizer featureNormalizer) {
-        if (featureNormalizer == null) {
-            return new ExportFeatureOptions(true, false);
-        }
-        var rawCb = new CheckBox("Include raw feature values");
-        rawCb.setSelected(true);
-        var normCb = new CheckBox("Include normalised feature values");
-        normCb.setSelected(true);
-        var box = new VBox(8, rawCb, normCb);
-        box.setPadding(new Insets(8));
-
-        var alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle(EXTENSION_NAME);
-        alert.setHeaderText("Export Feature Options");
-        alert.setContentText("Choose which feature columns to include in the export.");
-        alert.getDialogPane().setExpandableContent(null);
-        alert.getDialogPane().setContent(box);
-        var result = alert.showAndWait();
-        if (result.isEmpty() || result.get() != ButtonType.OK) {
-            return null;
-        }
-        boolean raw = rawCb.isSelected();
-        boolean norm = normCb.isSelected();
-        if (!raw && !norm) {
-            raw = true; // fall back to raw if neither selected
-        }
-        return new ExportFeatureOptions(raw, norm);
+        // Ground-truth export is RAW only. The classifier trains/predicts on raw values
+        // (normalisation is a clustering-only concern), so the previous "__norm" columns no
+        // longer reflect what the classifier consumes and are not exported.
+        return new ExportFeatureOptions(true, false);
     }
 
     static void exportCellTable(QuPathGUI qupath) {
@@ -445,8 +420,7 @@ final class ImportExport {
         if (opts == null) return;
 
         try {
-            CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
-            extractor.setNormalizer(featureNormalizer);
+            CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames); // raw — classifier export
             String imgName = imageData.getServer().getMetadata().getName();
             GroundTruthIO.exportCSV(
                     chosen.toPath(), detections, labelStore, extractor, imgName, opts.includeRaw(), opts.includeNorm());
@@ -612,8 +586,7 @@ final class ImportExport {
                     cellById.put(cell.getID().toString(), cell);
                 }
 
-                CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
-                extractor.setNormalizer(normalizer);
+                CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames); // raw — classifier export
 
                 for (var labelEntry : otherLabels.getAllLabels().entrySet()) {
                     PathObject cell = cellById.get(labelEntry.getKey());
