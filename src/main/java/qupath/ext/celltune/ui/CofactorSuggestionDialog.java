@@ -1,7 +1,13 @@
 package qupath.ext.celltune.ui;
 
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.function.DoubleConsumer;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -21,9 +27,17 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CofactorEstimator;
+import qupath.ext.celltune.model.CohortClusterModel;
 import qupath.ext.celltune.model.IntensityHeatmap;
+import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.prefs.PathPrefs;
+import qupath.lib.images.ImageData;
+import qupath.lib.objects.PathObject;
+import qupath.lib.projects.Project;
+import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Non-modal tool window for the Phase 17 cofactor-suggestion workflow (COF-02/03/05/06/08). It
@@ -64,6 +78,9 @@ public class CofactorSuggestionDialog {
 
     /** Last successful run's result; guards Apply and is read from the FX thread. */
     private volatile CofactorEstimator.CofactorSuggestion lastResult;
+
+    /** The in-flight run's cancellation token (null when idle); the Cancel button flips it. */
+    private volatile CohortClusterModel.CancellationToken activeToken;
 
     // Controls kept as fields so the Task-2 Run pipeline can drive them.
     private final ToggleGroup scopeGroup = new ToggleGroup();
@@ -191,15 +208,268 @@ public class CofactorSuggestionDialog {
         calibCountLabel.setText(selectedFeatures.size() + " calibration feature(s) selected");
     }
 
-    /** User-triggered Run — the off-FX compute pipeline is implemented in Task 2. */
+    /**
+     * User-triggered Run (D-07 — never auto-on-open): snapshot the calibration set and scope, then
+     * spawn a daemon worker that computes off the FX thread. Every scene-graph touch below marshals
+     * through {@link Platform#runLater}.
+     */
     private void runSuggestion() {
-        // Task 2: snapshot the scope + features, spawn the daemon worker, compute + render.
+        final List<String> features = new ArrayList<>(selectedFeatures);
+        if (features.isEmpty()) {
+            Dialogs.showWarningNotification("Suggest cofactor", "Select at least one calibration feature.");
+            return;
+        }
+        final boolean wholeProject = wholeProjectScope.isSelected();
+
+        runBtn.setDisable(true);
+        cancelBtn.setDisable(false);
+        applyBtn.setDisable(true);
+        progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        logArea.clear();
+
+        final CohortClusterModel.CancellationToken token = new CohortClusterModel.CancellationToken();
+        activeToken = token;
+        cancelBtn.setOnAction(e -> {
+            token.cancel();
+            log("Cancelling…");
+        });
+
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        computeAndRender(features, wholeProject, token);
+                    } catch (Exception ex) {
+                        logger.warn("Cofactor suggestion run failed", ex);
+                        log("ERROR: " + ex.getMessage());
+                    } finally {
+                        activeToken = null;
+                        Platform.runLater(() -> {
+                            runBtn.setDisable(false);
+                            cancelBtn.setDisable(true);
+                            progressBar.setProgress(0);
+                        });
+                    }
+                },
+                "CellTune-CofactorSuggest");
+        worker.setDaemon(true);
+        worker.start();
     }
 
-    /** Render the per-feature table + prominent global — filled in Task 2. */
+    /**
+     * OFF the FX thread: build one raw per-cell column per calibration feature from the chosen scope,
+     * run the estimator, cache the result, and marshal the table + global render back onto FX.
+     */
+    private void computeAndRender(
+            List<String> features, boolean wholeProject, CohortClusterModel.CancellationToken token) {
+        double[][] columns = wholeProject ? poolWholeProject(features, token) : poolOpenImage(features);
+        if (columns == null) {
+            return; // guarded / cancelled — already logged
+        }
+        CofactorEstimator.CofactorSuggestion result =
+                CofactorEstimator.estimate(features.toArray(new String[0]), columns);
+        this.lastResult = result;
+        log("Done. Recommended cofactor: " + fmt(result.globalCofactor()) + ".");
+        Platform.runLater(() -> {
+            renderResults(result);
+            applyBtn.setDisable(false);
+        });
+    }
+
+    /**
+     * Open-image scope (COF-03): read every detection's RAW measurements in memory via a
+     * null-normalizer {@link CellFeatureExtractor} and transpose the row-major matrix into per-feature
+     * columns. No geojson/file streaming.
+     */
+    private double[][] poolOpenImage(List<String> features) {
+        ImageData<BufferedImage> data = qupath == null ? null : qupath.getImageData();
+        if (data == null) {
+            log("No image is open.");
+            return null;
+        }
+        List<PathObject> cells = new ArrayList<>(data.getHierarchy().getDetectionObjects());
+        if (cells.isEmpty()) {
+            log("The open image has no detections.");
+            return null;
+        }
+        log("Reading " + String.format("%,d", cells.size()) + " cells from the open image…");
+        CellFeatureExtractor extractor = new CellFeatureExtractor(features, null); // null normalizer → RAW reads
+        float[] flat = extractor.extractMatrix(cells); // row-major nCells*nFeatures
+        int nF = features.size();
+        int nC = cells.size();
+        double[][] columns = new double[nF][nC];
+        for (int c = 0; c < nC; c++) {
+            int offset = c * nF;
+            for (int f = 0; f < nF; f++) {
+                columns[f][c] = flat[offset + f];
+            }
+        }
+        return columns;
+    }
+
+    /**
+     * Whole-project scope (COF-03/COF-08/D-08): a count-only soft-ceiling pre-scan + confirm, then
+     * pool every cell's RAW row via {@link CohortClusterModel#poolAllCellsRaw} and transpose into
+     * per-feature columns. Cancellation-aware throughout.
+     */
+    private double[][] poolWholeProject(List<String> features, CohortClusterModel.CancellationToken token) {
+        Project<BufferedImage> project = qupath == null ? null : qupath.getProject();
+        if (project == null) {
+            log("No project is open.");
+            return null;
+        }
+        List<String> images = project.getImageList().stream()
+                .map(ProjectImageEntry::getImageName)
+                .collect(Collectors.toList());
+        ImageData<BufferedImage> openData = qupath.getImageData();
+        ProjectImageEntry<BufferedImage> openEntry = openData == null ? null : project.getEntry(openData);
+        String openName = openEntry == null ? null : openEntry.getImageName();
+
+        // Soft-ceiling confirm (D-08): count-only pre-scan (no feature extraction), reusing the SAME pref key.
+        log("Estimating cell count across " + images.size() + " image(s)…");
+        long estimate = estimatePooledCellCount(project, images, openData, openName, token);
+        if (token.isCancelled()) {
+            log("Cancelled.");
+            return null;
+        }
+        int ceiling = PathPrefs.createPersistentPreference("celltune.allCellsSoftCeiling", 50_000_000)
+                .get();
+        if (estimate > ceiling) {
+            boolean proceed = confirmOnFx(
+                    "Large all-cells run",
+                    String.format(
+                            "The selected images have an estimated %,d cells, above the configured %,d-cell "
+                                    + "soft ceiling. This can take a long time and use a lot of memory. "
+                                    + "Continue anyway?",
+                            estimate, ceiling));
+            if (!proceed) {
+                log("Cancelled — estimated " + String.format("%,d", estimate) + " cells exceeds the soft ceiling.");
+                return null;
+            }
+        }
+
+        log("Pooling raw cells across the project…");
+        CohortClusterModel.PooledData pooled = CohortClusterModel.poolAllCellsRaw(
+                project, images, features, null, null, openData, openName, token, this::log);
+        if (pooled.cancelled()) {
+            log("Cancelled.");
+            return null;
+        }
+        double[][] rows = pooled.rows(); // [nCells][nFeatures], RAW
+        int nC = rows.length;
+        int nF = features.size();
+        if (nC == 0) {
+            log("No cells were pooled.");
+            return null;
+        }
+        double[][] columns = new double[nF][nC];
+        for (int c = 0; c < nC; c++) {
+            double[] row = rows[c];
+            for (int f = 0; f < nF; f++) {
+                columns[f][c] = row[f];
+            }
+        }
+        return columns;
+    }
+
+    /**
+     * Cheap count-only pre-scan for the soft-ceiling estimate (D-08): sums each image's detection
+     * count WITHOUT extracting features, using the live open {@link ImageData} for the open entry so
+     * its unsaved edits are counted. Cancellation-aware between images.
+     */
+    private long estimatePooledCellCount(
+            Project<BufferedImage> project,
+            List<String> images,
+            ImageData<BufferedImage> openData,
+            String openName,
+            CohortClusterModel.CancellationToken token) {
+        Map<String, ProjectImageEntry<BufferedImage>> byName = new LinkedHashMap<>();
+        for (ProjectImageEntry<BufferedImage> entry : project.getImageList()) {
+            byName.put(entry.getImageName(), entry);
+        }
+        long total = 0;
+        for (String name : images) {
+            if (token.isCancelled()) {
+                break;
+            }
+            if (openData != null && name.equals(openName)) {
+                total += openData.getHierarchy().getDetectionObjects().size();
+                continue;
+            }
+            ProjectImageEntry<BufferedImage> entry = byName.get(name);
+            if (entry == null) {
+                continue;
+            }
+            try {
+                ImageData<BufferedImage> imageData = entry.readImageData();
+                if (imageData != null) {
+                    total += imageData.getHierarchy().getDetectionObjects().size();
+                }
+            } catch (Exception e) {
+                logger.debug("Soft-ceiling pre-scan: could not read [{}] — skipped", name, e);
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Show a confirm dialog from a background thread by marshalling it onto the FX thread and blocking
+     * on a {@link CountDownLatch} until answered — mirrors {@code ScatterPlotView.confirmOnFx}.
+     */
+    private boolean confirmOnFx(String title, String message) {
+        final boolean[] result = {false};
+        CountDownLatch latch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                result[0] = Dialogs.showConfirmDialog(title, message);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            latch.await();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        return result[0];
+    }
+
+    /**
+     * Render the per-feature diagnostics table (D-09) and the prominent recommended global cofactor
+     * (D-10) on the FX thread. Per-feature values are advisory/display only; excluded rows are greyed.
+     */
     private void renderResults(CofactorEstimator.CofactorSuggestion result) {
         resultsGrid.getChildren().clear();
-        // Task 2: rebuild the header + one row per FeatureCofactor and set globalLabel.
+        String[] headers = {"feature", "n cells", "background", "median", "p99", "suggested cofactor", "flag"};
+        for (int col = 0; col < headers.length; col++) {
+            resultsGrid.add(boldLabel(headers[col]), col, 0);
+        }
+        int row = 1;
+        for (CofactorEstimator.FeatureCofactor fc : result.perFeature()) {
+            Label[] cells = {
+                new Label(fc.feature()),
+                new Label(String.format("%,d", fc.nCells())),
+                new Label(fmt(fc.background())),
+                new Label(fmt(fc.median())),
+                new Label(fmt(fc.p99())),
+                new Label(fmt(fc.cofactor())),
+                new Label(fc.excluded() ? fc.reason() : "")
+            };
+            if (fc.excluded()) {
+                for (Label l : cells) {
+                    l.setStyle("-fx-text-fill: grey;");
+                }
+            }
+            for (int col = 0; col < cells.length; col++) {
+                resultsGrid.add(cells[col], col, row);
+            }
+            row++;
+        }
+        globalLabel.setText(String.format("Recommended cofactor: %.4g", result.globalCofactor()));
+    }
+
+    /** Compact numeric formatter — shows an em dash for NaN (a degenerate/empty feature). */
+    private static String fmt(double v) {
+        return Double.isNaN(v) ? "—" : String.format("%.4g", v);
     }
 
     /** Marshal a log line onto the FX thread. */
