@@ -43,6 +43,7 @@ public class NormalizationPane {
     private final Spinner<Double> cofactorSpinner;
     private final Label cofactorLabel;
     private final Label cofactorHint;
+    private final Button suggestBtn;
     private final Label countLabel;
 
     private boolean confirmed = false;
@@ -87,8 +88,12 @@ public class NormalizationPane {
         cofactorHint = new Label("(fluor ~25–50, MIBI 0.05 — scale-dependent)");
         cofactorHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11;");
 
-        HBox transformRow =
-                new HBox(8, new Label("Transform:"), transformCombo, cofactorLabel, cofactorSpinner, cofactorHint);
+        // ── Suggest cofactor tool (arcsinh-only; Phase 17 COF-01 / D-06) ──
+        suggestBtn = new Button("Suggest…");
+        suggestBtn.setOnAction(e -> openSuggestTool());
+
+        HBox transformRow = new HBox(
+                8, new Label("Transform:"), transformCombo, cofactorLabel, cofactorSpinner, suggestBtn, cofactorHint);
         transformRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Search / filter ──
@@ -219,8 +224,30 @@ public class NormalizationPane {
         cofactorLabel.setManaged(isArcsinh);
         cofactorSpinner.setVisible(isArcsinh);
         cofactorSpinner.setManaged(isArcsinh);
+        suggestBtn.setVisible(isArcsinh);
+        suggestBtn.setManaged(isArcsinh);
         cofactorHint.setVisible(isArcsinh);
         cofactorHint.setManaged(isArcsinh);
+    }
+
+    /**
+     * Open the non-modal Suggest cofactor tool (COF-01). The window is owned by this pane's OWN stage
+     * (correction #2) — a {@code Modality.NONE} child of the {@code APPLICATION_MODAL} pane stays
+     * interactive, whereas a window owned by the QuPath main stage would be blocked. The apply callback
+     * writes the clamped recommended global into the existing cofactor spinner in one action, with no
+     * measurement/normalizer mutation and no normalization run (COF-07); the user still confirms
+     * normalization via OK, exactly as today.
+     */
+    private void openSuggestTool() {
+        CofactorSuggestionDialog dialog = new CofactorSuggestionDialog(
+                stage, // OWN stage — child of the APPLICATION_MODAL pane (correction #2)
+                qupath,
+                featureNames,
+                global -> { // COF-07: single action, no mutation, no normalize run
+                    double v = Math.max(0.01, Math.min(10000.0, global));
+                    cofactorSpinner.getValueFactory().setValue(v);
+                });
+        dialog.show(); // non-blocking; the Normalise pane stays open (D-05)
     }
 
     private void updateFilter() {
