@@ -161,14 +161,14 @@ Requirements for milestone v1.1 Reliability and Verification Hardening.
 | PCA-04 | Phase 16 | Complete |
 | PCA-05 | Phase 16 | Complete |
 | PCA-06 | Phase 16 | Complete |
-| COF-01 | Phase 17 | Pending |
-| COF-02 | Phase 17 | Pending |
-| COF-03 | Phase 17 | Pending |
-| COF-04 | Phase 17 | Pending |
-| COF-05 | Phase 17 | Pending |
-| COF-06 | Phase 17 | Pending |
-| COF-07 | Phase 17 | Pending |
-| COF-08 | Phase 17 | Pending |
+| COF-01 | Phase 17 | Verified (UAT pending) |
+| COF-02 | Phase 17 | Verified (UAT pending) |
+| COF-03 | Phase 17 | Verified (code) |
+| COF-04 | Phase 17 | Verified (code) |
+| COF-05 | Phase 17 | Verified (UAT pending) |
+| COF-06 | Phase 17 | Verified (code) |
+| COF-07 | Phase 17 | Verified (UAT pending) |
+| COF-08 | Phase 17 | Verified (code) |
 
 Coverage:
 - requirements listed in this file: 54
