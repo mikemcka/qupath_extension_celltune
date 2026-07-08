@@ -1695,7 +1695,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
             return;
         }
 
-        var pane = new NormalizationPane(qupath.getStage(), featureNames, featureNormalizer);
+        var pane = new NormalizationPane(qupath, qupath.getStage(), featureNames, featureNormalizer);
         FeatureNormalizer result = pane.showAndWait();
         if (result != null) {
             if (result.hasTransforms()) {

@@ -13,6 +13,7 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.model.FeatureNormalizer.Transform;
+import qupath.lib.gui.QuPathGUI;
 
 /**
  * Checkbox-based dialog for selecting which features to normalise.
@@ -31,6 +32,8 @@ import qupath.ext.celltune.model.FeatureNormalizer.Transform;
 public class NormalizationPane {
 
     private final Stage stage;
+    private final QuPathGUI qupath;
+    private final List<String> featureNames;
     private final ObservableList<FeatureItem> allItems = FXCollections.observableArrayList();
     private final FilteredList<FeatureItem> filteredItems;
     private final ListView<FeatureItem> listView;
@@ -47,12 +50,15 @@ public class NormalizationPane {
     /**
      * Create the normalization dialog.
      *
+     * @param qupath       QuPath handle, forwarded to the Suggest cofactor tool (Phase 17)
      * @param owner        parent stage
      * @param featureNames all available feature names
      * @param existing     existing normalizer to pre-populate from (may be null)
      */
-    public NormalizationPane(Stage owner, List<String> featureNames, FeatureNormalizer existing) {
+    public NormalizationPane(QuPathGUI qupath, Stage owner, List<String> featureNames, FeatureNormalizer existing) {
         stage = new Stage();
+        this.qupath = qupath;
+        this.featureNames = featureNames;
 
         // Pre-populate: tick features that already have a transform
         for (String name : featureNames) {
@@ -173,6 +179,11 @@ public class NormalizationPane {
         stage.setMinHeight(350);
 
         updateCofactorVisibility();
+    }
+
+    /** @return this pane's own Stage — used as the owner for the non-modal Suggest cofactor window. */
+    public Stage getStage() {
+        return stage;
     }
 
     /**
