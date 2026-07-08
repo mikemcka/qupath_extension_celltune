@@ -22,7 +22,7 @@ Windows and boxes can be expanded or contracted by clicking and dragging corners
 3. [Quick start — binary + composite workflow](#3-quick-start--binary--composite-workflow)
 4. [Setup steps (shared by both workflows)](#4-setup-steps-shared-by-both-workflows)
    - [4.1 Select features](#41-select-features)
-   - [4.2 Normalise features](#42-normalise-features)
+   - [4.2 Clustering normalisation](#42-clustering-normalisation)
    - [4.3 Create classes & Class Control](#43-create-classes--class-control)
    - [4.4 Import a marker table (auto channel switching)](#44-import-a-marker-table-auto-channel-switching)
 5. [Multi-class workflow in detail](#5-multi-class-workflow-in-detail)
@@ -85,7 +85,7 @@ Disable the extension at any time from **Edit → Preferences → CellTune Class
 Build one classifier that distinguishes any number of cell types (e.g. T-cell / B-cell / Macrophage / Tumour / Stroma).
 
 ```
-Select Features  →  Normalise Features  →  Create classes (Class Control)
+Select Features  →  Clustering Normalisation  →  Create classes (Class Control)
        ↓
 Import Marker Table (optional, for auto channel switching)
        ↓
@@ -115,7 +115,7 @@ Detail per step is in §[4](#4-setup-steps-shared-by-both-workflows), §[5](#5-m
 Build one **positive/negative classifier per marker** (CD3, CD4, CD8, CD20…), then combine them into composite cell types (`CD3+:CD4+:CD8-`, etc.).
 
 ```
-Select Features  →  Normalise Features
+Select Features  →  Clustering Normalisation
        ↓
 Binary Classifiers... → Create "CD3" → Open (enters Binary Mode)
        ↓
@@ -178,11 +178,11 @@ Pruning takes milliseconds and **never touches the measurements on disk** — it
 
 Your selection is saved in `<project>/celltune/classifier-state.json` and persists across QuPath sessions.
 
-### 4.2 Normalise features
+### 4.2 Clustering normalisation
 
-**Menu:** *Extensions → CellTune Classifier → Normalise Features*
+**Menu:** *Extensions → CellTune Classifier → Clustering Normalisation*
 
-Per-feature transforms applied during feature extraction. Same prefix/search/select-all UI as Select Features, plus:
+Per-feature transforms for the **clustering / scatter-plot / gating** workflows. **The classifier always trains and predicts on raw values** — normalisation configured here does not touch the phenotyping model (tree models are invariant to it anyway). Same prefix/search/select-all UI as Select Features, plus:
 
 - **Transform** dropdown:
   - **arcsinh** — `arcsinh(x / cofactor)`. Recommended default.
@@ -191,13 +191,30 @@ Per-feature transforms applied during feature extraction. Same prefix/search/sel
     - **The ideal cofactor tracks your data's intensity scale** — pick it near the background/signal boundary. Quick check: if almost every cell's raw value is *below* the cofactor, nearly all cells sit in the near-linear part of arcsinh and the transform is ≈ a no-op (e.g. cofactor 1 on MIBI means that mostly fall below 1, or 150 on dim fluorescence markers). If almost every value is *far above* it, everything is log-compressed and the low-end detail is lost. Aim for the value where the background collapses but the positive population stays resolved, and eyeball the transformed histogram to confirm.
   - **sqrt** — `sqrt(max(0, x))`. Simple variance stabilisation, no cofactor.
 
-![Normalise features](doc_images/normalise_features.png)
+![Clustering normalisation](doc_images/normalise_features.png)
 
 You pick **which** features to transform and **one** transform/cofactor applied to all of them. Untouched features stay raw.
 
 **Do not** normalise morphological features like Cell Area or any pre-normalised features like foundation model embeddings.
 
-**What it buys you.** `Normalisation` compresses the bright outliers in raw intensities while keeping the low end (negative vs dim-positive) linear. This pulls each slide's intensity scale closer together, so the model generalises to unseen slides.
+**What it's for — scale-dependent methods (clustering), not the classifier.** `arcsinh(x / cofactor)` is a monotone, per-feature squash: near-linear below the cofactor, log-compressed above it, so it flattens bright outliers while preserving the dim/low-intensity detail. Its job is to stop a few high-dynamic-range markers from dominating **Euclidean distance / kNN** in the workflows that measure distances between cells — the **scatter-plot clustering** (k-means and Leiden, §[11](#11-cell-scatter-plot--clustering--gating)), the PCA embedding, gating thresholds, and the colour-by-marker views. There it is essential: raw 16-bit intensities left untransformed make clustering track whichever markers happen to be brightest instead of the whole phenotype.
+
+Two things it does **not** do:
+
+- **It never touches the classifier.** The phenotyping model always trains and predicts on **raw** values — normalisation is applied only in the clustering path. (Even if it were applied, XGBoost / LightGBM / Random Forest split on rank order and arcsinh is a strictly increasing rescale, so predictions would be unchanged at any cofactor.) Auto-prune, feature-importance/SHAP, and ground-truth export all operate on the same raw values the model sees; export no longer writes `__norm` columns.
+- **It does not correct slide-to-slide (batch) differences, so it does not improve generalisation to unseen slides.** The same global transform is applied identically to every image, so it uses no per-image information and cannot remove per-slide staining/exposure offsets. Generalising across variable samples is a **batch-correction** problem (per-image or reference-based alignment) plus annotating a **diversity** of slides — not something arcsinh addresses.
+
+**What this pane configures vs. what clustering always does.** The arcsinh/sqrt transform here is only **stage 1** of the clustering normalisation, and it is **optional** — leave it off and clustering still runs. The full pipeline every clustering fit applies is:
+
+```
+(optional arcsinh / sqrt)  →  z-score per marker  [always]  →  (PCA if >50 markers)  →  k-means / Leiden
+     stage 1 — this pane            stage 2 — automatic            dim-reduction — automatic
+```
+
+- **Stage 2 — z-score is mandatory and automatic.** Every clustering fit standardises each marker (subtract mean, divide by SD) over the active/pooled cells at fit time. This is what actually puts markers on a comparable scale so no single one dominates Euclidean distance — it happens **whether or not** you configure a transform here.
+- **Dimensionality reduction is automatic and conditional.** When more than ~50 marker columns are active (and the *Reduce dims (PCA)* option is on, the default), an exact PCA is applied after z-scoring, mirroring the scanpy `scale → PCA → neighbours → Leiden` recipe. Below that threshold, or with PCA off, it's skipped.
+
+So configuring arcsinh here is the optional stage-1 *dynamic-range compressor* that runs **before** the always-on z-score — it additionally tames within-marker skew and bright-pixel outliers that z-scoring alone can't (z-score is a linear rescale and leaves a skewed marker's outliers as extreme values). If you configure nothing, clustering uses z-score (+ conditional PCA) on the raw values.
 
 ### 4.3 Create classes & Class Control
 
@@ -371,7 +388,7 @@ There's also a **Validation Confusion Matrix** view (true class × predicted cla
 
 Top-N (up to 10) features by **mean |SHAP|** per class. Horizontal bars, one colour per class, dropdown to switch classes. SHAP is averaged across whichever models are active (TreeSHAP for XGBoost/LightGBM, normalised split counts for Random Forest).
 
-Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, your normalisation cofactor is probably wrong). It's also where a stray feature you forgot to de-select in Select Features (§4.1) tends to show up — a non-biological column like a cell index or centroid coordinate ranking near the top is a red flag that it leaked into training.
+Use it to spot features the model is over-relying on (e.g. if `Cell: DAPI Mean` dominates every class, it probably shouldn't be in the feature set — de-select it in Select Features, §[4.1](#41-select-features); note that changing the arcsinh cofactor won't fix this, since the tree models are invariant to that monotone transform). It's also where a stray feature you forgot to de-select in Select Features (§4.1) tends to show up — a non-biological column like a cell index or centroid coordinate ranking near the top is a red flag that it leaked into training.
 
 ![Feature importance showing a leaked cell-index feature](doc_images/index_feature_leakage.png)
 
@@ -619,9 +636,9 @@ Measurements for Scatter Plot* dialog). The window then computes an initial
 embedding on a background thread.
 
 > Clustering applies any **feature normalisation** you've configured
-> (§[4.2](#42-normalise-features)) — the same transforms the classifier uses —
-> then z-scores each marker over the active cells. The normalizer is captured when
-> the window opens; reopen the plot after changing it.
+> (§[4.2](#42-clustering-normalisation)) — this is clustering-only (the classifier uses raw
+> values) — then z-scores each marker over the active cells. The normalizer is captured
+> when the window opens; reopen the plot after changing it.
 
 ### 11.1 Controls
 
@@ -790,11 +807,11 @@ Leiden — §[11.6](#116-clustering-method-k-means-vs-leiden)), writes the mappe
 classes, and **saves each image**, with progress in the status bar.
 
 > **Measurement scaling & batch effects.** Clustering applies CellTune's feature
-> normalisation (§[4.2](#42-normalise-features)) — the **same** arcsinh / sqrt
-> transforms the classifier uses — then z-scores each marker over the active cells
+> normalisation (§[4.2](#42-clustering-normalisation)) — arcsinh / sqrt, a **clustering-only**
+> step (the classifier uses raw values) — then z-scores each marker over the active cells
 > at fit time. So if you've configured normalisation, it shapes the clusters and
 > the colour-by-marker view too. (The normalizer is captured when the window
-> opens; change it via *Normalise Features* and reopen the plot to pick it up.)
+> opens; change it via *Clustering Normalisation* and reopen the plot to pick it up.)
 
 **Leiden cohort modes: "Cluster all cells" vs "Transfer from sample"**
 
@@ -1009,10 +1026,10 @@ Header (commented):
 # CellTune Ground Truth Export
 # Image: my_image.ome.tiff
 # Exported: 2026-06-02T14:30:45
-Image,Label,CentroidX,CentroidY,Feature1,Feature2,...[,Feature1__norm,...]
+Image,Label,CentroidX,CentroidY,Feature1,Feature2,...
 ```
 
-Dialog asks whether to include raw features, normalised features (`__norm` suffix), or both. Only labelled cells are exported.
+Exports **raw** feature values only — the values the classifier trains/predicts on. (Earlier versions offered a normalised `__norm` column set; that was removed when normalisation became clustering-only.) Only labelled cells are exported.
 
 In multi-class mode the export pools labels from the current image plus all other project images. In **binary mode** use the dedicated menu item **Export ▸ Active Binary Ground Truth...** — it scopes to the active marker and includes previously-imported training rows from prior projects (so you can losslessly round-trip between projects).
 
@@ -1114,7 +1131,7 @@ All under *Extensions → CellTune Classifier*.
 | Composite Classification... | Project + ≥1 trained binary | Apply trained binary classifiers and assign composite labels. |
 | Class Control... | Project | Add/Delete/Merge/Undo Merge classes. |
 | Select Features... | Project | Pick which measurement columns are used for training. |
-| Normalise Features | Project | Per-feature arcsinh/sqrt with shared cofactor. |
+| Clustering Normalisation | Project | Per-feature arcsinh/sqrt with shared cofactor (clustering-only; classifier uses raw). |
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
 | Image Pixel Prescreen... | Project | Cells-free whole-image QC: per-channel pixel statistics on a low-res pyramid level, cohort z-scores, verdicts/flags (background-heavy, saturated, weak signal, intensity outlier), CSV export. See §[17](#17-image-pixel-prescreen-whole-image-qc-no-cells-needed). |
 | Intensity Heatmaps... | Open image with detections | Phenotype × marker mean-intensity heatmap (z-score coloured), per-image / project-combined, PNG/CSV export. See §[9](#9-intensity-heatmaps). |

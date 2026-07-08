@@ -13,6 +13,7 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.model.FeatureNormalizer.Transform;
+import qupath.lib.gui.QuPathGUI;
 
 /**
  * Checkbox-based dialog for selecting which features to normalise.
@@ -21,15 +22,18 @@ import qupath.ext.celltune.model.FeatureNormalizer.Transform;
  * then ticks the features to apply it to — matching the familiar
  * {@link FeatureSelectionPane} pattern.
  * <p>
- * Recommended arcsinh cofactors:
+ * Recommended arcsinh cofactors (scale-dependent — tune to your data):
  * <ul>
- *   <li><b>1</b> — fluorescence imaging (COMET, CODEX, IF)</li>
- *   <li><b>100</b> — mass spectrometry (MIBI, IMC)</li>
+ *   <li><b>~25–50</b> — raw fluorescence panels (COMET, CODEX, IF), values in the hundreds–thousands</li>
+ *   <li><b>0.05</b> — MIBI mass-spectrometry mean intensities (Hartmann et al. 2021; squidpy MIBI-TOF tutorial)</li>
  * </ul>
+ * The ideal value tracks the measurement intensity scale — see the User Guide (§4.2).
  */
-public class NormalizationPane {
+public class ClusteringNormalizationPane {
 
     private final Stage stage;
+    private final QuPathGUI qupath;
+    private final List<String> featureNames;
     private final ObservableList<FeatureItem> allItems = FXCollections.observableArrayList();
     private final FilteredList<FeatureItem> filteredItems;
     private final ListView<FeatureItem> listView;
@@ -39,6 +43,7 @@ public class NormalizationPane {
     private final Spinner<Double> cofactorSpinner;
     private final Label cofactorLabel;
     private final Label cofactorHint;
+    private final Button suggestBtn;
     private final Label countLabel;
 
     private boolean confirmed = false;
@@ -46,12 +51,16 @@ public class NormalizationPane {
     /**
      * Create the normalization dialog.
      *
+     * @param qupath       QuPath handle, forwarded to the Suggest cofactor tool (Phase 17)
      * @param owner        parent stage
      * @param featureNames all available feature names
      * @param existing     existing normalizer to pre-populate from (may be null)
      */
-    public NormalizationPane(Stage owner, List<String> featureNames, FeatureNormalizer existing) {
+    public ClusteringNormalizationPane(
+            QuPathGUI qupath, Stage owner, List<String> featureNames, FeatureNormalizer existing) {
         stage = new Stage();
+        this.qupath = qupath;
+        this.featureNames = featureNames;
 
         // Pre-populate: tick features that already have a transform
         for (String name : featureNames) {
@@ -77,11 +86,15 @@ public class NormalizationPane {
         cofactorSpinner.setEditable(true);
         cofactorSpinner.setPrefWidth(100);
 
-        cofactorHint = new Label("(1 for fluorescence, 100 for mass spec)");
+        cofactorHint = new Label("(fluor ~25–50, MIBI 0.05 — scale-dependent)");
         cofactorHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11;");
 
-        HBox transformRow =
-                new HBox(8, new Label("Transform:"), transformCombo, cofactorLabel, cofactorSpinner, cofactorHint);
+        // ── Suggest cofactor tool (arcsinh-only; Phase 17 COF-01 / D-06) ──
+        suggestBtn = new Button("Suggest…");
+        suggestBtn.setOnAction(e -> openSuggestTool());
+
+        HBox transformRow = new HBox(
+                8, new Label("Transform:"), transformCombo, cofactorLabel, cofactorSpinner, suggestBtn, cofactorHint);
         transformRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Search / filter ──
@@ -161,17 +174,30 @@ public class NormalizationPane {
                 cancelBtn);
         okCancelRow.setAlignment(Pos.CENTER);
 
-        VBox root = new VBox(8, transformRow, filterRow, btnRow, listView, okCancelRow);
+        // Clustering-only scope note. The classifier trains/predicts on raw values (tree models
+        // are invariant to these monotone transforms), so normalisation here affects ONLY the
+        // scale-dependent workflows: the scatter-plot clustering (k-means/Leiden), PCA, and gating.
+        Label scopeNote = new Label("Note: normalisation applies to clustering / scatter-plot / gating "
+                + "only — the classifier always uses raw values.");
+        scopeNote.setWrapText(true);
+        scopeNote.setStyle("-fx-text-fill: -fx-accent; -fx-font-size: 11px;");
+
+        VBox root = new VBox(8, scopeNote, transformRow, filterRow, btnRow, listView, okCancelRow);
         root.setPadding(new Insets(10));
 
         stage.initOwner(owner);
         stage.initModality(Modality.APPLICATION_MODAL);
-        stage.setTitle("Normalise Features");
+        stage.setTitle("Clustering normalisation");
         stage.setScene(new Scene(root, 600, 550));
         stage.setMinWidth(400);
         stage.setMinHeight(350);
 
         updateCofactorVisibility();
+    }
+
+    /** @return this pane's own Stage — used as the owner for the non-modal Suggest cofactor window. */
+    public Stage getStage() {
+        return stage;
     }
 
     /**
@@ -207,8 +233,30 @@ public class NormalizationPane {
         cofactorLabel.setManaged(isArcsinh);
         cofactorSpinner.setVisible(isArcsinh);
         cofactorSpinner.setManaged(isArcsinh);
+        suggestBtn.setVisible(isArcsinh);
+        suggestBtn.setManaged(isArcsinh);
         cofactorHint.setVisible(isArcsinh);
         cofactorHint.setManaged(isArcsinh);
+    }
+
+    /**
+     * Open the non-modal Suggest cofactor tool (COF-01). The window is owned by this pane's OWN stage
+     * (correction #2) — a {@code Modality.NONE} child of the {@code APPLICATION_MODAL} pane stays
+     * interactive, whereas a window owned by the QuPath main stage would be blocked. The apply callback
+     * writes the clamped recommended global into the existing cofactor spinner in one action, with no
+     * measurement/normalizer mutation and no normalization run (COF-07); the user still confirms
+     * normalization via OK, exactly as today.
+     */
+    private void openSuggestTool() {
+        CofactorSuggestionDialog dialog = new CofactorSuggestionDialog(
+                stage, // OWN stage — child of the APPLICATION_MODAL pane (correction #2)
+                qupath,
+                featureNames,
+                global -> { // COF-07: single action, no mutation, no normalize run
+                    double v = Math.max(0.01, Math.min(10000.0, global));
+                    cofactorSpinner.getValueFactory().setValue(v);
+                });
+        dialog.show(); // non-blocking; the Clustering normalisation pane stays open (D-05)
     }
 
     private void updateFilter() {

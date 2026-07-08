@@ -629,6 +629,79 @@ class CohortClusterModelTest {
         assertEquals(-1.0, neverMatchedValue, "a cell that never matched the classFilter at pass 1 must still be -1");
     }
 
+    // ── COF-08: poolAllCellsRaw returns RAW rows while poolAllCells z-scores ─────
+
+    @Test
+    void poolAllCellsRawReturnsRawRowsWhilePoolAllCellsZScores() {
+        // Two images with a KNOWN single marker "M1" so the pooled column has a non-zero mean and
+        // known raw values. poolAllCellsRaw must return those raw values verbatim, while
+        // poolAllCells z-scores the SAME input — proving the cofactor estimator is fed RAW
+        // intensities, not centred ones (COF-08 / critical correction #3: z-scored rows give
+        // p50 ≈ 0 and a non-positive cofactor).
+        List<String> markers = List.of("M1");
+        List<String> images = List.of("imgA", "imgB");
+
+        double[] aValues = {10, 20, 30, 40, 50};
+        double[] bValues = {60, 70, 80};
+
+        List<PathObject> aCells = new ArrayList<>();
+        for (int i = 0; i < aValues.length; i++) {
+            PathObject cell = detectionAt(i * 10, 0);
+            cell.getMeasurementList().put("M1", aValues[i]);
+            aCells.add(cell);
+        }
+        List<PathObject> bCells = new ArrayList<>();
+        for (int i = 0; i < bValues.length; i++) {
+            PathObject cell = detectionAt(1000 + i * 10, 0);
+            cell.getMeasurementList().put("M1", bValues[i]);
+            bCells.add(cell);
+        }
+
+        var project = fakeProject(List.of(
+                fakeEntry("imgA", fakeImageData(hierarchyWith(aCells))),
+                fakeEntry("imgB", fakeImageData(hierarchyWith(bCells)))));
+
+        CancellationToken token = new CancellationToken();
+        CohortClusterModel.PooledData raw =
+                CohortClusterModel.poolAllCellsRaw(project, images, markers, null, null, null, null, token, s -> {});
+        CohortClusterModel.PooledData z =
+                CohortClusterModel.poolAllCells(project, images, markers, null, null, null, null, token, s -> {});
+
+        // Both pool EVERY cell (no sampling): 5 + 3 = 8 rows.
+        assertEquals(8, raw.rows().length, "poolAllCellsRaw must pool every cell (no sampling)");
+        assertEquals(8, z.rows().length, "poolAllCells must pool the same 8 cells");
+
+        // RAW rows equal the injected values exactly (sort the column so the assertion is
+        // independent of per-image hierarchy iteration order).
+        double[] rawCol = new double[raw.rows().length];
+        for (int i = 0; i < raw.rows().length; i++) {
+            rawCol[i] = raw.rows()[i][0];
+        }
+        double[] sortedRaw = rawCol.clone();
+        Arrays.sort(sortedRaw);
+        assertArrayEquals(
+                new double[] {10, 20, 30, 40, 50, 60, 70, 80},
+                sortedRaw,
+                1e-9,
+                "poolAllCellsRaw must return the raw injected intensities, un-standardized");
+
+        double rawMean = Arrays.stream(rawCol).average().orElse(Double.NaN);
+        assertEquals(45.0, rawMean, 1e-9, "the raw column mean is the arithmetic mean of the injected values");
+
+        // Z-SCORED rows are centred: the z column mean is ≈ 0 and clearly NOT the raw values.
+        double zMean = 0.0;
+        for (int i = 0; i < z.rows().length; i++) {
+            zMean += z.rows()[i][0];
+        }
+        zMean /= z.rows().length;
+        assertEquals(0.0, zMean, 1e-6, "poolAllCells z-scores the column → mean ≈ 0");
+        assertNotEquals(
+                rawMean,
+                zMean,
+                1e-6,
+                "the z-scored column mean (≈0) must differ from the raw column mean (≈45) — raw ≠ z-scored");
+    }
+
     // ── Fix 4: k-means cohort assignment must run in the queryProjector's space ─
 
     @Test

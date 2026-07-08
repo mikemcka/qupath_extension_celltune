@@ -216,7 +216,22 @@ Success Criteria:
 4. Applying the recommendation sets the existing Normalise Features cofactor input to that value in a single action.
 5. On a known raw-fluorescence-scale panel the recommended global cofactor lands in a data-driven range (tens, not the platform default), consistent with the MIBI/COMET cohort assessments.
 
-Plans: TBD (run /gsd-spec-phase 17 then /gsd-plan-phase 17)
+**Plans:** 4 plans
+
+Plans:
+**Wave 1** *(parallel — no file overlap):*
+- [x] 17-01-PLAN.md - CofactorEstimator pure-array background-percentile estimator + tests (Wave 1)
+- [x] 17-02-PLAN.md - poolAllCellsRaw raw all-cells pooling sibling + test (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 — depends on 01+02):*
+- [x] 17-03-PLAN.md - CofactorSuggestionDialog non-modal tool window (picker/scope/table/apply) (Wave 2)
+
+**Wave 3** *(blocked on Wave 2 — depends on 03):*
+- [x] 17-04-PLAN.md - NormalizationPane Suggest button + spinner write-back wiring (Wave 3)
+
+Cross-cutting constraints:
+- **Suggest window owned by `NormalizationPane.getStage()`, never `qupath.getStage()`** (critical correction #2; `NormalizationPane` is `APPLICATION_MODAL`) — spans plans 03 (uses the owner) and 04 (adds the `getStage()` accessor and passes it).
+- **Estimator fed RAW values** via the new `CohortClusterModel.poolAllCellsRaw` sibling and `CellFeatureExtractor(..., null)` — never the z-scored `poolAllCells` (correction #3) — spans plans 02 (produces raw) and 03 (consumes raw).
 
 
 ## Progress
@@ -235,4 +250,4 @@ Plans: TBD (run /gsd-spec-phase 17 then /gsd-plan-phase 17)
 | 14. Leiden Phenotype Clustering | v1.5 | LEI-01,LEI-02,LEI-03,LEI-04,LEI-05 | 0/1 | Planned |
 | 15. All-Cells Leiden Clustering (True-Scanpy) | v1.5 | LEI-06,LEI-07,LEI-08,LEI-09,LEI-10 | 5/5 | Complete (2026-07-06) |
 | 16. PCA Dimensionality Reduction | v1.5 | PCA-01..PCA-06 | 1/1 | Complete (2026-07-06) |
-| 17. In-QuPath Cofactor Suggestion | v1.6 | COF-01..COF-08 | 0/0 | Planned |
+| 17. In-QuPath Cofactor Suggestion | v1.6 | COF-01..COF-08 | 4/4 | Verified (code); human UAT pending |

@@ -61,7 +61,7 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 2. **Label seed cells** — create point annotations on detected cells, then set the annotation's class (e.g. `CD4T`, `Bcell`, `Macrophage`). Aim for ≥20-30 cells per class.
 3. **Import a marker table** (optional) — *Extensions > CellTune Classifier > Import Marker Table* — a CSV mapping cell types to up to 3 marker channel names, used for auto-channel switching during review
 4. **Select features** (optional) — *Extensions > CellTune Classifier > Select Features* — choose which measurements to include in training. Features are shown in a grouped, searchable checkbox tree (one group per marker, plus Morphology / Shape, Neighbors, Embeddings, and Other / Uncategorized) so 1000+-column panels stay navigable.
-5. **Normalise features** (optional) — *Extensions > CellTune Classifier > Normalise Features* — apply arcsinh or sqrt transforms to selected features. Match the cofactor to your intensity scale: ~25–50 for raw fluorescence panels (COMET, CODEX; scale-dependent) or 0.05 for MIBI mass spectrometry (Hartmann et al. 2021; see [References](#references)).
+5. **Clustering normalisation** (optional, clustering-only) — *Extensions > CellTune Classifier > Clustering Normalisation* — apply arcsinh or sqrt transforms to selected features for the clustering / scatter-plot / gating workflows (the classifier always trains and predicts on raw values). Match the cofactor to your intensity scale: ~25–50 for raw fluorescence panels (COMET, CODEX; scale-dependent) or 0.05 for MIBI mass spectrometry (Hartmann et al. 2021; see [References](#references)).
 6. **Train** — click *Train* in the CellTune panel (or *Extensions > CellTune Classifier > Run CellTune Classification…*). If features haven't been selected yet, you'll be prompted to select them or use all. A confirmation dialog shows the feature and label counts, **Model 1** and **Model 2** type selectors (default: XGBoost + LightGBM), resampling, auto-tune, and early stopping options. If the project has multiple images, a dual-list image selector lets you choose which images to apply the trained classifier to. A progress dialog shows real-time training status including GPU/CPU device info.
 7. **Plot confusions** — click *Plot Confusions* to see the inter-model confusion matrix with per-class agreement rates and F1 scores
 8. **Feature importance** (optional) — *Extensions > CellTune Classifier > Feature Importance…* — opens a bar chart of the top 10 features by mean |SHAP| value with a class selector. Alternatively tick **"Show top 10 feature importance after training"** in the training dialog to show it automatically.
@@ -117,12 +117,14 @@ Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`
 
 ## Feature Normalization
 
-Optional per-feature transforms can be applied before training and inference:
+Optional per-feature transforms:
 
 | Transform | Formula | Use case |
 |-----------|---------|----------|
-| arcsinh | `arcsinh(x / cofactor)` | Variance-stabilising transform for intensity data |
+| arcsinh | `arcsinh(x / cofactor)` | Compress bright/high-range intensities (near-linear below the cofactor, log above) so no marker dominates Euclidean distance in **scale-dependent methods**: scatter-plot clustering (k-means/Leiden), PCA, gating |
 | sqrt | `√max(0, x)` | Simple variance-stabilising transform |
+
+**What arcsinh is (and isn't) for.** It matters for **distance/scale-dependent methods** — the clustering, PCA and gating workflows — where large raw values would otherwise dominate Euclidean distance. It is a **monotone** rescale, so the **tree classifiers (XGBoost/LightGBM/Random Forest) are invariant to it** — it does not change their predictions at any cofactor. And because it is applied **globally** (identically to every slide), it does **not** correct per-slide staining/batch differences and does **not** by itself improve generalisation to unseen slides — that is a batch-correction and annotation-diversity question. See [User Guide §4.2](USER_GUIDE.md#42-normalise-features).
 
 ## TODO / Future Exploration
 - tab pfn model wrapper

@@ -49,7 +49,6 @@ public class ClassificationPanel extends VBox {
     private Map<String, String> lastSampledCellImageMap = Map.of();
     private Map<String, List<String>> lastSampledCellAnnotationsMap = Map.of();
     private PopulationSet lastSampledPredictions;
-    private FeatureNormalizer featureNormalizer;
     private List<GroundTruthIO.TrainingRow> importedTrainingRows;
     private List<String> importedTrainingFeatureNames;
 
@@ -412,10 +411,6 @@ public class ClassificationPanel extends VBox {
         featureImportanceButton.setDisable(cls == null || !cls.isTrained());
     }
 
-    public void setFeatureNormalizer(FeatureNormalizer normalizer) {
-        this.featureNormalizer = normalizer;
-    }
-
     /**
      * Apply the per-feature normaliser to a single row already aligned to
      * {@code featureNames}, mirroring how {@link CellFeatureExtractor#extractRow}
@@ -754,23 +749,25 @@ public class ClassificationPanel extends VBox {
                         }
 
                         // Pool labelled cells from other project images. These are
-                        // real cells carrying the full feature panel, already
-                        // normalised during extraction, so they take part in the
-                        // auto-prune decision below.
+                        // real cells carrying the full feature panel, extracted RAW
+                        // (the classifier trains on raw values — normalisation is a
+                        // clustering-only concern), so they take part in the auto-prune
+                        // decision below on the same raw scale.
                         List<float[]> pooledRows = null;
                         List<String> pooledLabels = null;
                         if (poolAllImages && projectRef != null) {
                             var pooled = TrainingOrchestrator.poolLabelsFromOtherImages(
-                                    projectRef, imageData, scope, finalFeatureNames, featureNormalizer, trainLog);
+                                    projectRef, imageData, scope, finalFeatureNames, null, trainLog);
                             pooledRows = pooled.rows();
                             pooledLabels = pooled.labels();
                         }
 
                         // Explicitly imported training rows (if any), aligned to the
-                        // full panel and normalised the same way image-derived rows
-                        // are. Imported rows may carry a different/partial panel
-                        // (zero-filled where unmapped), so they are EXCLUDED from the
-                        // prune decision — but they are still trained on.
+                        // full panel and kept RAW (NaN-cleaned) on the same scale as
+                        // the image-derived rows — the classifier is raw-only. Imported
+                        // rows may carry a different/partial panel (zero-filled where
+                        // unmapped), so they are EXCLUDED from the prune decision — but
+                        // they are still trained on.
                         List<float[]> importedRows = null;
                         List<String> importedLabels = null;
                         var pooledImported = DataPoolingService.poolImportedRows(
@@ -778,15 +775,16 @@ public class ClassificationPanel extends VBox {
                         if (pooledImported.addedCount() > 0) {
                             importedRows = new ArrayList<>(pooledImported.rows().size());
                             for (float[] row : pooledImported.rows()) {
-                                importedRows.add(normaliseRow(row, finalFeatureNames, featureNormalizer));
+                                // null normalizer → raw values, but NaN→0 cleanup is still applied.
+                                importedRows.add(normaliseRow(row, finalFeatureNames, null));
                             }
                             importedLabels = pooledImported.labels();
                             trainLog.accept("Merged " + pooledImported.addedCount() + " imported training rows ("
                                     + pooledImported.mappedFeatureCount() + "/" + finalFeatureNames.size()
-                                    + " features aligned, normalised; excluded from pruning).");
+                                    + " features aligned, raw; excluded from pruning).");
                         }
 
-                        // ── Auto-prune on the pooled, normalised cell matrix ──
+                        // ── Auto-prune on the pooled RAW cell matrix ──
                         // Decisions use the current image's labelled cells plus the
                         // cells pooled from other images — the data the models train
                         // on. Imported rows are deliberately left out so a partial /
@@ -796,8 +794,7 @@ public class ClassificationPanel extends VBox {
                         int[] keepIdx = null;
                         if (autoPruneEnabled) {
                             List<float[]> pruneRows = new ArrayList<>();
-                            CellFeatureExtractor fullExtractor =
-                                    new CellFeatureExtractor(finalFeatureNames, featureNormalizer);
+                            CellFeatureExtractor fullExtractor = new CellFeatureExtractor(finalFeatureNames);
                             var labelMap = storeCopy.getAllLabels();
                             for (PathObject cell : detections) {
                                 if (labelMap.containsKey(cell.getID().toString())) {
@@ -866,8 +863,9 @@ public class ClassificationPanel extends VBox {
                             }
                         }
 
-                        CellFeatureExtractor extractor =
-                                new CellFeatureExtractor(effectiveFeatureNames, featureNormalizer);
+                        // Classifier trains on RAW values (tree models are invariant to the
+                        // arcsinh/sqrt monotone transforms; normalisation is clustering-only).
+                        CellFeatureExtractor extractor = new CellFeatureExtractor(effectiveFeatureNames);
 
                         classifier.trainAndPredict(
                                 detections,
@@ -946,7 +944,7 @@ public class ClassificationPanel extends VBox {
                                     workers,
                                     classifier,
                                     classifier.getFeatureNames(),
-                                    featureNormalizer,
+                                    null, // raw inference — classifier is raw-only
                                     this,
                                     trainLog);
                         }
@@ -1084,8 +1082,8 @@ public class ClassificationPanel extends VBox {
         List<String> featureNames = classifier.getFeatureNames();
         if (featureNames == null || featureNames.isEmpty()) return;
 
+        // Raw features — importance is reported in the same space the classifier trains on.
         CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames);
-        extractor.setNormalizer(featureNormalizer);
 
         showFeatureImportanceCheckBox.setDisable(true);
         Thread worker = new Thread(
