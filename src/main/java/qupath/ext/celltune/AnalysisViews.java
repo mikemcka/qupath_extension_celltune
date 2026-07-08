@@ -354,9 +354,8 @@ final class AnalysisViews {
      * off the FX thread against the current image's detections.
      *
      * @param classifier the session classifier (must be trained)
-     * @param normalizer the session feature normalizer (may be null)
      */
-    static void showFeatureImportance(QuPathGUI qupath, DualModelClassifier classifier, FeatureNormalizer normalizer) {
+    static void showFeatureImportance(QuPathGUI qupath, DualModelClassifier classifier) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");

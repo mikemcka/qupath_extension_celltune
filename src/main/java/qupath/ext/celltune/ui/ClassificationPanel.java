@@ -49,7 +49,6 @@ public class ClassificationPanel extends VBox {
     private Map<String, String> lastSampledCellImageMap = Map.of();
     private Map<String, List<String>> lastSampledCellAnnotationsMap = Map.of();
     private PopulationSet lastSampledPredictions;
-    private FeatureNormalizer featureNormalizer;
     private List<GroundTruthIO.TrainingRow> importedTrainingRows;
     private List<String> importedTrainingFeatureNames;
 
@@ -410,10 +409,6 @@ public class ClassificationPanel extends VBox {
         // Re-enable the "Training Metrics" and "Feature Importance" buttons if the restored classifier has metrics.
         metricsButton.setDisable(cls == null || !cls.hasTrainValMetrics());
         featureImportanceButton.setDisable(cls == null || !cls.isTrained());
-    }
-
-    public void setFeatureNormalizer(FeatureNormalizer normalizer) {
-        this.featureNormalizer = normalizer;
     }
 
     /**

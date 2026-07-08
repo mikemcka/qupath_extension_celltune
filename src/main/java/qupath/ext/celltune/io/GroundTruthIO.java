@@ -97,14 +97,13 @@ public class GroundTruthIO {
             CellFeatureExtractor extractor,
             String imageName)
             throws IOException {
-        exportCSV(outputPath, cells, labelStore, extractor, imageName, true, true);
+        exportCSV(outputPath, cells, labelStore, extractor, imageName, true);
     }
 
     /**
-     * Export labelled cells with configurable raw/normalised feature columns.
+     * Export labelled cells with configurable raw feature columns.
      *
      * @param includeRaw   include raw feature columns
-     * @param includeNorm  include normalised feature columns (suffixed __norm)
      */
     public static void exportCSV(
             Path outputPath,
@@ -112,12 +111,10 @@ public class GroundTruthIO {
             LabelStore labelStore,
             CellFeatureExtractor extractor,
             String imageName,
-            boolean includeRaw,
-            boolean includeNorm)
+            boolean includeRaw)
             throws IOException {
 
         List<String> featureNames = extractor.getFeatureNames();
-        boolean hasNorm = includeNorm && extractor.getNormalizer() != null;
 
         // Build cellId → PathObject lookup
         Map<String, PathObject> cellById = new LinkedHashMap<>();
@@ -134,16 +131,11 @@ public class GroundTruthIO {
             writer.write("# Exported: " + java.time.LocalDateTime.now());
             writer.newLine();
 
-            // Column header — raw features, then normalized if present
+            // Column header — raw features
             StringBuilder header = new StringBuilder("Image,Label,CentroidX,CentroidY");
             if (includeRaw) {
                 for (String feat : featureNames) {
                     header.append(',').append(feat);
-                }
-            }
-            if (hasNorm) {
-                for (String feat : featureNames) {
-                    header.append(',').append(feat).append("__norm");
                 }
             }
             writer.write(header.toString());
@@ -165,20 +157,12 @@ public class GroundTruthIO {
 
             // Pre-extract features in parallel
             float[][] rawRows = null;
-            float[][] normRows = null;
             if (includeRaw) {
                 rawRows = new float[nLabelled][];
                 float[][] rr = rawRows;
                 IntStream.range(0, nLabelled)
                         .parallel()
                         .forEach(i -> rr[i] = extractor.extractRowRaw(labelledCells.get(i)));
-            }
-            if (hasNorm) {
-                normRows = new float[nLabelled][];
-                float[][] nr = normRows;
-                IntStream.range(0, nLabelled)
-                        .parallel()
-                        .forEach(i -> nr[i] = extractor.extractRow(labelledCells.get(i)));
             }
 
             int exported = 0;
@@ -203,12 +187,6 @@ public class GroundTruthIO {
                 if (includeRaw) {
                     float[] rawFeatures = rawRows[idx];
                     for (float f : rawFeatures) {
-                        row.append(',').append(f);
-                    }
-                }
-                if (hasNorm) {
-                    float[] normFeatures = normRows[idx];
-                    for (float f : normFeatures) {
                         row.append(',').append(f);
                     }
                 }

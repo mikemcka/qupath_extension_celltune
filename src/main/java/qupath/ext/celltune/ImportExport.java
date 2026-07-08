@@ -38,7 +38,6 @@ import qupath.ext.celltune.io.MarkerTableImporter;
 import qupath.ext.celltune.io.ProjectStateManager;
 import qupath.ext.celltune.model.CellFeatureExtractor;
 import qupath.ext.celltune.model.CellTypeTable;
-import qupath.ext.celltune.model.FeatureNormalizer;
 import qupath.ext.celltune.model.LabelStore;
 import qupath.ext.celltune.ui.CellTableExportPane;
 import qupath.ext.celltune.ui.ImageSelectionPane;
@@ -54,7 +53,7 @@ import qupath.lib.projects.ProjectImageEntry;
  * {@code CellTuneExtension} (mirroring the {@code UtilityScripts}/{@code AnalysisViews} moves).
  * <p>
  * The export methods and the two CSV-append helpers are read-only; {@code exportGroundTruth}
- * takes the session state it needs (labels, imported rows, active binary marker, normalizer)
+ * takes the session state it needs (labels, imported rows, active binary marker)
  * as parameters. The two <em>import</em> methods return their result instead of mutating the
  * extension directly — the extension assigns the returned state and refreshes its panel in one
  * place — so this class stays free of session-state side effects.
@@ -67,26 +66,9 @@ final class ImportExport {
 
     private ImportExport() {} // utility class
 
-    /** User-chosen feature columns for ground-truth export. */
-    private record ExportFeatureOptions(boolean includeRaw, boolean includeNorm) {}
-
     /** New session state produced by a ground-truth import, applied back by the caller. */
     record GroundTruthImportResult(
             LabelStore labelStore, List<GroundTruthIO.TrainingRow> importedRows, List<String> importedFeatureNames) {}
-
-    /**
-     * Show a dialog letting the user choose which feature columns to include.
-     * Only shown when a normaliser is active — otherwise raw-only is returned
-     * without prompting.
-     *
-     * @return options, or null if the user cancelled
-     */
-    private static ExportFeatureOptions askExportFeatureOptions(FeatureNormalizer featureNormalizer) {
-        // Ground-truth export is RAW only. The classifier trains/predicts on raw values
-        // (normalisation is a clustering-only concern), so the previous "__norm" columns no
-        // longer reflect what the classifier consumes and are not exported.
-        return new ExportFeatureOptions(true, false);
-    }
 
     static void exportCellTable(QuPathGUI qupath) {
         var imageData = qupath.getImageData();
@@ -379,8 +361,7 @@ final class ImportExport {
             LabelStore labelStore,
             String activeBinaryMarker,
             List<GroundTruthIO.TrainingRow> importedTrainingRows,
-            List<String> importedTrainingFeatureNames,
-            FeatureNormalizer featureNormalizer) {
+            List<String> importedTrainingFeatureNames) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -416,14 +397,10 @@ final class ImportExport {
         File chosen = fc.showSaveDialog(qupath.getStage());
         if (chosen == null) return;
 
-        ExportFeatureOptions opts = askExportFeatureOptions(featureNormalizer);
-        if (opts == null) return;
-
         try {
             CellFeatureExtractor extractor = new CellFeatureExtractor(featureNames); // raw — classifier export
             String imgName = imageData.getServer().getMetadata().getName();
-            GroundTruthIO.exportCSV(
-                    chosen.toPath(), detections, labelStore, extractor, imgName, opts.includeRaw(), opts.includeNorm());
+            GroundTruthIO.exportCSV(chosen.toPath(), detections, labelStore, extractor, imgName);
 
             // Pool labels from every other project image so the export reflects the
             // full training set used (matches the auto-pool behaviour during training).
@@ -432,14 +409,7 @@ final class ImportExport {
             int appendedFromOtherImages = 0;
             if (project != null) {
                 appendedFromOtherImages = appendOtherImageLabelsToCsv(
-                        chosen.toPath(),
-                        project,
-                        imageData,
-                        activeBinaryMarker,
-                        featureNames,
-                        featureNormalizer,
-                        opts.includeRaw(),
-                        opts.includeNorm());
+                        chosen.toPath(), project, imageData, activeBinaryMarker, featureNames, true);
             }
 
             // In binary mode, also append previously-imported training rows so the exported
@@ -452,12 +422,7 @@ final class ImportExport {
                     && importedTrainingFeatureNames != null
                     && !importedTrainingFeatureNames.isEmpty()) {
                 appendedImported = appendImportedRowsToCsv(
-                        chosen.toPath(),
-                        featureNames,
-                        opts.includeRaw(),
-                        opts.includeNorm() && featureNormalizer != null,
-                        importedTrainingFeatureNames,
-                        importedTrainingRows);
+                        chosen.toPath(), featureNames, true, importedTrainingFeatureNames, importedTrainingRows);
             }
 
             String msg = "Exported " + localLabelCount + " labelled cells to " + chosen.getName();
@@ -485,19 +450,15 @@ final class ImportExport {
             Path csvPath,
             List<String> featureNames,
             boolean includeRaw,
-            boolean hasNorm,
             List<String> importedFeatureNames,
             List<GroundTruthIO.TrainingRow> importedRows)
             throws IOException {
         if (importedRows == null || importedRows.isEmpty()) return 0;
 
-        // Build the export column ordering: raw featureNames first (if includeRaw), then
-        // featureNames with __norm suffix (if hasNorm). Mirrors GroundTruthIO.exportCSV.
+        // Build the export column ordering: raw featureNames (if includeRaw).
+        // Mirrors GroundTruthIO.exportCSV.
         List<String> exportCols = new ArrayList<>();
         if (includeRaw) exportCols.addAll(featureNames);
-        if (hasNorm) {
-            for (String f : featureNames) exportCols.add(f + "__norm");
-        }
         if (exportCols.isEmpty()) return 0;
 
         // name -> index lookup into the imported feature vector
@@ -542,13 +503,10 @@ final class ImportExport {
             qupath.lib.images.ImageData<BufferedImage> currentImageData,
             String scope,
             List<String> featureNames,
-            FeatureNormalizer normalizer,
-            boolean includeRaw,
-            boolean includeNorm)
+            boolean includeRaw)
             throws IOException {
         if (project == null) return 0;
-        boolean hasNorm = includeNorm && normalizer != null;
-        if (!includeRaw && !hasNorm) return 0;
+        if (!includeRaw) return 0;
 
         @SuppressWarnings("unchecked")
         var typedProject = (qupath.lib.projects.Project<BufferedImage>) (qupath.lib.projects.Project<?>) project;
@@ -605,10 +563,6 @@ final class ImportExport {
                     if (includeRaw) {
                         float[] raw = extractor.extractRowRaw(cell);
                         for (float v : raw) sb.append(',').append(v);
-                    }
-                    if (hasNorm) {
-                        float[] norm = extractor.extractRow(cell);
-                        for (float v : norm) sb.append(',').append(v);
                     }
                     linesOut.add(sb.toString());
                 }

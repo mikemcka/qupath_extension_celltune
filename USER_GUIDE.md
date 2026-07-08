@@ -22,7 +22,7 @@ Windows and boxes can be expanded or contracted by clicking and dragging corners
 3. [Quick start — binary + composite workflow](#3-quick-start--binary--composite-workflow)
 4. [Setup steps (shared by both workflows)](#4-setup-steps-shared-by-both-workflows)
    - [4.1 Select features](#41-select-features)
-   - [4.2 Normalise features](#42-normalise-features)
+   - [4.2 Clustering normalisation](#42-clustering-normalisation)
    - [4.3 Create classes & Class Control](#43-create-classes--class-control)
    - [4.4 Import a marker table (auto channel switching)](#44-import-a-marker-table-auto-channel-switching)
 5. [Multi-class workflow in detail](#5-multi-class-workflow-in-detail)
@@ -85,7 +85,7 @@ Disable the extension at any time from **Edit → Preferences → CellTune Class
 Build one classifier that distinguishes any number of cell types (e.g. T-cell / B-cell / Macrophage / Tumour / Stroma).
 
 ```
-Select Features  →  Normalise Features  →  Create classes (Class Control)
+Select Features  →  Clustering Normalisation  →  Create classes (Class Control)
        ↓
 Import Marker Table (optional, for auto channel switching)
        ↓
@@ -115,7 +115,7 @@ Detail per step is in §[4](#4-setup-steps-shared-by-both-workflows), §[5](#5-m
 Build one **positive/negative classifier per marker** (CD3, CD4, CD8, CD20…), then combine them into composite cell types (`CD3+:CD4+:CD8-`, etc.).
 
 ```
-Select Features  →  Normalise Features
+Select Features  →  Clustering Normalisation
        ↓
 Binary Classifiers... → Create "CD3" → Open (enters Binary Mode)
        ↓
@@ -178,9 +178,9 @@ Pruning takes milliseconds and **never touches the measurements on disk** — it
 
 Your selection is saved in `<project>/celltune/classifier-state.json` and persists across QuPath sessions.
 
-### 4.2 Normalise features
+### 4.2 Clustering normalisation
 
-**Menu:** *Extensions → CellTune Classifier → Normalise Features*
+**Menu:** *Extensions → CellTune Classifier → Clustering Normalisation*
 
 Per-feature transforms for the **clustering / scatter-plot / gating** workflows. **The classifier always trains and predicts on raw values** — normalisation configured here does not touch the phenotyping model (tree models are invariant to it anyway). Same prefix/search/select-all UI as Select Features, plus:
 
@@ -191,7 +191,7 @@ Per-feature transforms for the **clustering / scatter-plot / gating** workflows.
     - **The ideal cofactor tracks your data's intensity scale** — pick it near the background/signal boundary. Quick check: if almost every cell's raw value is *below* the cofactor, nearly all cells sit in the near-linear part of arcsinh and the transform is ≈ a no-op (e.g. cofactor 1 on MIBI means that mostly fall below 1, or 150 on dim fluorescence markers). If almost every value is *far above* it, everything is log-compressed and the low-end detail is lost. Aim for the value where the background collapses but the positive population stays resolved, and eyeball the transformed histogram to confirm.
   - **sqrt** — `sqrt(max(0, x))`. Simple variance stabilisation, no cofactor.
 
-![Normalise features](doc_images/normalise_features.png)
+![Clustering normalisation](doc_images/normalise_features.png)
 
 You pick **which** features to transform and **one** transform/cofactor applied to all of them. Untouched features stay raw.
 
@@ -624,7 +624,7 @@ Measurements for Scatter Plot* dialog). The window then computes an initial
 embedding on a background thread.
 
 > Clustering applies any **feature normalisation** you've configured
-> (§[4.2](#42-normalise-features)) — this is clustering-only (the classifier uses raw
+> (§[4.2](#42-clustering-normalisation)) — this is clustering-only (the classifier uses raw
 > values) — then z-scores each marker over the active cells. The normalizer is captured
 > when the window opens; reopen the plot after changing it.
 
@@ -795,11 +795,11 @@ Leiden — §[11.6](#116-clustering-method-k-means-vs-leiden)), writes the mappe
 classes, and **saves each image**, with progress in the status bar.
 
 > **Measurement scaling & batch effects.** Clustering applies CellTune's feature
-> normalisation (§[4.2](#42-normalise-features)) — arcsinh / sqrt, a **clustering-only**
+> normalisation (§[4.2](#42-clustering-normalisation)) — arcsinh / sqrt, a **clustering-only**
 > step (the classifier uses raw values) — then z-scores each marker over the active cells
 > at fit time. So if you've configured normalisation, it shapes the clusters and
 > the colour-by-marker view too. (The normalizer is captured when the window
-> opens; change it via *Normalise Features* and reopen the plot to pick it up.)
+> opens; change it via *Clustering Normalisation* and reopen the plot to pick it up.)
 
 **Leiden cohort modes: "Cluster all cells" vs "Transfer from sample"**
 
@@ -1119,7 +1119,7 @@ All under *Extensions → CellTune Classifier*.
 | Composite Classification... | Project + ≥1 trained binary | Apply trained binary classifiers and assign composite labels. |
 | Class Control... | Project | Add/Delete/Merge/Undo Merge classes. |
 | Select Features... | Project | Pick which measurement columns are used for training. |
-| Normalise Features | Project | Per-feature arcsinh/sqrt with shared cofactor. |
+| Clustering Normalisation | Project | Per-feature arcsinh/sqrt with shared cofactor (clustering-only; classifier uses raw). |
 | Project Prediction Summary... | Project | Cohort QC, anomaly scoring, per-image flags. |
 | Image Pixel Prescreen... | Project | Cells-free whole-image QC: per-channel pixel statistics on a low-res pyramid level, cohort z-scores, verdicts/flags (background-heavy, saturated, weak signal, intensity outlier), CSV export. See §[17](#17-image-pixel-prescreen-whole-image-qc-no-cells-needed). |
 | Intensity Heatmaps... | Open image with detections | Phenotype × marker mean-intensity heatmap (z-score coloured), per-image / project-combined, PNG/CSV export. See §[9](#9-intensity-heatmaps). |

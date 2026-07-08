@@ -54,10 +54,10 @@ import qupath.lib.projects.ProjectImageEntry;
  * {@link DoubleConsumer} — it mutates no measurements or normalizer state.
  *
  * <p><b>Ownership (critical correction #2 / D-05).</b> The window is owned by the
- * <em>NormalizationPane's own stage</em> (passed in as {@code ownerStage}), NOT the QuPath main
- * stage. The Normalise pane is {@code APPLICATION_MODAL}; a window owned by the QuPath main stage
+ * <em>ClusteringNormalizationPane's own stage</em> (passed in as {@code ownerStage}), NOT the QuPath main
+ * stage. The Clustering normalisation pane is {@code APPLICATION_MODAL}; a window owned by the QuPath main stage
  * would be blocked by it, whereas a {@code Modality.NONE} child of the modal owner stays
- * interactive. Plan 17-04 wires the real owner via {@code normalizationPane.getStage()}.
+ * interactive. Plan 17-04 wires the real owner via {@code clusteringNormalizationPane.getStage()}.
  *
  * <p>All background work marshals every scene-graph touch through {@link Platform#runLater} — the
  * worker thread never touches nodes directly (CLAUDE.md UI-thread safety).
@@ -114,7 +114,7 @@ public class CofactorSuggestionDialog {
     /**
      * Create the cofactor-suggestion window.
      *
-     * @param ownerStage          the NormalizationPane's OWN stage (correction #2) — NOT the QuPath
+     * @param ownerStage          the ClusteringNormalizationPane's OWN stage (correction #2) — NOT the QuPath
      *                            main stage; the window is owned by it and non-modal
      * @param qupath              QuPath handle for {@code getProject()} / {@code getImageData()}
      * @param allFeatureNames     the full measurement list from the pane (the pick-from universe)

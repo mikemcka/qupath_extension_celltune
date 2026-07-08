@@ -269,7 +269,7 @@ public class FeatureSelectionPane {
     /**
      * Extract common prefixes (text before the first {@code ": "}) from feature
      * names, sorted case-insensitively. Retained as a shared utility for other
-     * panes ({@code CellTableExportPane}, {@code NormalizationPane}) that build
+     * panes ({@code CellTableExportPane}, {@code ClusteringNormalizationPane}) that build
      * their own prefix dropdowns.
      */
     static List<String> discoverPrefixes(List<String> featureNames) {

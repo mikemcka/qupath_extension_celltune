@@ -36,12 +36,12 @@ import qupath.ext.celltune.model.PopulationSet;
 import qupath.ext.celltune.ui.ChannelSelector;
 import qupath.ext.celltune.ui.ClassControlDialog;
 import qupath.ext.celltune.ui.ClassificationPanel;
+import qupath.ext.celltune.ui.ClusteringNormalizationPane;
 import qupath.ext.celltune.ui.CompositeClassificationDialog;
 import qupath.ext.celltune.ui.ConfusionMatrixView;
 import qupath.ext.celltune.ui.FeatureSelectionPane;
 import qupath.ext.celltune.ui.ImageSelectionPane;
 import qupath.ext.celltune.ui.ManualLabelToolbar;
-import qupath.ext.celltune.ui.NormalizationPane;
 import qupath.ext.celltune.ui.ReviewController;
 import qupath.ext.celltune.ui.ReviewToolbar;
 import qupath.ext.celltune.ui.TrainingTileExtractor;
@@ -92,7 +92,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
     /** User-selected feature subset; null means use all features. */
     private List<String> selectedFeatures;
     /** Per-feature normalization config; null means no transforms. */
-    private FeatureNormalizer featureNormalizer;
+    private FeatureNormalizer clusteringNormalizer;
     /** Per-class agreement rates from the last confusion matrix. */
     private double[] lastAgreementRates;
     /** Cell IDs sampled for review. */
@@ -413,7 +413,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
                         FeatureNormalizer norm = new FeatureNormalizer();
                         if (state.featureTransforms != null) norm.fromTransformMap(state.featureTransforms);
                         if (state.arcsinhCofactor != null) norm.setArcsinhCofactor(state.arcsinhCofactor);
-                        this.featureNormalizer = norm;
+                        this.clusteringNormalizer = norm;
                     }
                     // Restore trained classifier from saved model bytes
                     if (classifier == null || !classifier.isTrained()) {
@@ -458,7 +458,6 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         classificationPanel.setLabelStore(labelStore);
         classificationPanel.setClassifier(classifier);
         classificationPanel.setSelectedFeatures(selectedFeatures);
-        classificationPanel.setFeatureNormalizer(featureNormalizer);
         classificationPanel.setCellTypeTable(cellTypeTable);
         classificationPanel.setPredAll(predAll);
         classificationPanel.setLastAgreementRates(lastAgreementRates);
@@ -733,7 +732,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
     }
 
     void showScatterPlot(QuPathGUI qupath) {
-        AnalysisViews.showScatterPlot(qupath, predAll, featureNormalizer, () -> showClassControl(qupath));
+        AnalysisViews.showScatterPlot(qupath, predAll, clusteringNormalizer, () -> showClassControl(qupath));
     }
 
     void showCellularNeighborhoods(QuPathGUI qupath) {
@@ -937,7 +936,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         this.classifier = null;
         this.predAll = null;
         this.selectedFeatures = null;
-        this.featureNormalizer = null;
+        this.clusteringNormalizer = null;
         this.lastAgreementRates = null;
         this.lastSampledCellIds = null;
         this.lastSampledCellImageMap = Map.of();
@@ -975,7 +974,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
     }
 
     private void showFeatureImportance(QuPathGUI qupath) {
-        AnalysisViews.showFeatureImportance(qupath, classifier, featureNormalizer);
+        AnalysisViews.showFeatureImportance(qupath, classifier);
     }
 
     /**
@@ -1562,12 +1561,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
 
     void exportGroundTruth(QuPathGUI qupath) {
         ImportExport.exportGroundTruth(
-                qupath,
-                labelStore,
-                activeBinaryMarker,
-                importedTrainingRows,
-                importedTrainingFeatureNames,
-                featureNormalizer);
+                qupath, labelStore, activeBinaryMarker, importedTrainingRows, importedTrainingFeatureNames);
     }
 
     void importGroundTruth(QuPathGUI qupath) {
@@ -1668,7 +1662,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
 
     // ── Normalization ──────────────────────────────────────────────────────────
 
-    void showNormalization(QuPathGUI qupath) {
+    void showClusteringNormalisation(QuPathGUI qupath) {
         var imageData = qupath.getImageData();
         if (imageData == null) {
             Dialogs.showErrorMessage(EXTENSION_NAME, "No image is open.");
@@ -1694,18 +1688,18 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
             return;
         }
 
-        var pane = new NormalizationPane(qupath, qupath.getStage(), featureNames, featureNormalizer);
+        var pane = new ClusteringNormalizationPane(qupath, qupath.getStage(), featureNames, clusteringNormalizer);
         FeatureNormalizer result = pane.showAndWait();
         if (result != null) {
             if (result.hasTransforms()) {
-                featureNormalizer = result;
+                clusteringNormalizer = result;
                 long count = result.getAllTransforms().size();
                 Dialogs.showInfoNotification(
                         EXTENSION_NAME,
                         count + " feature(s) will be normalised for clustering (cofactor=" + result.getArcsinhCofactor()
                                 + "). The classifier uses raw values.");
             } else {
-                featureNormalizer = null;
+                clusteringNormalizer = null;
                 Dialogs.showInfoNotification(EXTENSION_NAME, "Feature normalization cleared.");
             }
         }

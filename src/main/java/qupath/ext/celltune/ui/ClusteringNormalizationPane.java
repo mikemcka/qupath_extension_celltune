@@ -29,7 +29,7 @@ import qupath.lib.gui.QuPathGUI;
  * </ul>
  * The ideal value tracks the measurement intensity scale — see the User Guide (§4.2).
  */
-public class NormalizationPane {
+public class ClusteringNormalizationPane {
 
     private final Stage stage;
     private final QuPathGUI qupath;
@@ -56,7 +56,8 @@ public class NormalizationPane {
      * @param featureNames all available feature names
      * @param existing     existing normalizer to pre-populate from (may be null)
      */
-    public NormalizationPane(QuPathGUI qupath, Stage owner, List<String> featureNames, FeatureNormalizer existing) {
+    public ClusteringNormalizationPane(
+            QuPathGUI qupath, Stage owner, List<String> featureNames, FeatureNormalizer existing) {
         stage = new Stage();
         this.qupath = qupath;
         this.featureNames = featureNames;
@@ -186,7 +187,7 @@ public class NormalizationPane {
 
         stage.initOwner(owner);
         stage.initModality(Modality.APPLICATION_MODAL);
-        stage.setTitle("Normalise Features");
+        stage.setTitle("Clustering normalisation");
         stage.setScene(new Scene(root, 600, 550));
         stage.setMinWidth(400);
         stage.setMinHeight(350);
@@ -255,7 +256,7 @@ public class NormalizationPane {
                     double v = Math.max(0.01, Math.min(10000.0, global));
                     cofactorSpinner.getValueFactory().setValue(v);
                 });
-        dialog.show(); // non-blocking; the Normalise pane stays open (D-05)
+        dialog.show(); // non-blocking; the Clustering normalisation pane stays open (D-05)
     }
 
     private void updateFilter() {
