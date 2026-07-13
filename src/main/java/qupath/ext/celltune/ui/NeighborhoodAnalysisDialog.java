@@ -96,17 +96,117 @@ public class NeighborhoodAnalysisDialog {
     }
 
     /**
-     * Distinct qualitative palette (Glasbey/Tab-style) for categorical CN colouring —
-     * adjacent CNs are assigned maximally-contrasting entries so regions next to each
-     * other are easy to tell apart (continuous ramps like Viridis wash them together).
+     * Distinct qualitative palette (Glasbey/Tab-style) as originally curated for <em>light</em>
+     * backgrounds — it includes near-black entries (pure black, dark navy) that are invisible on
+     * QuPath's black viewer. {@link #CATEGORICAL} below is derived from this by lifting any too-dark
+     * entry, so do not use this array directly for colouring; use {@link #CATEGORICAL}.
      */
-    private static final Color[] CATEGORICAL = {
+    private static final Color[] CATEGORICAL_RAW = {
         Color.web("#e6194b"), Color.web("#3cb44b"), Color.web("#4363d8"), Color.web("#f58231"),
         Color.web("#911eb4"), Color.web("#42d4f4"), Color.web("#f032e6"), Color.web("#bfef45"),
         Color.web("#fabed4"), Color.web("#469990"), Color.web("#dcbeff"), Color.web("#9a6324"),
         Color.web("#800000"), Color.web("#aaffc3"), Color.web("#808000"), Color.web("#000075"),
         Color.web("#a9a9a9"), Color.web("#ffe119"), Color.web("#000000"), Color.web("#ffd8b1"),
     };
+
+    /**
+     * Minimum WCAG relative luminance a categorical colour must have so it clears roughly 3:1
+     * contrast against a pure-black viewer background ({@code (L+0.05)/0.05 ≈ 3} at {@code L = 0.10}).
+     */
+    static final double MIN_LUMINANCE_ON_BLACK = 0.10;
+
+    /**
+     * Distinct qualitative palette for categorical CN colouring — {@link #CATEGORICAL_RAW} with any
+     * entry too dark to see on QuPath's black viewer lifted toward white until it clears
+     * {@link #MIN_LUMINANCE_ON_BLACK}. Adjacent CNs are assigned maximally-contrasting entries so
+     * regions next to each other are easy to tell apart (continuous ramps like Viridis wash them
+     * together). Because the lift only ever <em>lightens</em> already-dark colours (black→grey,
+     * navy→periwinkle), the entries stay visible on the light-background heatmap colour key too, so
+     * the viewer overlay and the heatmap legend show the same colour for each CN.
+     */
+    private static final Color[] CATEGORICAL = liftForDarkBackground(CATEGORICAL_RAW);
+
+    /** Copy of {@code palette} with each entry passed through {@link #ensureVisibleOnBlack}. */
+    private static Color[] liftForDarkBackground(Color[] palette) {
+        Color[] out = new Color[palette.length];
+        for (int i = 0; i < palette.length; i++) {
+            out[i] = ensureVisibleOnBlack(palette[i]);
+        }
+        return out;
+    }
+
+    /**
+     * Return {@code c} unchanged if it already clears {@link #MIN_LUMINANCE_ON_BLACK}, otherwise the
+     * colour blended toward white just far enough to reach the floor. Blending toward white raises
+     * luminance monotonically, so a bisection converges; the hue is preserved as far as possible
+     * (pure black has no hue and becomes grey).
+     */
+    private static Color ensureVisibleOnBlack(Color c) {
+        if (relativeLuminance(c) >= MIN_LUMINANCE_ON_BLACK) {
+            return c;
+        }
+        double lo = 0.0;
+        double hi = 1.0;
+        for (int it = 0; it < 24; it++) {
+            double mid = (lo + hi) / 2.0;
+            if (relativeLuminance(c.interpolate(Color.WHITE, mid)) >= MIN_LUMINANCE_ON_BLACK) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        return c.interpolate(Color.WHITE, hi);
+    }
+
+    /**
+     * WCAG relative luminance of {@code c} in {@code [0, 1]} (sRGB coefficients), measured on the
+     * 8-bit-quantized channels the overlay actually paints — so {@link #ensureVisibleOnBlack} lifts
+     * until the <em>displayed</em> colour clears the floor, not just its floating-point ideal.
+     */
+    private static double relativeLuminance(Color c) {
+        return 0.2126 * linearizeChannel(quantizeChannel(c.getRed()))
+                + 0.7152 * linearizeChannel(quantizeChannel(c.getGreen()))
+                + 0.0722 * linearizeChannel(quantizeChannel(c.getBlue()));
+    }
+
+    /** Snap a channel ({@code [0, 1]}) to the 8-bit grid the mapper paints on. */
+    private static double quantizeChannel(double channel) {
+        return Math.round(channel * 255) / 255.0;
+    }
+
+    /** Inverse-gamma a single sRGB channel ({@code [0, 1]}) to linear light for luminance. */
+    private static double linearizeChannel(double channel) {
+        return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+    }
+
+    /** Pack a JavaFX colour to {@code 0xRRGGBB} — the same rounding {@code buildMapperFromColors} paints with. */
+    private static int packRgb(Color c) {
+        int r = (int) Math.round(c.getRed() * 255);
+        int g = (int) Math.round(c.getGreen() * 255);
+        int b = (int) Math.round(c.getBlue() * 255);
+        return (r << 16) | (g << 8) | b;
+    }
+
+    /**
+     * The displayed (lifted) categorical palette as {@code 0xRRGGBB} ints — a JavaFX-free view for
+     * {@code CategoricalPaletteTest}, whose classpath has no {@code javafx.scene.paint.Color}.
+     */
+    static int[] categoricalRgb() {
+        int[] out = new int[CATEGORICAL.length];
+        for (int i = 0; i < CATEGORICAL.length; i++) {
+            out[i] = packRgb(CATEGORICAL[i]);
+        }
+        return out;
+    }
+
+    /** The raw (pre-lift) palette as {@code 0xRRGGBB} ints — JavaFX-free, for {@code CategoricalPaletteTest}. */
+    static int[] categoricalRawRgb() {
+        int[] out = new int[CATEGORICAL_RAW.length];
+        for (int i = 0; i < CATEGORICAL_RAW.length; i++) {
+            out[i] = packRgb(CATEGORICAL_RAW[i]);
+        }
+        return out;
+    }
 
     private final QuPathGUI qupath;
     private final Stage stage;
