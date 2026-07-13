@@ -71,12 +71,6 @@ The extension JAR bundles XGBoost4J, LightGBM4J, and a pure-Java Random Forest �
 10. **Retrain** — after reviewing, click Train again. The confusion matrix should improve. Repeat until satisfied.
 11. **Export** — *Export Cell Table* opens a column picker (same search/prefix/select-all controls as *Select Features*) so you can choose which measurement columns to export, with an optional tick-box to include cell polygons in micron or pixel coordinates, then saves all cells as CSV. *Export AnnData* exports AnnData-compatible CSV with a Python H5AD conversion script. *Export Ground Truth* saves labelled cells for transfer to other images.
 
-After running predictions, use *Extensions > CellTune Classifier > Project Prediction Summary...* to compare per-image agreement/disagreement counts, jump to a selected image, or export the summary as CSV.
-
-Use *Extensions > CellTune Classifier > Intensity Heatmaps...* to view a phenotype × marker mean-intensity heatmap (mean whole-cell intensity per predicted class, coloured by per-marker z-score across phenotypes). Switch between the current image, any individual project image, or a project-combined view, and export to PNG or CSV.
-
-Use *Extensions > CellTune Classifier > Image Pixel Prescreen...* for a **cells-free whole-image QC pass** you can run at the very start of a project — before any segmentation exists. It reads every image off a low-resolution pyramid level (in parallel), computes per-channel pixel statistics, and contextualises each slide against the cohort with robust z-scores, flagging **background-heavy**, **saturated**, **weak-signal**, and **intensity-outlier** images (the latter signal-gated, to surface slides whose brightness profile diverges from the cohort and may challenge ML). A per-channel **focus** (Laplacian variance) sharpness measure is surfaced for sorting. Sort by score, jump to any image, and export the full table as CSV. See [USER_GUIDE.md §17](USER_GUIDE.md#17-image-pixel-prescreen-whole-image-qc-no-cells-needed).
-
 ### Marker Table Format For Automated Channel Switching
 
 A simple CSV with up to 5 marker columns. Trailing columns may be left blank.
@@ -115,17 +109,6 @@ Source lives under `src/main/java/qupath/ext/celltune/`, organised into `model/`
 | ML model 3 | Random Forest (pure Java, no external dependency) |
 | UI framework | JavaFX (bundled with QuPath) |
 | Serialisation | JSON (Gson, bundled with QuPath) |
-
-
-## Feature Normalization
-
-Optional per-feature **arcsinh** (`arcsinh(x / cofactor)`) or **sqrt** transforms for the **scale-dependent** workflows — scatter-plot clustering (k-means/Leiden), PCA, and gating — so no bright marker dominates Euclidean distance. The tree classifiers are invariant to a monotone rescale and always train/predict on **raw** values, and the transform is applied **globally**, so it does **not** correct per-slide batch differences.
-
-See **[User Guide §4.2 — Clustering normalisation](USER_GUIDE.md#42-clustering-normalisation)** for cofactor guidance (≈25–50 for raw fluorescence panels, 0.05 for MIBI) and the full z-score → conditional-PCA pipeline.
-
-## TODO / Future Exploration
-- tab pfn model wrapper
-- chatbot integration through mcp
 
 ## License
 
