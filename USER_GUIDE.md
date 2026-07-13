@@ -1,6 +1,6 @@
-# CellTune User Guide
+# User Guide
 
-A human-in-the-loop cell classifier for QuPath 0.7. CellTune trains two ML models in parallel (XGBoost + LightGBM by default) and uses their **disagreement** to surface the cells that need your attention. Everything runs in-process.
+A human-in-the-loop cell classifier for QuPath 0.7. The extension trains two ML models in parallel (XGBoost + LightGBM by default) and uses their **disagreement** to surface the cells that need your attention. Everything runs in-process.
 
 Please note that function speed is dependent on hardware and size of project during analysis. Windows and tasks may take a moment to appear or start running especially with larger projects and images, **please be patient**.
 
@@ -145,7 +145,7 @@ Detail per step is in §[6](#6-binary--composite-workflow-in-detail).
 
 **Menu:** *Extensions → CellTune Classifier → Select Features...*
 
-QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000 measurement columns per cell. CellTune lets you pick a subset for training; the rest are ignored.
+QuPath cell-detection panels (COMET, MIBI, IMC, CODEX) often produce 1000–2000 measurement columns per cell. The extension lets you pick a subset for training; the rest are ignored.
 
 - **Search** box — case-insensitive substring filter (matching groups auto-expand).
 - **Grouped checkbox tree** — features are bucketed into collapsible groups (below); tick a group's parent box to select/clear every feature in it at once.
@@ -276,7 +276,7 @@ Click **Manual Label Mode** in the sidebar. A floating toolbar appears:
 - Up to 12 quick-access class buttons appear inline; the rest live under **All Classes ▼**.
 - **Auto-advance to next detection** — when ticked, assigning a label automatically jumps to the next cell.
 
-**How many to label?** Aim for **at least 20–30 cells per class** before your first training run. CellTune will refuse to train with fewer than 10 labelled cells total. You can — and should — add more after each review cycle.
+**How many to label?** Aim for **at least 20–30 cells per class** before your first training run. The extension will refuse to train with fewer than 10 labelled cells total. You can — and should — add more after each review cycle.
 
 > The **Model 1** / **Model 2** buttons only appear once you've trained at least once. They let you accept a prediction with one click. Background colour: blue = M1, pink = M2.
 
@@ -327,7 +327,7 @@ The defaults are tuned for typical multiplex panels. Adjust as follows:
 
 Defaults work for ~90% of cases. Switch to `SMOTE` alone if Tomek is removing too much real signal; switch to `ADASYN` if a minority class lives in a hard region of feature space.
 
-**Models 1 & 2.** Default pair is **XGBoost + LightGBM**. Random Forest is also available. Keep the two model types **different** — that's the whole point of dual-model disagreement. Auto-tune runs independently per model.
+**Models 1 & 2.** Default pair is **XGBoost + LightGBM**. Random Forest is also available. Keep the two model types **different** — that's the whole point of dual-model disagreement. Auto-tune runs independently per model. Both boosted models (XGBoost, LightGBM) attempt **GPU (CUDA)** training automatically and fall back to CPU if no compatible GPU is present; the training progress dialog reports the device actually used.
 
 **Rounds / Max depth.** Default 200 rounds, depth 6. Together with early stopping, this is almost always enough. Increase rounds to 500 if early stopping is firing very late.
 
@@ -457,7 +457,7 @@ Repeat for every marker you want in the composite.
 
 **Button:** **Enter Review Mode** in the sidebar.
 
-Review mode samples the **disagreement** cells (where Model 1 ≠ Model 2) using a 5-tier strategy so you don't waste labelling effort on cells that are easy or already represented:
+Review mode samples the **disagreement** cells (where Model 1 ≠ Model 2) using a 5-tier strategy so you don't waste labelling effort on cells that are easy or already represented. The tiers run in order and each **claims** the cells it selects, so a later tier can never re-pick a cell an earlier one already took (no double-counting):
 
 | Tier | Goal | Default budget @ 256 cells |
 |---|---|---|
@@ -482,8 +482,13 @@ You can Ctrl/Cmd-click several cells at once to label a group together; the tool
 - **XGB: ClassName (89%)** — accept Model 1's top prediction; blue background.
 - **LGB: ClassName (76%)** — accept Model 2's top prediction; pink background.
 - **Both: ClassName (XX%)** — single combined button if M1 and M2 agree.
+- **Avg: ClassName (XX%)** — appears only when the two models' **averaged** probability points to a class that is neither model's own top pick; accepts that averaged prediction.
 - **All Classes ▼** — pick a different class if both models are wrong.
 - **Done** — exit; labels are merged back into the label store and saved per-image to `<project>/celltune/image-labels/`.
+
+The toolbar header also shows the **name(s) of the annotation region(s)** the current cell falls inside, in bold dark blue (e.g. `◆ Tumour, Stroma`), so you keep the spatial context without leaving review.
+
+Switching to a **different image** while a classifier is trained **auto-applies** its predictions to that image first, so you can review it immediately without a separate predict step.
 
 If you imported a marker table (§4.4), tick **Auto-switch channels** and the viewer will display only the markers relevant to whatever class the current cell was predicted as.
 
@@ -585,7 +590,7 @@ It can generate three independent measurement families (tick any combination):
 |---|---|---|
 | **Detection-to-annotation signed distances** | `Signed distance to annotation <class> <unit>` — negative inside the annotation, positive outside. | QuPath `DistanceTools.detectionToAnnotationDistancesSigned` |
 | **Cross-class centroid distances** | `Distance to detection <class> <unit>` — nearest centroid-to-centroid distance to a cell of every *other* class. | QuPath `DistanceTools.detectionCentroidDistances` |
-| **Same-class nearest-neighbour distances (excludes self)** | `Distance to other <class> <unit>` — distance to the nearest *other* cell of the **same** class. | CellTune (spatially indexed; see below) |
+| **Same-class nearest-neighbour distances (excludes self)** | `Distance to other <class> <unit>` — distance to the nearest *other* cell of the **same** class. | The extension (spatially indexed; see below) |
 
 `<unit>` is `µm` when a pixel size is available (from calibration or the override below), otherwise `px`.
 
@@ -596,7 +601,7 @@ It can generate three independent measurement families (tick any combination):
   - Leave **blank** to use each image's own existing calibration.
   - Enter a value to override calibration for *every* selected image so results come out in microns.
   - **Persist this pixel size to each image's calibration on save** — when ticked, the override is written into each image's calibration metadata (so future measurements also use this scale). When unticked, the override is reverted after the run.
-- **Skip images where all selected measurements already exist** (default on) — before computing, CellTune scans every cell. If all cells already carry every measurement the selected computations would produce, the image is skipped entirely (no recompute, no re-save). This makes interrupted runs cheap to resume. It is **all-or-nothing per image**: if even one selected measurement is missing, the whole image is recomputed, guaranteeing internally consistent results. Untick to force recomputation (e.g. after changing classes).
+- **Skip images where all selected measurements already exist** (default on) — before computing, the extension scans every cell. If all cells already carry every measurement the selected computations would produce, the image is skipped entirely (no recompute, no re-save). This makes interrupted runs cheap to resume. It is **all-or-nothing per image**: if even one selected measurement is missing, the whole image is recomputed, guaranteeing internally consistent results. Untick to force recomputation (e.g. after changing classes).
 - **Parallel image workers** (1–N cores) — how many images are processed at the same time.
   - The heavy distance maths for a *single* image already spreads across all CPU cores, so raising this mostly overlaps disk load/save (I/O) with compute.
   - **Many small images:** higher worker counts can speed up the batch.
@@ -629,7 +634,7 @@ Classes with only a single cell are reported as `Skipping '<class>' (n=1)` for t
 k-means or, optionally, graph-based Leiden clustering (§[11.6](#116-clustering-method-k-means-vs-leiden))
 — on their marker measurements and projected into a 2D embedding so you can see,
 label, and sub-cluster populations. This is independent of the trained
-classifier — it writes to QuPath classifications, not CellTune training labels.
+classifier — it writes to QuPath classifications, not the extension's training labels.
 
 When you open it you first pick which measurements to embed (a *Select
 Measurements for Scatter Plot* dialog). The window then computes an initial
@@ -730,7 +735,7 @@ editable — typing a new name creates that class on assign.)
   the mapping is streamed and saved across every selected image.
 
 Either way this replaces any existing class on the mapped cells; it does **not**
-touch CellTune ground-truth training labels.
+touch the extension's ground-truth training labels.
 
 ### 11.4 Cluster-within-clusters (hierarchical gating)
 
@@ -752,7 +757,7 @@ Repeat to go deeper. The status bar reports the active scope and marker count,
 e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
 
 > **Native libraries / `--add-opens`.** PCA and UMAP use native math libraries
-> (OpenBLAS / ARPACK via JavaCPP). CellTune opens the required JVM module access
+> (OpenBLAS / ARPACK via JavaCPP). The extension opens the required JVM module access
 > automatically at startup, so no launch flags are normally needed. If that ever
 > fails on a locked-down JVM, the plot falls back to PCA and the status bar
 > suggests launching QuPath with
@@ -761,7 +766,7 @@ e.g. *"…12,840 cells in class "Immune" · 7/24 markers"*.
 ### 11.5 Project-wide clustering across images
 
 To cluster a **whole cohort consistently**, flip the **Scope** toggle to
-**Project**. CellTune fits **one** model on a sample pooled across the
+**Project**. The extension fits **one** model on a sample pooled across the
 images you choose, then (when you assign) maps *every* cell in *every* selected
 image to that same cohort clustering — so cluster 3 means the same phenotype in
 every image (unlike clustering each image separately, which gives non-comparable
@@ -775,7 +780,7 @@ transfer against the labelled fitted sample — see §[11.6](#116-clustering-met
 
 1. Click **Project**. An image picker opens — choose which project images to
    sample (defaults to all). Cancel to stay on the current image.
-2. CellTune streams each image and pools a bounded random sample (the **Sample:**
+2. The extension streams each image and pools a bounded random sample (the **Sample:**
    spinner, default 50,000, drawn evenly per image), then fits k-means and draws
    the plot. The status bar reads e.g. *"Project sample (8 images)"*.
 
@@ -801,12 +806,12 @@ highlights on the plot only (§11.2). Everything else applies:
 
 Click **Assign Clusters…**. The shared assignment dialog (§11.3) shows the
 per-cluster mean marker heatmap and a class dropdown per cluster. On confirm,
-CellTune streams each selected image, assigns all matching cells to their cluster
+The extension streams each selected image, assigns all matching cells to their cluster
 (nearest centroid for k-means; kNN label transfer against the fitted sample for
 Leiden — §[11.6](#116-clustering-method-k-means-vs-leiden)), writes the mapped
 classes, and **saves each image**, with progress in the status bar.
 
-> **Measurement scaling & batch effects.** Clustering applies CellTune's feature
+> **Measurement scaling & batch effects.** Clustering applies the extension's feature
 > normalisation (§[4.2](#42-clustering-normalisation)) — arcsinh / sqrt, a **clustering-only**
 > step (the classifier uses raw values) — then z-scores each marker over the active cells
 > at fit time. So if you've configured normalisation, it shapes the clusters and
@@ -834,7 +839,7 @@ Method selector (hidden for k-means, and hidden in current-image scope):
 Clicking **Assign Clusters…** / **By cluster (all images)** with **Cluster all
 cells** selected runs the two-pass all-cells driver instead of the transfer path:
 
-- **Soft cell-count ceiling.** Before pooling starts, CellTune does a quick
+- **Soft cell-count ceiling.** Before pooling starts, the extension does a quick
   count-only pass over the selected images to estimate the total pooled cell
   count. If that estimate is above a configurable ceiling (50,000,000 cells by
   default), an extra confirm dialog warns you before the run begins — it warns,
@@ -868,7 +873,7 @@ only matters if you happen to hit the same recall gate on a single image, in
 which case the status bar reports it and asks you to try more cells or different
 markers.
 
-> **Fidelity vs stock scanpy.** CellTune's Leiden clustering (both cohort modes
+> **Fidelity vs stock scanpy.** The extension's Leiden clustering (both cohort modes
 > and the single-image path) is a close, but not bit-identical, match to running
 > `sc.tl.leiden` in Python. Two remaining documented gaps (a third — PCA — is now
 > implemented, see below):
@@ -878,7 +883,7 @@ markers.
 >    (RBConfiguration). The `Resolution` control behaves like the familiar
 >    scanpy/leidenalg knob (association-strength normalisation keeps it on the
 >    same rough scale), but is not numerically identical to a modularity run.
-> 2. **Edge weighting** — CellTune weights the kNN graph by **Jaccard
+> 2. **Edge weighting** — the extension weights the kNN graph by **Jaccard
 >    similarity of shared nearest neighbours (SNN)**, not scanpy's **UMAP
 >    fuzzy-simplicial-set connectivities**.
 >
@@ -929,7 +934,7 @@ both, because both ultimately produce the same per-cell cluster label array.
   similarly sized, and you must pick `k` up front.
 - **Leiden** is graph-based community detection — the same family of algorithm
   used by scanpy, scimap, and SPACEc for single-cell / multiplex-imaging
-  phenotyping (it traces back to PhenoGraph). Instead of a fixed `k`, CellTune
+  phenotyping (it traces back to PhenoGraph). Instead of a fixed `k`, the extension
   builds a nearest-neighbour graph over the z-scored marker matrix, weights edges
   by neighbourhood similarity (Jaccard), and runs the Leiden algorithm — the
   **number of clusters is decided by the data**, not chosen in advance. This finds
@@ -986,7 +991,7 @@ populations.
 > upstream if intensity scales differ a lot, or interpret with that in mind.
 
 > **This writes classifications and saves every selected image.** It replaces the
-> existing class on assigned cells (CellTune training labels are untouched). The
+> existing class on assigned cells (the extension's training labels are untouched). The
 > currently-open image updates live; others are saved to disk.
 
 ---
@@ -1015,7 +1020,7 @@ Before exporting, a **Select Columns for Cell Table Export** dialog opens. It mi
 
 ### 12.2 Ground truth export & import
 
-CellTune ground-truth files are a portable representation of your labelled cells **and** their feature vectors — they let you reuse labels across projects/workstations.
+The extension's ground-truth files are a portable representation of your labelled cells **and** their feature vectors — they let you reuse labels across projects/workstations.
 
 #### Export
 
@@ -1066,7 +1071,7 @@ Rebuilds parent/child relationships from ROI containment — equivalent to the `
 
 > ⚠️ **Destructive and not undoable.** Double-check the keyword against your actual measurement names — a loose keyword can delete more columns than you intend.
 
-Removes every detection measurement whose name contains a keyword (case-insensitive by default; tick **Case sensitive** to match exactly). Choose **Current image** or **All project images**. Before deleting, CellTune previews the exact list of matching columns and asks you to confirm — if nothing matches, it aborts. Project-wide saves each entry (open image first, the rest in the background).
+Removes every detection measurement whose name contains a keyword (case-insensitive by default; tick **Case sensitive** to match exactly). Choose **Current image** or **All project images**. Before deleting, the extension previews the exact list of matching columns and asks you to confirm — if nothing matches, it aborts. Project-wide saves each entry (open image first, the rest in the background).
 
 ### 13.4 Import GeoJSON Objects
 
@@ -1082,13 +1087,13 @@ Exports one or more annotation ROIs from the **current image** as polygon-**mask
 
 ### 13.6 Reset CellTune Project State
 
-> ⚠️ **Destructive.** Permanently deletes everything CellTune has saved for this project. Intended for starting over — e.g. when you've **copied a project** to trial different ML options and want a clean slate, since the `celltune/` state travels with the copy.
+> ⚠️ **Destructive.** Permanently deletes everything the extension has saved for this project. Intended for starting over — e.g. when you've **copied a project** to trial different ML options and want a clean slate, since the `celltune/` state travels with the copy.
 
 Deletes the project's entire `celltune/` folder: all labels and per-image label files, trained classifiers (multi-class **and** binary) and predictions, feature selection, normalisation, marker table, composite rules, and sampling/review state. It also resets the running session so nothing re-saves the old state.
 
 **Safety net:** before deleting anything, a timestamped **`celltune_backup_<timestamp>.zip`** is written to the project folder. To undo a reset, unzip it back into the project folder (recreating `celltune/`). The action is guarded by a typed **`RESET`** confirmation.
 
-**Images and detections are kept.** CellTune's ground-truth **label points** and the **cell classifications** (predictions) it paints onto cells live in each image's `.qpdata`, *not* in `celltune/`. They are left in place unless you tick **"Also clear CellTune label points and all cell classifications from every image"**, which strips classified point annotations and clears every cell's classification across **all** project images (this rewrites each image's data and runs on a background thread). Tissue/region annotations and unclassified points are never touched.
+**Images and detections are kept.** The extension's ground-truth **label points** and the **cell classifications** (predictions) it paints onto cells live in each image's `.qpdata`, *not* in `celltune/`. They are left in place unless you tick **"Also clear CellTune label points and all cell classifications from every image"**, which strips classified point annotations and clears every cell's classification across **all** project images (this rewrites each image's data and runs on a background thread). Tissue/region annotations and unclassified points are never touched.
 
 ---
 
@@ -1154,7 +1159,7 @@ All under *Extensions → CellTune Classifier*.
 
 ## 16. Project directory layout
 
-Everything CellTune writes is under `<project>/celltune/`:
+Everything the extension writes is under `<project>/celltune/`:
 
 ```
 celltune/
@@ -1203,7 +1208,7 @@ this one needs none.
 
 ### How it works
 
-1. For each project image, CellTune reads the **nearest pyramid level whose long
+1. For each project image, the extension reads the **nearest pyramid level whose long
    edge is ≈ 2048 px** (requested downsample = `longEdge / 2048`). Reading every
    image to the same pixel footprint keeps the cohort statistics comparable
    like-for-like, regardless of each slide's native size or pyramid structure.
