@@ -304,12 +304,13 @@ public class NeighborhoodAnalysisDialog {
         radiusRadio.setToggleGroup(modeGroup);
         knnRadio.setSelected(true);
 
-        kSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(2, 100, 9));
+        kSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(2, 100, 10));
         kSpinner.setEditable(true);
         kSpinner.setPrefWidth(90);
-        kSpinner.setTooltip(new Tooltip("Window size: each cell's k nearest neighbours. With \"Include centre cell\" "
-                + "on, the window is the centre plus k neighbours — so the default k=9 gives a 10-cell window, "
-                + "matching the paper (Schürch et al. use k=10 nearest neighbours including the cell itself)."));
+        kSpinner.setTooltip(new Tooltip("Window size: the total number of cells in each cell's neighbourhood. With "
+                + "\"Include centre cell\" on the window is the centre plus its nearest neighbours; with it off the "
+                + "window is that many nearest neighbours. The default 10 matches the paper (Schürch et al. use a "
+                + "10-cell window: k=10 nearest neighbours including the cell itself)."));
 
         radiusSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(5, 500, 50, 5));
         radiusSpinner.setEditable(true);
@@ -330,7 +331,7 @@ public class NeighborhoodAnalysisDialog {
         modeGroup.selectedToggleProperty().addListener((o, a, b) -> syncMode.run());
         syncMode.run();
 
-        HBox knnRow = new HBox(8, knnRadio, new Label("k ="), kSpinner);
+        HBox knnRow = new HBox(8, knnRadio, new Label("window (cells) ="), kSpinner);
         knnRow.setAlignment(Pos.CENTER_LEFT);
         HBox radiusRow = new HBox(8, radiusRadio, new Label("radius (" + unit + ") ="), radiusSpinner);
         radiusRow.setAlignment(Pos.CENTER_LEFT);
@@ -363,7 +364,8 @@ public class NeighborhoodAnalysisDialog {
         // ── Options ──
         includeCenterBox.setSelected(true);
         includeCenterBox.setTooltip(new Tooltip("Count the centre cell's own type in its window (paper default on). "
-                + "With this on, the kNN window is the centre plus k neighbours."));
+                + "The window size stays fixed at the value above: with this on it is the centre plus its nearest "
+                + "neighbours; with it off it is that many nearest neighbours."));
         standardizeBox.setSelected(false); // paper clusters raw frequency vectors
         standardizeBox.setTooltip(new Tooltip("Off matches the paper (cluster raw fractions). "
                 + "On z-scores composition columns, up-weighting rare cell types."));
@@ -682,10 +684,13 @@ public class NeighborhoodAnalysisDialog {
         }
 
         final boolean knn = knnRadio.isSelected();
-        final int k = kSpinner.getValue();
         final double radius = radiusSpinner.getValue();
         final int nCN = cnSpinner.getValue();
         final boolean includeCenter = includeCenterBox.isSelected();
+        // The spinner is the total window size (cells). The model counts the centre
+        // cell separately when includeCenter is on, so subtract 1 to keep the window
+        // fixed at the chosen size (default 10 → 9 neighbours + centre = 10 cells).
+        final int k = includeCenter ? kSpinner.getValue() - 1 : kSpinner.getValue();
         final boolean standardize = standardizeBox.isSelected();
         final boolean multiSeed = multiSeedBox.isSelected();
         final boolean showHeatmap = showHeatmapBox.isSelected();
@@ -951,7 +956,7 @@ public class NeighborhoodAnalysisDialog {
                 Locale.US,
                 "Building windows for %,d cells (%s, %s)…",
                 n,
-                knn ? "kNN k=" + k : "radius=" + radius + unit,
+                knn ? "kNN window=" + (includeCenter ? k + 1 : k) : "radius=" + radius + unit,
                 "types=" + nTypes));
         int[][] neighbors = knn
                 ? NeighborhoodModel.kNearestNeighborIndices(xs, ys, k)
