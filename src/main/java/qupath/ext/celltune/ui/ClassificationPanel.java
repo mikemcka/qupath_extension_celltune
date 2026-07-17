@@ -1350,7 +1350,7 @@ public class ClassificationPanel extends VBox {
 
         var vbox = new javafx.scene.layout.VBox(6);
         vbox.setPadding(new javafx.geometry.Insets(6));
-        vbox.getChildren().addAll(toolbar, channelSelector.getCheckBox());
+        vbox.getChildren().addAll(toolbar, channelSelector.getCheckBox(), channelSelector.getDisplayRangeCheckBox());
 
         var stage = new javafx.stage.Stage();
         stage.setTitle(STRINGS.getString("review.stage.title"));

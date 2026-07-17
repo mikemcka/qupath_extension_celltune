@@ -1478,7 +1478,7 @@ public class CellTuneExtension implements QuPathExtension, BinaryClassifierManag
         // Build the review stage
         var vbox = new javafx.scene.layout.VBox(6);
         vbox.setPadding(new javafx.geometry.Insets(6));
-        vbox.getChildren().addAll(toolbar, channelSelector.getCheckBox());
+        vbox.getChildren().addAll(toolbar, channelSelector.getCheckBox(), channelSelector.getDisplayRangeCheckBox());
 
         double reviewScreenH =
                 javafx.stage.Screen.getPrimary().getVisualBounds().getHeight();
