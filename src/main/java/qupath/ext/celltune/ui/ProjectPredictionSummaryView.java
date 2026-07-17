@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -19,6 +20,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
@@ -117,6 +119,14 @@ public class ProjectPredictionSummaryView {
         anomalyCol.setCellValueFactory(
                 cd -> new SimpleObjectProperty<>(cd.getValue().anomalyScore()));
         anomalyCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+        // Value factory keeps a raw Number so sorting stays numeric; format only the display.
+        anomalyCol.setCellFactory(col -> new TableCell<>() {
+            @Override
+            protected void updateItem(Number value, boolean empty) {
+                super.updateItem(value, empty);
+                setText(empty || value == null ? null : String.format(Locale.ROOT, "%.3f", value.doubleValue()));
+            }
+        });
 
         TableColumn<Row, String> flaggedCol = new TableColumn<>("Flagged");
         flaggedCol.setCellValueFactory(

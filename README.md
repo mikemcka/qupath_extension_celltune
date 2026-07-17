@@ -17,7 +17,7 @@ See **[User Guide §7 — Review mode](USER_GUIDE.md#7-after-training--review-mo
 ## The Active Learning Loop
 
 ```
-① Seed labels via point annotations on detected cells
+① Seed labels via Manual label mode
                     │
                     ▼
 ② Train dual classifiers (XGBoost + LightGBM)

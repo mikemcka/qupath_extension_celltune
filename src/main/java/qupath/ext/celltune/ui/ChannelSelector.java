@@ -29,6 +29,7 @@ public class ChannelSelector {
     private final QuPathGUI qupath;
     private final CellTypeTable cellTypeTable;
     private final CheckBox autoSwitchCheckBox;
+    private final CheckBox autoDisplayRangeCheckBox;
 
     /**
      * @param qupath        the QuPath instance
@@ -39,11 +40,30 @@ public class ChannelSelector {
         this.cellTypeTable = cellTypeTable;
         this.autoSwitchCheckBox = new CheckBox(STRINGS.getString("sample.autochannel.label"));
         this.autoSwitchCheckBox.setSelected(true);
+
+        // Sub-option: whether newly-shown channels also get their brightness/contrast
+        // (display range) auto-adjusted. Off by default so the user's existing display
+        // settings are preserved; only channel visibility changes unless this is ticked.
+        this.autoDisplayRangeCheckBox = new CheckBox(STRINGS.getString("sample.autochannel.displayrange.label"));
+        this.autoDisplayRangeCheckBox.setSelected(false);
+        // The display-range adjustment only happens as part of channel switching, so grey
+        // it out when auto-switching itself is disabled.
+        this.autoDisplayRangeCheckBox
+                .disableProperty()
+                .bind(autoSwitchCheckBox.selectedProperty().not());
     }
 
     /** @return the checkbox that gates auto-switching; add it to your UI */
     public CheckBox getCheckBox() {
         return autoSwitchCheckBox;
+    }
+
+    /**
+     * @return the checkbox that gates auto-adjusting brightness/contrast (display
+     *     range) of shown channels; add it to your UI. Off by default.
+     */
+    public CheckBox getDisplayRangeCheckBox() {
+        return autoDisplayRangeCheckBox;
     }
 
     /**
@@ -98,7 +118,7 @@ public class ChannelSelector {
                     logger.info("  Showing channel: {}", ch.getName());
                 }
                 display.setChannelSelected(ch, shouldShow);
-                if (shouldShow) {
+                if (shouldShow && autoDisplayRangeCheckBox.isSelected()) {
                     display.autoSetDisplayRange(ch);
                 }
             }

@@ -232,7 +232,11 @@ public final class CohortAnomalyAnalyzer {
             }
         }
 
-        return 0.5 * (klImage + klBaseline);
+        // 0.5·(KL(P‖M)+KL(Q‖M)) is the JS *divergence*; the metric JS *distance*
+        // is its square root. The divergence is ≥ 0 by Gibbs' inequality, but clamp
+        // first so floating-point round-off can't hand sqrt a tiny negative.
+        double divergence = 0.5 * (klImage + klBaseline);
+        return Math.sqrt(Math.max(0.0, divergence));
     }
 
     private static double[] robustZScores(double[] values) {
