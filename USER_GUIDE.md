@@ -530,8 +530,8 @@ For each image:
 
 **Flag reasons:**
 - `RARE_ENRICHMENT` — a class that is <1% of the cohort, has ≥20 cells in this image, and is ≥3× enriched vs the baseline.
-- `OUTLIER_COMPOSITION` — composition robust z ≥ 3.
-- `OUTLIER_DISAGREEMENT` — disagreement robust z ≥ 3.
+- `COMPOSITION_OUTLIER` — composition robust z ≥ 3.
+- `HIGH_DISAGREEMENT` — disagreement robust z ≥ 3.
 
 **Why these numbers?** Most are standard statistical conventions, not arbitrary:
 - **Robust z ≥ 3** is the classic *3-sigma* outlier rule. The robust z uses `0.6745 × (value − median) / MAD`, where `0.6745` is the constant that makes MAD a consistent estimator of the standard deviation for normal data — so the score sits on the same scale as an ordinary z-score and "≥ 3" means the same thing it always does (~0.1% one-tailed under normality).
